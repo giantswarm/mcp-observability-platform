@@ -121,6 +121,25 @@ type RequestOpts struct {
 	Caller string // subject/email; forwarded as X-Grafana-User if non-empty
 }
 
+// Ping calls GET /api/health, Grafana's auth-free reachability endpoint.
+// Used by readiness probes; cheaper than VerifyServerAdmin (which lists all
+// orgs). Returns nil on 2xx.
+func (c *Client) Ping(ctx context.Context) error {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/health", nil, nil, RequestOpts{})
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("grafana: GET /api/health: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("grafana: GET /api/health: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // VerifyServerAdmin calls GET /api/orgs, which requires the server-admin role.
 // 401/403 means the SA is not server-admin and cannot switch org via X-Grafana-Org-Id.
 func (c *Client) VerifyServerAdmin(ctx context.Context) error {

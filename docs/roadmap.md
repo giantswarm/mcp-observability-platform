@@ -275,17 +275,38 @@ Go-code layer + devctl-generated release/scanning workflows.
   promotion PR; merging it produces a tag that CircleCI picks up and
   pushes both image and chart.
 
-**PR 4 · Deep readiness + `/healthz/detailed` + two-phase shutdown**
-Adopts the `mcp-kubernetes` pattern. Split `/healthz` (liveness, always
-200) from `/readyz` (Grafana reachable, K8s informer synced, Dex OIDC
-metadata resolvable; per-check 2s timeout). Add `/healthz/detailed` —
-JSON with uptime, resolver cache size, Grafana probe RTT, Dex discovery
-status. Two-phase graceful shutdown: drain metrics/health server first
-(5s), then MCP server (10s).
-- Files: new `internal/server/health.go`; edit `cmd/serve.go`
-- Verify: kind `kubectl rollout status` blocks until Grafana is up;
-  `curl /healthz/detailed` returns rich JSON; `kubectl delete pod`
-  shows MCP drains before metrics
+**PR 4 · Deep readiness + `/healthz/detailed` + two-phase shutdown — LANDED in `pr-4-readiness` (PR #7)**
+
+Replaced the always-200 `/healthz` and `/readyz` stubs with proper
+liveness vs readiness semantics, added a JSON `/healthz/detailed`
+endpoint, and reordered graceful shutdown so in-flight tool calls aren't
+SIGKILLed mid-drain.
+
+`internal/server/health.go` introduces `HealthChecker` with
+`Register(name, CheckFn)` plus three handlers:
+- `/healthz` — liveness, always 200 unless the process itself is dead
+  (does NOT run readiness probes — a flaky downstream should not
+  restart the pod).
+- `/readyz` — 503 when any probe fails. Probes run concurrently under
+  a shared 2s deadline.
+- `/healthz/detailed` — JSON with per-check status, duration, overall
+  status, uptime, version, probe-specific extras.
+
+Three probes wired in `cmd/serve.go`:
+- `grafana` — new lightweight `grafana.Client.Ping()` against
+  `/api/health` (auth-free; cheaper than `VerifyServerAdmin`, which
+  lists all orgs on every probe).
+- `dex` — `HTTPProbe` against the Dex OIDC discovery endpoint.
+- `k8s_cache` — `ctrlCache.List(GrafanaOrganizationList)`; reports
+  `{orgs: N}` under `extra`.
+
+**Two-phase shutdown**: drain MCP first (10s) while the observability
+server keeps answering liveness + Prometheus scrapes, then drain
+observability (5s). Prevents the kubelet from interpreting a slow
+tool-call drain as a dead pod and firing SIGKILL.
+
+Helm chart probes at `/healthz` and `/readyz` (already in place from
+PR 2) now gate rollouts on real state — no chart changes needed.
 
 ### Wave 1 — Ship-ready + MCP fit
 

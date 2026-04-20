@@ -54,7 +54,7 @@ var (
 func init() {
 	serveCmd.Flags().StringVar(&flagTransport, "transport", envOr("MCP_TRANSPORT", "streamable-http"), "stdio | sse | streamable-http")
 	serveCmd.Flags().StringVar(&flagMCPAddr, "mcp-addr", envOr("MCP_ADDR", ":8080"), "listen address for MCP HTTP transport")
-	serveCmd.Flags().StringVar(&flagMetricsAddr, "metrics-addr", envOr("METRICS_ADDR", ":9091"), "listen address for /metrics, /healthz, /readyz")
+	serveCmd.Flags().StringVar(&flagMetricsAddr, "metrics-addr", envOr("METRICS_ADDR", ":9091"), "listen address for /metrics, /healthz, /readyz, /healthz/detailed")
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", envBool("DEBUG", false), "enable debug logging")
 }
 
@@ -236,8 +236,23 @@ func runServe(_ *cobra.Command, _ []string) error {
 	mcpMux.Handle("/mcp", oauthHandler.ValidateToken(mcpHTTP))
 
 	obsMux := http.NewServeMux()
-	obsMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	obsMux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	// Deep readiness: liveness is always-200, readiness probes Grafana +
+	// Dex + K8s informer, detailed returns JSON with timings for operators.
+	// 2s per-check deadline keeps kubelet probes honest.
+	health := server.NewHealthChecker(version, 2*time.Second)
+	health.Register("grafana", func(ctx context.Context) (any, error) {
+		return nil, gfClient.Ping(ctx)
+	})
+	health.Register("dex", server.HTTPProbe(nil, strings.TrimRight(cfg.DexIssuerURL, "/")+"/.well-known/openid-configuration"))
+	health.Register("k8s_cache", func(ctx context.Context) (any, error) {
+		var list obsv1alpha2.GrafanaOrganizationList
+		if err := ctrlCache.List(ctx, &list); err != nil {
+			return nil, err
+		}
+		return map[string]int{"orgs": len(list.Items)}, nil
+	})
+	health.RegisterHandlers(obsMux)
 	obsMux.Handle("/metrics", observability.MetricsHandler())
 
 	// Keep OrgCacheSize gauge roughly accurate. The informer is event-driven,
@@ -288,10 +303,22 @@ func runServe(_ *cobra.Command, _ []string) error {
 	<-shutdownCtx.Done()
 	logger.Info("shutdown requested")
 
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer drainCancel()
-	_ = mcpServer.Shutdown(drainCtx)
-	_ = obsServer.Shutdown(drainCtx)
+	// Two-phase shutdown: drain MCP first so in-flight tool calls complete,
+	// then drain the observability server. The kubelet's liveness probe and
+	// Prometheus scrape keep working while MCP drains — which matters when
+	// a slow tool call otherwise shows up as a liveness failure and triggers
+	// a SIGKILL mid-drain.
+	mcpDrainCtx, mcpDrainCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer mcpDrainCancel()
+	if err := mcpServer.Shutdown(mcpDrainCtx); err != nil {
+		logger.Warn("mcp server drain returned error", "error", err)
+	}
+
+	obsDrainCtx, obsDrainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer obsDrainCancel()
+	if err := obsServer.Shutdown(obsDrainCtx); err != nil {
+		logger.Warn("observability server drain returned error", "error", err)
+	}
 	return nil
 }
 
