@@ -1,0 +1,54 @@
+---
+# yamllint disable rule:truthy
+name: CI Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:  # Also run on pushes to main to catch direct commits
+    branches:
+      - main
+
+jobs:
+  check:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Install Python for yamllint
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: 'v3.19.4'
+
+      - name: Install helm-unittest plugin
+        run: |
+          helm plugin install https://github.com/helm-unittest/helm-unittest.git
+
+      - name: Run Checks (YAML lint + Go test + vet)
+        run: make check
+
+      - name: Run Helm linter
+        run: make helm-lint
+
+      - name: Run Helm unit tests
+        run: make helm-test
+
+      - name: Run govulncheck (Security Scan)
+        run: make govulncheck
