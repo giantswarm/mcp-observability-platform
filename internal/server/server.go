@@ -10,6 +10,7 @@ import (
 
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
+	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/identity"
@@ -23,6 +24,9 @@ type Config struct {
 	Resolver *authz.Resolver
 	Grafana  *grafana.Client
 	Version  string
+	// Audit sinks one Record per tool call. Nil is allowed — the audit
+	// middleware then degrades to a pass-through.
+	Audit *audit.Logger
 }
 
 // New builds the MCP server, registers tools + resource templates, and returns
@@ -57,8 +61,10 @@ func New(cfg Config) (http.Handler, error) {
 	//   1. WithRecovery()         — mcp-go's built-in panic guard.
 	//   2. middleware.Tracing()   — OTEL span per tool call.
 	//   3. middleware.Metrics()   — Prometheus counter + histogram per tool call.
-	// Ordered so a panic is caught before the span/metric closes, and the span
-	// wraps the metric timing (so span duration ≈ measured latency).
+	//   4. middleware.Audit()     — structured JSON record per tool call (if cfg.Audit).
+	// Ordered so a panic is caught before the span/metric/audit close, the
+	// span wraps the metric timing, and the audit middleware's Duration
+	// reflects handler time only — matching the Metrics histogram label.
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
@@ -68,6 +74,7 @@ func New(cfg Config) (http.Handler, error) {
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Tracing()),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Metrics()),
+		mcpsrv.WithToolHandlerMiddleware(middleware.Audit(cfg.Audit)),
 	)
 
 	tools.RegisterAll(mcp, deps)

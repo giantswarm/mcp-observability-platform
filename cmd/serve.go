@@ -26,6 +26,7 @@ import (
 
 	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 
+	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
@@ -207,12 +208,18 @@ func runServe(_ *cobra.Command, _ []string) error {
 		}()
 	}
 
+	// Structured audit trail: one JSON record per tool call on stderr,
+	// separate from the debug diagnostic log. Always-on, stable schema,
+	// redirect to a dedicated sink at the pod spec when a SIEM ingests it.
+	auditLogger := audit.NewJSON(os.Stderr)
+
 	// --- MCP server + tools/resources ---
 	mcpHTTP, err := server.New(server.Config{
 		Logger:   logger,
 		Resolver: resolver,
 		Grafana:  gfClient,
 		Version:  version,
+		Audit:    auditLogger,
 	})
 	if err != nil {
 		return fmt.Errorf("mcp server: %w", err)

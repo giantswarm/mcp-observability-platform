@@ -310,18 +310,37 @@ PR 2) now gate rollouts on real state — no chart changes needed.
 
 ### Wave 1 — Ship-ready + MCP fit
 
-**PR 5 · `internal/audit` + thin `mcperr`**
-Both hang off `server/middleware`.
-- *Audit*: structured JSON record per tool call — `{caller, org, tool,
-  args_redacted, outcome, duration_ms, error_class}` + counter metric.
-- *Thin `mcperr`*: classification (`UserError`/`AuthzError`/
-  `TransientError`/`SystemError`) stays **internal** — used only for
-  audit enrichment + metric labels. **Wire payload is plain `isError:
-  true` with clear, LLM-actionable text** (e.g. "metric name not
-  found — try `list_prometheus_metric_names`"). No custom `retry_after`
-  field; no structured error envelope. ~50 LOC helper.
-- Verify: table tests per class; one audit record per tool call; errors
-  render as plain `isError: true` text
+**PR 5 · `internal/audit` + `middleware.Audit()` — LANDED in `pr-5-audit` (PR #8)**
+
+Structured audit trail: one JSON record per tool call on stderr with
+`{timestamp, caller, tool, args, outcome, duration_ms, error}`. Always
+on, stable schema, `msg: "tool_call"` so downstream collectors filter
+cleanly. Separate `*audit.Logger` instance — the debug diagnostic
+`slog` is gated by `DEBUG`, the audit stream is not.
+
+Middleware uses mcp-go's native `server.ToolHandlerMiddleware` shape
+(not the pre-PR-1 custom `Middleware`/`Handler` types). Tool name is
+read from `req.Params.Name`; caller from `identity.CallerSubject(ctx)`.
+The outcome field reuses `middleware.Classify()` (exported from the
+package in this PR) so audit, metrics, and span attributes all carry
+the same `ok` / `user_error` / `system_error` label — cross-signal
+correlation never drifts.
+
+Wired as the innermost middleware in `server.New` (after Tracing and
+Metrics) so the recorded `duration_ms` reflects handler time only,
+matching the Metrics histogram label.
+
+**No dedicated `mcperr` package.** The roadmap originally paired
+audit with a `mcperr` helper for typed error classification; in
+practice `middleware.Classify` already does the only classification
+audit and metrics need, and handlers write actionable `isError` text
+inline with `mcp.NewToolResultErrorf`. A separate classification tree
+would be dead weight.
+
+**Redaction**: today's read-only surface does not take secrets. The
+package exposes a `WithRedactor(Redactor)` option for future tools
+that accept sensitive input (tokens, keys) — registration-time opt-in
+instead of a per-tool scrubbing step.
 
 **PR 6 · MCP progress + cancellation**
 Long-running tools (`query_metrics` range, `query_logs`, `get_panel_image`)
