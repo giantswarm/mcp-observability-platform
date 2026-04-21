@@ -33,28 +33,16 @@ var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/inter
 
 // registerTools wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding tools_*.go file.
-//
-// Scaffold PR: no tools are registered yet. The follow-up "Port Go tools"
-// PR adds tools_*.go files with their own registerXxxTools functions and
-// wires them here.
-func registerTools(_ *mcpsrv.MCPServer, _ *deps) {
-	// registerOrgTools(s, d)
-	// registerDashboardTools(s, d)
-	// registerMetricsTools(s, d)
-	// registerLogTools(s, d)
-	// registerTraceTools(s, d)
-	// registerAlertTools(s, d)
-	// registerSilenceTools(s, d)
-	// registerPanelTools(s, d)
+func registerTools(s *mcpsrv.MCPServer, d *deps) {
+	registerOrgTools(s, d)
+	registerDashboardTools(s, d)
+	registerMetricsTools(s, d)
+	registerLogTools(s, d)
+	registerTraceTools(s, d)
+	registerAlertTools(s, d)
+	registerSilenceTools(s, d)
+	registerPanelTools(s, d)
 }
-
-// registerResources wires MCP resource templates. Scaffold PR: empty.
-// The "Port Go tools" PR adds resources.go with the real registrations.
-func registerResources(_ *mcpsrv.MCPServer, _ *deps) {}
-
-// registerPrompts wires MCP prompts. Scaffold PR: empty. The "Port Go tools"
-// PR adds prompts.go with the real registrations.
-func registerPrompts(_ *mcpsrv.MCPServer, _ *deps) {}
 
 // maxResponseBytes returns the configured cap on tool response body size.
 // Set TOOL_MAX_RESPONSE_BYTES to 0 to disable. Default 131072 (128 KiB) —
