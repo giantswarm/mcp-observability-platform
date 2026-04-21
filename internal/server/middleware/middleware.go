@@ -46,7 +46,7 @@ const (
 	OutcomeSystemError = "system_error"
 )
 
-// classify maps a tool handler's return to an outcome.
+// Classify maps a tool handler's return to an outcome.
 //
 //   - Go error       → system_error: upstream unreachable, panic (after
 //     mcp-go's WithRecovery wraps it into an error), handler bug. Ops-
@@ -55,9 +55,9 @@ const (
 //     (missing arg, not authorised, response_too_large). Expected behaviour.
 //   - otherwise      → ok.
 //
-// Shared by Tracing and Metrics so the metric label and span attribute
-// never drift apart.
-func classify(res *mcp.CallToolResult, err error) string {
+// Shared by Tracing, Metrics, and Audit so the metric label, span
+// attribute, and audit outcome never drift apart.
+func Classify(res *mcp.CallToolResult, err error) string {
 	switch {
 	case err != nil:
 		return OutcomeSystemError
@@ -79,7 +79,7 @@ func Tracing() server.ToolHandlerMiddleware {
 			ctx, span := tracer.Start(ctx, "tool."+req.Params.Name)
 			defer span.End()
 			res, err := next(ctx, req)
-			o := classify(res, err)
+			o := Classify(res, err)
 			span.SetAttributes(attribute.String("tool.outcome", o))
 			if o == OutcomeSystemError {
 				span.SetStatus(codes.Error, "tool returned error")
@@ -97,7 +97,7 @@ func Metrics() server.ToolHandlerMiddleware {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			start := time.Now()
 			res, err := next(ctx, req)
-			o := classify(res, err)
+			o := Classify(res, err)
 			observability.ToolCallTotal.WithLabelValues(req.Params.Name, o).Inc()
 			observability.ToolCallDuration.WithLabelValues(req.Params.Name, o).Observe(time.Since(start).Seconds())
 			return res, err

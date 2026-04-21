@@ -22,8 +22,8 @@ func TestClassify(t *testing.T) {
 		{"IsError result only", &mcp.CallToolResult{IsError: true}, nil, OutcomeUserError},
 	}
 	for _, c := range cases {
-		if got := classify(c.res, c.err); got != c.want {
-			t.Errorf("%s: classify = %q, want %q", c.name, got, c.want)
+		if got := Classify(c.res, c.err); got != c.want {
+			t.Errorf("%s: Classify = %q, want %q", c.name, got, c.want)
 		}
 	}
 }

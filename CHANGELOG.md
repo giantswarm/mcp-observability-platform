@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Makefile.custom.mk` with CI-facing targets (`check`, `test-vet`, `helm-lint`, `helm-test`, `govulncheck`, `lint-yaml`) + developer conveniences (`tidy`, `helm-template`).
 - Tool-handler middleware (`internal/server/middleware/`) applied globally via mcp-go's `WithToolHandlerMiddleware`: `Tracing()` (OTEL span per tool call) and `Metrics()` (counter + histogram). mcp-go's `WithRecovery()` is wired too — panic safety we did not have before. Tool registrations carry `tools.ReadOnlyAnnotation()` so `tools/list` advertises `readOnlyHint`, `openWorldHint`, `destructiveHint: false`.
 - Deep readiness probes: `/readyz` now checks Grafana reachability (via `/api/health`), Dex OIDC discovery, and the K8s informer cache (2s per-check deadline). `/healthz/detailed` returns a JSON summary with per-check status, duration, uptime, and version for operators and dashboards.
+- Structured audit trail (`internal/audit/` + `middleware.Audit()`): one JSON line per tool call on stderr with `{timestamp, caller, tool, args, outcome, duration_ms, error}`. Always on, stable schema, separate from the debug-gated diagnostic log so SIEM/compliance tooling can ingest without reverse-engineering. Outcome uses the same 3-bucket `ok`/`user_error`/`system_error` classification as metrics and spans so cross-signal correlation never drifts. A pluggable `Redactor` lets future tools that accept sensitive args (tokens, keys) mask them before the record is emitted.
 
 ### Changed
 
