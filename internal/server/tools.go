@@ -32,6 +32,32 @@ import (
 // carry the MCP tool boundary and wrap downstream Grafana calls.
 var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/internal/server")
 
+// Package-wide string tokens. Kept as untyped constants so they drop into
+// []string{...} literals and switch arms cleanly.
+const (
+	// Datasource kind tokens, substring-matched against Grafana datasource
+	// names in NameContains specs and produced by datasourceKindFromRef.
+	dsKindMimir = "mimir"
+	dsKindLoki  = "loki"
+	dsKindTempo = "tempo"
+
+	// Alertmanager "active" — shared between the filter enum and the AM v2
+	// /alerts URL-parameter name (which happens to be the same literal).
+	amActive = "active"
+
+	// Generic "match everything" filter token used across alerts, silences,
+	// and Prometheus-rule type/state filters.
+	filterAll = "all"
+
+	// Prometheus rule types as returned by Mimir's /api/v1/rules (after our
+	// projection) and accepted by list_alert_rules / get_alert_rule.
+	ruleTypeAlert  = "alert"
+	ruleTypeRecord = "record"
+
+	// Grafana panel type for legacy nested rows.
+	panelTypeRow = "row"
+)
+
 // registerTools wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding tools_*.go file.
 func registerTools(s *mcpsrv.MCPServer, d *deps) {

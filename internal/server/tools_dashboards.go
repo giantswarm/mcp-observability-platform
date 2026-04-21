@@ -285,35 +285,35 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 				return expandGrafanaVars(expr, vars, req.GetString("start", ""), req.GetString("end", ""), step)
 			}
 			switch kind {
-			case "mimir":
+			case dsKindMimir:
 				if target.Expr == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no PromQL expression", panel.ID)), nil
 				}
 				newArgs["query"] = expanded(target.Expr)
 				req.Params.Arguments = newArgs
 				return datasourceProxyHandler(d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{"mimir"},
+					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindMimir},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
 				})(ctx, req)
-			case "loki":
+			case dsKindLoki:
 				if target.Expr == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no LogQL expression", panel.ID)), nil
 				}
 				newArgs["query"] = expanded(target.Expr)
 				req.Params.Arguments = newArgs
 				return datasourceProxyHandler(d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{"loki"},
+					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ForceRange: true, DefaultRangeAgo: time.Hour, ExtraArg: "limit",
 				})(ctx, req)
-			case "tempo":
+			case dsKindTempo:
 				if target.Query == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no TraceQL query", panel.ID)), nil
 				}
 				newArgs["query"] = expanded(target.Query)
 				req.Params.Arguments = newArgs
 				return datasourceProxyHandler(d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{"tempo"},
+					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindTempo},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
 				})(ctx, req)
 			default:
@@ -418,7 +418,7 @@ func pickPanelTarget(raw json.RawMessage, panelID, targetIdx int) (rawPanel, pan
 	var walk func(ps []rawPanel)
 	walk = func(ps []rawPanel) {
 		for i := range ps {
-			if ps[i].Type == "row" {
+			if ps[i].Type == panelTypeRow {
 				walk(ps[i].Panels)
 				continue
 			}
@@ -631,13 +631,13 @@ func datasourceKindFromRef(raw json.RawMessage, templates []rawTemplateVar) stri
 func kindFromTypeString(s string) string {
 	ls := strings.ToLower(s)
 	switch {
-	case ls == "prometheus" || ls == "mimir" ||
-		strings.Contains(ls, "mimir") || strings.Contains(ls, "prometheus"):
-		return "mimir"
-	case ls == "loki" || strings.Contains(ls, "loki"):
-		return "loki"
-	case ls == "tempo" || strings.Contains(ls, "tempo"):
-		return "tempo"
+	case ls == "prometheus" || ls == dsKindMimir ||
+		strings.Contains(ls, dsKindMimir) || strings.Contains(ls, "prometheus"):
+		return dsKindMimir
+	case strings.Contains(ls, dsKindLoki):
+		return dsKindLoki
+	case strings.Contains(ls, dsKindTempo):
+		return dsKindTempo
 	}
 	return ""
 }
@@ -847,7 +847,7 @@ func summariseDashboard(raw json.RawMessage) (any, error) {
 	if len(doc.Dashboard.Panels) > 0 {
 		var cur *rowSummary
 		for _, p := range doc.Dashboard.Panels {
-			if p.Type == "row" {
+			if p.Type == panelTypeRow {
 				flushRow(cur)
 				r := rowSummary{ID: p.ID, Title: p.Title}
 				for _, nested := range p.Panels {
@@ -932,7 +932,7 @@ type rawPanel struct {
 func countPanels(ps []rawPanel) int {
 	n := 0
 	for _, p := range ps {
-		if p.Type == "row" {
+		if p.Type == panelTypeRow {
 			n += countPanels(p.Panels)
 			continue
 		}
@@ -976,7 +976,7 @@ func extractDashboardQueries(raw json.RawMessage, panelID int, titleContains str
 	titleLC := strings.ToLower(titleContains)
 	walk = func(ps []rawPanel) {
 		for _, p := range ps {
-			if p.Type == "row" {
+			if p.Type == panelTypeRow {
 				walk(p.Panels)
 				continue
 			}

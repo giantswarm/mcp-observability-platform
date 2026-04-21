@@ -93,9 +93,9 @@ func paginateSilences(raw json.RawMessage, state string, page, pageSize int) (an
 		return nil, fmt.Errorf("unmarshal silences: %w", err)
 	}
 	if state == "" {
-		state = "active"
+		state = amActive
 	}
-	if state != "all" {
+	if state != filterAll {
 		filtered := sils[:0]
 		for _, s := range sils {
 			if strings.EqualFold(s.Status.State, state) {

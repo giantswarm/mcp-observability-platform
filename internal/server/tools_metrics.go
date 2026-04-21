@@ -34,7 +34,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 		instrument("query_metrics", d, datasourceProxyHandler(d, datasourceSpec{
 			Role:          authz.RoleViewer,
 			NeedTenant:    obsv1alpha2.TenantTypeData,
-			NameContains:  []string{"mimir"},
+			NameContains:  []string{dsKindMimir},
 			InstantPath:   "api/v1/query",
 			RangePath:     "api/v1/query_range",
 			QueryArg:      "query",
@@ -70,7 +70,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -126,7 +126,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -200,7 +200,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			return datasourceProxyHandler(d, datasourceSpec{
 				Role:          authz.RoleViewer,
 				NeedTenant:    obsv1alpha2.TenantTypeData,
-				NameContains:  []string{"mimir"},
+				NameContains:  []string{dsKindMimir},
 				InstantPath:   "api/v1/query",
 				RangePath:     "api/v1/query_range",
 				QueryArg:      "query",
@@ -225,7 +225,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -233,11 +233,11 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			defer cancel()
 			ruleType := strings.ToLower(req.GetString("type", ""))
 			if ruleType == "" {
-				ruleType = "alert"
+				ruleType = ruleTypeAlert
 			}
 			wantState := strings.ToLower(req.GetString("state", ""))
 			if wantState == "" {
-				wantState = "all"
+				wantState = filterAll
 			}
 			nameLC := strings.ToLower(req.GetString("nameContains", ""))
 			page := req.GetInt("page", 0)
@@ -248,7 +248,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			pageSize = clampInt(pageSize, 1, 500)
 
 			q := url.Values{}
-			if ruleType == "alert" || ruleType == "record" {
+			if ruleType == ruleTypeAlert || ruleType == ruleTypeRecord {
 				q.Set("type", ruleType)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/rules").Inc()
@@ -343,7 +343,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			group := req.GetString("group", "")
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -354,7 +354,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir rules", err), nil
 			}
-			matches, err := flattenAlertRules(body, "all", "all", strings.ToLower(name))
+			matches, err := flattenAlertRules(body, filterAll, filterAll, strings.ToLower(name))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse rules", err), nil
 			}
@@ -395,7 +395,7 @@ func metricLabelValuesHandler(d *deps, label string) func(context.Context, mcp.C
 // label-values tools: call /api/v1/label/{label}/values with match[] +
 // time filters, then apply client-side prefix filter + pagination.
 func runPromLabelValues(ctx context.Context, d *deps, org, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
+	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -486,21 +486,21 @@ func flattenAlertRules(raw json.RawMessage, wantType, wantState, nameLC string) 
 	out := []ruleItem{}
 	for _, g := range env.Data.Groups {
 		for _, r := range g.Rules {
-			if wantType == "alert" && r.Type != "alerting" {
+			if wantType == ruleTypeAlert && r.Type != "alerting" {
 				continue
 			}
-			if wantType == "record" && r.Type != "recording" {
+			if wantType == ruleTypeRecord && r.Type != "recording" {
 				continue
 			}
-			if wantState != "all" && !strings.EqualFold(r.State, wantState) {
+			if wantState != filterAll && !strings.EqualFold(r.State, wantState) {
 				continue
 			}
 			if nameLC != "" && !strings.Contains(strings.ToLower(r.Name), nameLC) {
 				continue
 			}
-			ruleType := "alert"
+			ruleType := ruleTypeAlert
 			if r.Type == "recording" {
-				ruleType = "record"
+				ruleType = ruleTypeRecord
 			}
 			out = append(out, ruleItem{
 				Type:        ruleType,

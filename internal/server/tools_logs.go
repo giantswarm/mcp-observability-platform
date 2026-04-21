@@ -37,7 +37,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -158,7 +158,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -212,7 +212,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -236,7 +236,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 // /loki/api/v1/label/{label}/values. Defaults the time window to last 1h
 // so callers don't have to specify it for simple discovery.
 func fetchLokiLabels(ctx context.Context, d *deps, org, label string, req mcp.CallToolRequest) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
 	if err != nil {
 		return nil, err
 	}

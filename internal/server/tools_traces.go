@@ -31,7 +31,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *deps) {
 		instrument("query_traces", d, datasourceProxyHandler(d, datasourceSpec{
 			Role:         authz.RoleViewer,
 			NeedTenant:   obsv1alpha2.TenantTypeData,
-			NameContains: []string{"tempo"},
+			NameContains: []string{dsKindTempo},
 			InstantPath:  "api/search",
 			QueryArg:     "q",
 			ExtraArg:     "limit",
@@ -57,7 +57,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "tempo")
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindTempo)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -161,7 +161,7 @@ func qualifyTempoTag(scope, tag string) string {
 // {scopes:[{name, tags:[...]}]} structure for tag names and
 // {tagValues:[{type, value}]} for values; we flatten both to a []string.
 func fetchTempoTags(ctx context.Context, d *deps, org, tag string, req mcp.CallToolRequest) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "tempo")
+	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindTempo)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func fetchTempoTags(ctx context.Context, d *deps, org, tag string, req mcp.CallT
 	q := url.Values{}
 	q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())))
 	q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().Unix())))
-	if scope := req.GetString("scope", ""); scope != "" && scope != "all" {
+	if scope := req.GetString("scope", ""); scope != "" && scope != filterAll {
 		q.Set("scope", scope)
 	}
 

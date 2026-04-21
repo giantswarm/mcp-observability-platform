@@ -86,7 +86,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *deps) {
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, "all", "")
+			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
 			}
@@ -114,23 +114,23 @@ func resolveAlertmanagerDS(ctx context.Context, d *deps, org string) (authz.OrgA
 // server-side. Defaults state to "active" when empty.
 func fetchAlerts(ctx context.Context, d *deps, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
 	if state == "" {
-		state = "active"
+		state = amActive
 	}
 	q := url.Values{}
 	switch state {
-	case "active":
-		q.Set("active", "true")
+	case amActive:
+		q.Set(amActive, "true")
 		q.Set("silenced", "false")
 		q.Set("inhibited", "false")
 	case "silenced":
 		q.Set("silenced", "true")
-		q.Set("active", "false")
+		q.Set(amActive, "false")
 		q.Set("inhibited", "false")
 	case "inhibited":
 		q.Set("inhibited", "true")
-		q.Set("active", "false")
+		q.Set(amActive, "false")
 		q.Set("silenced", "false")
-	case "all":
+	case filterAll:
 		// no filter
 	default:
 		return nil, fmt.Errorf("state must be one of: active, silenced, inhibited, all")
