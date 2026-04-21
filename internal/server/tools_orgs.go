@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -156,6 +155,3 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 		}),
 	)
 }
-
-// ensure "fmt" import is needed (used by error messages indirectly)
-var _ = fmt.Sprintf

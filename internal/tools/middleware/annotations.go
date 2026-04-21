@@ -15,14 +15,12 @@ import (
 // whether retrying is safe, and whether responses may change over time.
 func ReadOnlyAnnotation() mcp.ToolOption {
 	return mcp.WithToolAnnotation(mcp.ToolAnnotation{
-		ReadOnlyHint:    ptrBool(true),
-		IdempotentHint:  ptrBool(true),
-		OpenWorldHint:   ptrBool(true),
-		DestructiveHint: ptrBool(false),
+		ReadOnlyHint:    mcp.ToBoolPtr(true),
+		IdempotentHint:  mcp.ToBoolPtr(true),
+		OpenWorldHint:   mcp.ToBoolPtr(true),
+		DestructiveHint: mcp.ToBoolPtr(false),
 	})
 }
-
-func ptrBool(b bool) *bool { return &b }
 
 // GrafanaOpts packages orgID and caller subject into a RequestOpts so every
 // downstream call attributes to the caller via X-Grafana-User.

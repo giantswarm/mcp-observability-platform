@@ -10,19 +10,15 @@ import (
 )
 
 // Metrics increments the tool-call counter and records the latency histogram
-// per invocation, labelled by tool name and outcome ("ok" | "err"). Outcome
-// is "err" when the handler returns an error OR returns an IsError result.
+// per invocation, labelled by tool name and outcome ("ok" | "err").
 func Metrics(name string) Middleware {
 	return func(h Handler) Handler {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			start := time.Now()
 			res, err := h(ctx, req)
-			outcome := "ok"
-			if err != nil || (res != nil && res.IsError) {
-				outcome = "err"
-			}
-			observability.ToolCallTotal.WithLabelValues(name, outcome).Inc()
-			observability.ToolCallDuration.WithLabelValues(name, outcome).Observe(time.Since(start).Seconds())
+			o := outcome(res, err)
+			observability.ToolCallTotal.WithLabelValues(name, o).Inc()
+			observability.ToolCallDuration.WithLabelValues(name, o).Observe(time.Since(start).Seconds())
 			return res, err
 		}
 	}

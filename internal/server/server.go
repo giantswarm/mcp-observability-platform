@@ -41,7 +41,6 @@ func New(cfg Config) (http.Handler, error) {
 	}
 
 	deps := &middleware.Deps{
-		Log:      cfg.Logger,
 		Resolver: cfg.Resolver,
 		Grafana:  cfg.Grafana,
 	}

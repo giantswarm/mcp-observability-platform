@@ -1,8 +1,7 @@
 // Package middleware composes the cross-cutting concerns every MCP tool
 // handler flows through. Each concern is a small `Middleware` =
 // `func(Handler) Handler`; `Chain` composes them into a single Handler,
-// and `Default` applies the project's standard stack (tracing + metrics
-// today; audit, progress, rate limit land as feature PRs ship).
+// and `Default` applies the project's standard stack.
 //
 // Tool registration reads like:
 //
@@ -20,7 +19,6 @@ package middleware
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -37,10 +35,9 @@ type Handler = func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, 
 type Middleware func(Handler) Handler
 
 // Deps bundles the handler-scoped dependencies tool registrations need.
-// Passed to Default so middleware can reach the logger / resolver / grafana
-// client without each tool threading them through a closure.
+// Passed to Default so middleware can reach resolver / grafana / audit
+// without each tool threading them through a closure.
 type Deps struct {
-	Log      *slog.Logger
 	Resolver *authz.Resolver
 	Grafana  *grafana.Client
 }
@@ -56,14 +53,9 @@ func Chain(mws ...Middleware) Middleware {
 	}
 }
 
-// Default is the standard middleware stack applied to every tool. Order:
-// Tracing (outermost, so spans cover everything) → Metrics (so durations
-// include any inner middleware). Feature PRs add to this list rather than
-// touching each tool registration:
-//
-//   - PR 5 (audit):      Audit(name, d.Audit)
-//   - PR 6 (cancel/prog): Progress(name)
-//   - PR 9 (rate limit): RateLimit(name, d.Limiter)
+// Default is the standard middleware stack applied to every tool. Order is
+// outermost → innermost: Tracing (so spans cover everything) → Metrics.
+// Append new cross-cutting concerns here; tool call sites stay untouched.
 func Default(name string, _ *Deps) Middleware {
 	return Chain(
 		Tracing(name),
@@ -76,4 +68,14 @@ func Default(name string, _ *Deps) Middleware {
 // a custom stack can call Chain / Tracing / Metrics / … directly.
 func Handle(name string, d *Deps, h Handler) Handler {
 	return Default(name, d)(h)
+}
+
+// outcome classifies a tool handler's return as "ok" or "err". A non-nil
+// error or an IsError result both count as err. Shared by Metrics and (in
+// PR 5) Audit so the metric label and audit outcome never drift.
+func outcome(res *mcp.CallToolResult, err error) string {
+	if err != nil || (res != nil && res.IsError) {
+		return "err"
+	}
+	return "ok"
 }
