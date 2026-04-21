@@ -1,0 +1,20 @@
+suite: poddisruptionbudget
+templates:
+  - templates/poddisruptionbudget.yaml
+tests:
+  - it: not rendered by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: rendered with minAvailable when enabled
+    set:
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 2
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: spec.minAvailable
+          value: 2

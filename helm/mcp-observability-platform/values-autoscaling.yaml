@@ -1,0 +1,79 @@
+# Production autoscaling + availability overlay: HPA + VPA + PDB all on.
+#
+# The three disagree about whose job it is to size pods:
+#   - HPA scales the replica count on CPU/memory pressure.
+#   - VPA adjusts per-pod resource requests/limits based on observed usage.
+#   - PDB protects against voluntary-disruption-induced outages during
+#     rolling updates or node drains.
+#
+# VPA is set to Initial here (not Auto) so it only sizes new pods —
+# combining VPA Auto + HPA on the same resource metrics leads to oscillation.
+# See the VPA docs on "limitRanges-and-HPA" before flipping to Auto.
+
+replicas: 2
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  vpa:
+    enabled: true
+    updateMode: Initial
+    resourcePolicy:
+      containerPolicies:
+        - containerName: mcp
+          minAllowed:
+            cpu: 50m
+            memory: 128Mi
+          maxAllowed:
+            cpu: 2
+            memory: 2Gi
+
+networkPolicy:
+  enabled: true
+  # Example egress allow-list: Grafana + Dex + OTLP collector.
+  # Adjust namespace/port to match your cluster topology.
+  egressTo:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - port: 3000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dex
+      ports:
+        - port: 5556
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+      ports:
+        - port: 4318
+          protocol: TCP
+
+runtime:
+  # Tighter response cap in prod to protect LLM context budget under load.
+  maxResponseBytes: 65536
+  # Reasonable rate limits once PR 9 wires them in.
+  rateLimit:
+    perCaller: 10
+    perOrg: 100
+    global: 500

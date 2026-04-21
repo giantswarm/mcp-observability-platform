@@ -1,0 +1,19 @@
+mcp-observability-platform installed.
+
+Verify:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Required secrets you must create before the pod will become Ready:
+  - Secret "{{ .Values.grafana.existingSecret }}" with key "serviceAccountToken"
+    (a Grafana server-admin SA token — the SA must have the "Grafana Admin" SERVER role)
+  - Secret "{{ .Values.oauth.dex.existingSecret }}" with key "clientSecret"
+{{- if .Values.oauth.encryption.existingSecret }}
+  - Secret "{{ .Values.oauth.encryption.existingSecret }}" with key "encryptionKey"
+{{- end }}
+{{- if and (eq .Values.oauth.storage.backend "valkey") .Values.oauth.storage.valkey.existingSecret }}
+  - Secret "{{ .Values.oauth.storage.valkey.existingSecret }}" with key "password"
+{{- end }}
+
+Service: {{ include "mcp-observability-platform.fullname" . }}
+  mcp:     :{{ .Values.service.mcpPort }}  (MCP traffic, OAuth-protected)
+  metrics: :{{ .Values.service.metricsPort }}  (/healthz /readyz /metrics)

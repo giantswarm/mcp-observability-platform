@@ -1,0 +1,19 @@
+suite: servicemonitor
+templates:
+  - templates/servicemonitor.yaml
+tests:
+  - it: rendered by default with 30s interval
+    asserts:
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: spec.endpoints[0].interval
+          value: 30s
+
+  - it: not rendered when serviceMonitor disabled
+    set:
+      serviceMonitor:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

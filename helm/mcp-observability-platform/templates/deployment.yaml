@@ -1,0 +1,201 @@
+{{- $otel := (default dict .Values.otel) }}
+{{- $mcp := (default dict .Values.mcp) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-observability-platform.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-observability-platform.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mcp-observability-platform.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-observability-platform.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Trigger a rollout when runtime-config values change. Without this,
+        # operators edit values.yaml runtime fields and the pod keeps running
+        # with stale env until the next unrelated redeploy.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "mcp-observability-platform.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mcp
+          image: {{ include "mcp-observability-platform.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: mcp
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          env:
+            - name: MCP_TRANSPORT
+              value: {{ .Values.mcp.transport | quote }}
+            - name: DEBUG
+              value: {{ .Values.mcp.debug | quote }}
+            - name: MCP_ADDR
+              value: ":8080"
+            - name: METRICS_ADDR
+              value: ":9091"
+
+            # OAuth (resource server) — its own identity
+            - name: MCP_OAUTH_ISSUER
+              value: {{ .Values.oauth.issuer | quote }}
+            - name: MCP_OAUTH_ALLOW_INSECURE_HTTP
+              value: {{ .Values.oauth.allowInsecureHTTP | quote }}
+            - name: MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
+              value: {{ .Values.oauth.allowPublicClientRegistration | quote }}
+
+            # Dex (IdP) — how this MCP talks to Dex
+            - name: DEX_ISSUER_URL
+              value: {{ .Values.oauth.dex.issuerUrl | quote }}
+            - name: DEX_CLIENT_ID
+              value: {{ .Values.oauth.dex.clientId | quote }}
+            - name: DEX_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oauth.dex.existingSecret }}
+                  key: clientSecret
+
+            # Storage backend for OAuth state
+            - name: OAUTH_STORAGE
+              value: {{ .Values.oauth.storage.backend | quote }}
+            {{- if eq .Values.oauth.storage.backend "valkey" }}
+            - name: VALKEY_ADDR
+              value: {{ .Values.oauth.storage.valkey.addr | quote }}
+            - name: VALKEY_TLS
+              value: {{ .Values.oauth.storage.valkey.tls | quote }}
+            {{- if .Values.oauth.storage.valkey.existingSecret }}
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oauth.storage.valkey.existingSecret }}
+                  key: password
+            {{- end }}
+            {{- end }}
+
+            # Optional: AES-256 encryption-at-rest for mcp-oauth
+            {{- if .Values.oauth.encryption.existingSecret }}
+            - name: MCP_OAUTH_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oauth.encryption.existingSecret }}
+                  key: encryptionKey
+            {{- end }}
+
+            # Grafana access — one of serviceAccountToken (preferred) or basicAuth
+            - name: GRAFANA_URL
+              value: {{ .Values.grafana.url | quote }}
+            {{- if .Values.grafana.publicUrl }}
+            - name: GRAFANA_PUBLIC_URL
+              value: {{ .Values.grafana.publicUrl | quote }}
+            {{- end }}
+            {{- if eq .Values.grafana.authMode "basicAuth" }}
+            - name: GRAFANA_BASIC_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.grafana.existingSecret }}
+                  key: basicAuth
+            {{- else }}
+            - name: GRAFANA_SA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.grafana.existingSecret }}
+                  key: serviceAccountToken
+            {{- end }}
+
+            # K8s downward-API attrs for OTEL resource auto-detection. Set
+            # unconditionally — they're cheap and useful for non-OTEL
+            # introspection too (logs join nicely on these).
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+
+            # OpenTelemetry tracing (no-op when endpoint is empty)
+            {{- if $otel.endpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ $otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ $otel.protocol | default "http/protobuf" | quote }}
+            {{- if $otel.insecure }}
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              value: "true"
+            {{- end }}
+            {{- end }}
+            {{- with $otel.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+
+            {{- with .Values.extraEnvVars }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+
+          envFrom:
+            # Runtime tunables (timeouts, response cap, rate-limit thresholds,
+            # resolver cache TTL, OAuth refresh window). ConfigMap-backed so
+            # operators can tweak without redeploying the chart.
+            - configMapRef:
+                name: {{ include "mcp-observability-platform.fullname" . }}-runtime
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
