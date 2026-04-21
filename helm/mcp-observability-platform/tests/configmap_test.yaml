@@ -1,0 +1,55 @@
+suite: configmap
+templates:
+  - templates/configmap.yaml
+tests:
+  - it: always renders with runtime defaults
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: data.MCP_TOOL_TIMEOUT
+          value: "30s"
+      - equal:
+          path: data.TOOL_MAX_RESPONSE_BYTES
+          value: "131072"
+      - equal:
+          path: data.MCP_RESOLVER_CACHE_TTL
+          value: "30s"
+      - equal:
+          path: data.MCP_RATE_LIMIT_PER_CALLER
+          value: "0"
+      - equal:
+          path: data.MCP_RATE_LIMIT_PER_ORG
+          value: "0"
+      - equal:
+          path: data.MCP_RATE_LIMIT_GLOBAL
+          value: "0"
+      - equal:
+          path: data.MCP_OAUTH_REFRESH_AHEAD
+          value: "5m"
+
+  - it: honours runtime overrides
+    set:
+      runtime:
+        toolTimeout: 60s
+        maxResponseBytes: 0
+        rateLimit:
+          perCaller: 20
+          perOrg: 200
+          global: 1000
+    asserts:
+      - equal:
+          path: data.MCP_TOOL_TIMEOUT
+          value: "60s"
+      - equal:
+          path: data.TOOL_MAX_RESPONSE_BYTES
+          value: "0"
+      - equal:
+          path: data.MCP_RATE_LIMIT_PER_CALLER
+          value: "20"
+      - equal:
+          path: data.MCP_RATE_LIMIT_PER_ORG
+          value: "200"
+      - equal:
+          path: data.MCP_RATE_LIMIT_GLOBAL
+          value: "1000"

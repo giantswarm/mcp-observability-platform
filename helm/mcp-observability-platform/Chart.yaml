@@ -1,0 +1,17 @@
+apiVersion: v2
+name: mcp-observability-platform
+description: Giant Swarm observability-platform MCP server
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/giantswarm/mcp-observability-platform
+maintainers:
+  - name: Giant Swarm
+    url: https://giantswarm.io
+annotations:
+  # 'all' = customers can deploy; 'giantswarm' = internal only.
+  io.giantswarm.application.audience: all
+  # 'true' if Giant Swarm takes responsibility for this app where deployed.
+  io.giantswarm.application.managed: "true"
+  io.giantswarm.application.team: atlas

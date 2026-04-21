@@ -1,0 +1,14 @@
+# Dev / test overlay: in-memory OAuth store + debug logging + single replica.
+#
+# Every pod restart wipes OAuth state, so every client re-authenticates.
+# Not suitable for production — see values-valkey.yaml for the prod pattern.
+
+replicas: 1
+
+mcp:
+  debug: true
+
+oauth:
+  allowInsecureHTTP: true  # dev clusters often terminate TLS elsewhere
+  storage:
+    backend: memory

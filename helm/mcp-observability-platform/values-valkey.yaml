@@ -1,0 +1,21 @@
+# Production overlay: Valkey-backed OAuth token store.
+#
+# Using the memory store (chart default) means tokens are lost on pod restart
+# and every replica has its own state — fine for dev, not for prod. Valkey
+# (or Redis) gives durable state that survives rollouts and can be shared
+# across multiple MCP replicas.
+#
+# Required prereqs:
+#   - A Valkey (or Redis-compatible) instance reachable from the MCP pod.
+#   - A Secret with key `password` (name below) — or leave existingSecret
+#     empty if Valkey has no auth.
+#
+# Apply with:  helm install mcp helm/mcp-observability-platform -f values-valkey.yaml
+
+oauth:
+  storage:
+    backend: valkey
+    valkey:
+      addr: "valkey.observability.svc.cluster.local:6379"
+      tls: false
+      existingSecret: "mcp-observability-platform-valkey"

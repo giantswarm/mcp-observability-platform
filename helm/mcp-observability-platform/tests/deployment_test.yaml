@@ -1,0 +1,52 @@
+suite: deployment
+templates:
+  - templates/deployment.yaml
+  # The checksum/config annotation includes the ConfigMap template, so it
+  # must be present in the isolated test template set. Asserts scope to
+  # the Deployment explicitly with the per-assert `template:` field.
+  - templates/configmap.yaml
+tests:
+  - it: envFrom references the runtime ConfigMap
+    asserts:
+      - template: templates/deployment.yaml
+        isKind:
+          of: Deployment
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].envFrom[0].configMapRef.name
+          value: RELEASE-NAME-mcp-observability-platform-runtime
+
+  - it: default replicas = 1
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.replicas
+          value: 1
+
+  - it: liveness probe hits /healthz, readiness hits /readyz
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+
+  - it: honors extra envFrom on top of runtime ConfigMap
+    set:
+      extraEnvFrom:
+        - secretRef:
+            name: my-extra-secrets
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].envFrom[1].secretRef.name
+          value: my-extra-secrets
+
+  - it: pod template carries checksum/config annotation
+    asserts:
+      - template: templates/deployment.yaml
+        exists:
+          path: spec.template.metadata.annotations["checksum/config"]

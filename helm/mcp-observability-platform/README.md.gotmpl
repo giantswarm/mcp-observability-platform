@@ -1,0 +1,34 @@
+{{ template "chart.header" . }}
+
+{{ template "chart.description" . }}
+
+{{ template "chart.versionBadge" . }}{{ template "chart.appVersionBadge" . }}{{ template "chart.typeBadge" . }}
+
+{{ template "chart.maintainersSection" . }}
+
+## Installing
+
+```sh
+helm install mcp-observability-platform helm/mcp-observability-platform \
+  --namespace observability --create-namespace
+```
+
+## Example overlays
+
+| Values file                | Scenario                                                         |
+| -------------------------- | ---------------------------------------------------------------- |
+| `values-memory.yaml`       | Dev/test: memory-backed OAuth store, debug logging.              |
+| `values-valkey.yaml`       | Prod: Valkey-backed OAuth store (durable, shared across replicas). |
+| `values-rbac-minimal.yaml` | Externally-managed ServiceAccount + ClusterRoleBinding.          |
+| `values-autoscaling.yaml`  | HPA + VPA (Initial) + PDB + NetworkPolicy (ingress + egress).    |
+
+## Configuration
+
+See [`values.yaml`](values.yaml). All runtime tunables (timeouts, response
+cap, rate-limit thresholds, OAuth refresh window) live under `runtime:` and
+are delivered to the container via an `envFrom`-mounted ConfigMap so they
+can be changed without redeploying the chart.
+
+{{ template "chart.valuesSection" . }}
+
+{{ template "helm-docs.versionFooter" . }}
