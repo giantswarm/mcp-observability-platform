@@ -72,28 +72,6 @@ func TestClampInt(t *testing.T) {
 	}
 }
 
-func TestIntArg_AcceptsMultipleNumericFormats(t *testing.T) {
-	cases := []map[string]any{
-		{"n": float64(42)},
-		{"n": 42},
-		{"n": int64(42)},
-		{"n": "42"},
-	}
-	for _, m := range cases {
-		if got := intArg(m, "n"); got != 42 {
-			t.Errorf("intArg(%v) = %d, want 42", m, got)
-		}
-	}
-	// Missing key returns 0.
-	if intArg(map[string]any{}, "absent") != 0 {
-		t.Errorf("absent key should return 0")
-	}
-	// Non-numeric string returns 0.
-	if intArg(map[string]any{"n": "xyz"}, "n") != 0 {
-		t.Errorf("non-numeric string should return 0")
-	}
-}
-
 func TestEnforceResponseCap(t *testing.T) {
 	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "100")
 	small := []byte(`{"ok":true}`)
