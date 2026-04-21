@@ -1,11 +1,11 @@
 module github.com/giantswarm/mcp-observability-platform
 
-go 1.25.0
+go 1.25.5
 
 require (
 	github.com/giantswarm/mcp-oauth v0.2.102
 	github.com/giantswarm/observability-operator v0.55.0
-	github.com/mark3labs/mcp-go v0.46.0
+	github.com/mark3labs/mcp-go v0.49.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
