@@ -11,13 +11,6 @@ One MCP per Grafana instance. Authentication via MCP OAuth (Dex as IdP).
 Authorization resolved from the caller's OIDC groups against
 `GrafanaOrganization.spec.rbac.{admins,editors,viewers}`.
 
-> **Branch status (helm chart)**: this branch adds the Helm chart on top
-> of scaffold (#3) and tools (#10), both already merged to main. See
-> [`docs/roadmap.md`](./docs/roadmap.md) for the remaining PRs:
-> - Deep readiness + two-phase shutdown → `pr-4-readiness` (PR #7)
-> - CI expansion → `pr-3-ci` (PR #6)
-> - Composable middleware + MCP annotations → `pr-1-wrap-middleware` (PR #4)
-
 ## Roadmap
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization plan
@@ -200,7 +193,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `VALKEY_ADDR` / `_PASSWORD` / `_TLS`        | no             | Required when `OAUTH_STORAGE=valkey`                     |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` only (default). `sse` / `stdio` reserved for a later PR and currently rejected at startup. |
 | `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`)   |
-| `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz` (default `:9091`) |
+| `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`) |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`               | no             | `http/protobuf` (default) or `grpc`                      |

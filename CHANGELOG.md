@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI workflow (`ci.yaml`) running Go test + vet, yamllint, Helm lint, helm-unittest, and govulncheck on every PR and push to main. Runs alongside the devctl-generated workflows (`zz_generated.*`) already in the repo.
 - `Makefile.custom.mk` with CI-facing targets (`check`, `test-vet`, `helm-lint`, `helm-test`, `govulncheck`, `lint-yaml`) + developer conveniences (`tidy`, `helm-template`).
 - Tool-handler middleware (`internal/server/middleware/`) applied globally via mcp-go's `WithToolHandlerMiddleware`: `Tracing()` (OTEL span per tool call) and `Metrics()` (counter + histogram). mcp-go's `WithRecovery()` is wired too — panic safety we did not have before. Tool registrations carry `tools.ReadOnlyAnnotation()` so `tools/list` advertises `readOnlyHint`, `openWorldHint`, `destructiveHint: false`.
+- Deep readiness probes: `/readyz` now checks Grafana reachability (via `/api/health`), Dex OIDC discovery, and the K8s informer cache (2s per-check deadline). `/healthz/detailed` returns a JSON summary with per-check status, duration, uptime, and version for operators and dashboards.
 
 ### Changed
 
@@ -23,5 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Package restructure.** `internal/tracing/` merged into `internal/observability/`; caller identity plumbing moved to `internal/identity/`; tool handlers moved from `internal/server/tools_*.go` to `internal/tools/` (one file per category); tool middlewares live at `internal/server/middleware/`. MCP resources / prompts stubs stay in `internal/server/` as peer surfaces to tools.
 - Tool-call `outcome` metric label expanded from `ok`/`err` to `ok`/`user_error`/`system_error` so operators can distinguish real incidents (5xx-class — Go error / panic) from expected user-visible failures (4xx-class — missing arg, authz denial, `response_too_large`). Spans carry the same classification as the `tool.outcome` attribute; span status is marked Error only on `system_error`.
 - Go toolchain bumped to `1.25.5`; `mark3labs/mcp-go` to `v0.49.0` (ships `ToolHandlerMiddleware`, `WithRecovery`, `NewToolResultErrorf`).
+- Two-phase graceful shutdown: drain the MCP server first (10s) while the observability server keeps answering liveness probes and Prometheus scrapes, then drain observability (5s). Prevents kubelet from killing the pod mid-tool-call because the liveness probe bounced while MCP was draining.
 
 [Unreleased]: https://github.com/giantswarm/mcp-observability-platform/tree/main
