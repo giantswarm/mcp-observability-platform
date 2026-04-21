@@ -133,8 +133,41 @@ tool registrations stay untouched.
 same `OTEL_EXPORTER_OTLP_ENDPOINT` as traces would give free
 `trace_id`/`span_id` correlation on every log record and unify all three
 signals onto one pipeline. Lives in `internal/observability/logging.go`
-alongside `metrics.go` + `tracing.go`. Separate PR once the middleware
-dust settles.
+alongside `metrics.go` + `tracing.go`.
+
+**Test-coverage gaps** (low-risk, ship when convenient):
+- `internal/tools/dashboards.go#expandGrafanaVars` — substring-replacement
+  logic for Grafana template macros (`$__rate_interval`, dashboard vars).
+  Previous bug was fixed by sorting vars length-DESC to avoid `$cluster`
+  corrupting `$cluster_id`; guard with a table test.
+- `internal/tools/dashboards.go#readJSONPointer` — our RFC 6901
+  implementation. Edge cases (escape sequences `~0`/`~1`, array indexing,
+  non-container traversal) deserve coverage.
+
+**`ARCHITECTURE.md`** — onboarding doc with the hex-arch dependency
+diagram, "where to add X" cheat sheet, and threat model. Extract from the
+review in PR #4 when the dust settles.
+
+**Helm PDB smart default** — gate
+`helm/mcp-observability-platform/templates/poddisruptionbudget.yaml` on
+`replicas > 1` and enable it by default. Safe on single-replica deploys
+(template renders nothing) + automatic protection once operators scale
+out. Small addition to PR #2's values.yaml.
+
+**Propagate pre-commit Go tools upstream** — `giantswarm/github` PR #5098
+adds the Go toolchain install to the central
+`zz_generated.pre-commit.yaml`. Once merged, this repo's local copy can
+be regenerated.
+
+**`mcp-oauth` session lifecycle adoption** — mcp-oauth v0.2.102 added
+`SessionIDFromContext`, `SetTokenRefreshHandler`,
+`SetSessionCreationHandler`, `SetSessionRevocationHandler`. These unlock:
+- Per-session state cleanup on logout (PR 9 rate-limit state, PR 8 audit
+  session correlation).
+- Active OAuth token refresh with a callback for downstream cache
+  invalidation (PR 9).
+- Session-scoped identity in `internal/identity/` — expose
+  `CallerSessionID(ctx)` once audit / progress PRs need it.
 
 ## The 10 productionization PRs
 
