@@ -19,11 +19,13 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
+func registerSilenceTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	s.AddTool(
 		mcp.NewTool("list_silences",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List silences as Alertmanager actually sees them (/api/v2/silences). Use this to answer 'is this alert silenced and by what?'."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'pending' | 'expired' | 'all'.")),
@@ -31,9 +33,9 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 50, max 500.")),
 		),
-		instrument("list_silences", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("list_silences", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
@@ -41,24 +43,24 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			page := intArg(args, "page")
-			pageSize := intArg(args, "pageSize")
+			page := middleware.IntArg(args, "page")
+			pageSize := middleware.IntArg(args, "pageSize")
 			if pageSize <= 0 {
 				pageSize = 50
 			}
-			pageSize = clampInt(pageSize, 1, 500)
+			pageSize = middleware.ClampInt(pageSize, 1, 500)
 			q := url.Values{}
-			if filter := strArg(args, "filter"); filter != "" {
+			if filter := middleware.StrArg(args, "filter"); filter != "" {
 				q.Set("filter", filter)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/silences").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "alertmanager/api/v2/silences", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), dsID, "alertmanager/api/v2/silences", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager silences", err), nil
 			}
-			result, err := paginateSilences(body, strArg(args, "state"), page, pageSize)
+			result, err := paginateSilences(body, middleware.StrArg(args, "state"), page, pageSize)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse silences", err), nil
 			}

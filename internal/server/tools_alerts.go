@@ -15,14 +15,16 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
+func registerAlertTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	registerAlertDetailTool(s, d)
 	registerSilenceTools(s, d)
 
 	s.AddTool(
 		mcp.NewTool("list_alerts",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); read alertmanager://org/{name}/alert/{fingerprint} for full detail."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'silenced' | 'inhibited' | 'all'")),
@@ -30,9 +32,9 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page index (default 0)")),
 			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
 		),
-		instrument("list_alerts", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("list_alerts", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
@@ -40,17 +42,17 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 
-			page := intArg(args, "page")
-			pageSize := intArg(args, "pageSize")
+			page := middleware.IntArg(args, "page")
+			pageSize := middleware.IntArg(args, "pageSize")
 			if pageSize <= 0 {
 				pageSize = 50
 			}
-			pageSize = clampInt(pageSize, 1, 500)
+			pageSize = middleware.ClampInt(pageSize, 1, 500)
 
-			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, strArg(args, "state"), strArg(args, "filter"))
+			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, middleware.StrArg(args, "state"), middleware.StrArg(args, "filter"))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
 			}
@@ -66,20 +68,21 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
 // registerAlertDetailTool exposes a per-alert read tool. Replaces the prior
 // alertmanager://org/{name}/alert/{fingerprint} resource (LLMs handle tools
 // far more reliably than resources).
-func registerAlertDetailTool(s *mcpsrv.MCPServer, d *deps) {
+func registerAlertDetailTool(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	s.AddTool(
 		mcp.NewTool("get_alert",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Return the full Alertmanager alert object for a single fingerprint: labels, annotations, timestamps, generatorURL, silencedBy/inhibitedBy. Use after list_alerts."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
 		),
-		instrument("get_alert", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_alert", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			fp := strArg(args, "fingerprint")
+			fp := middleware.StrArg(args, "fingerprint")
 			if fp == "" {
 				return mcp.NewToolResultError("missing required argument 'fingerprint'"), nil
 			}
@@ -87,7 +90,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, "all", "")
 			if err != nil {
@@ -108,14 +111,14 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *deps) {
 // resolveAlertmanagerDS is the alertmanager-specific specialisation of
 // resolveDatasource, kept as its own name so call sites in resources.go read
 // at the same abstraction level as the tool handlers.
-func resolveAlertmanagerDS(ctx context.Context, d *deps, org string) (authz.OrgAccess, int64, error) {
-	return resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeAlerting, "alertmanager")
+func resolveAlertmanagerDS(ctx context.Context, d *middleware.Deps, org string) (authz.OrgAccess, int64, error) {
+	return middleware.ResolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeAlerting, "alertmanager")
 }
 
 // fetchAlerts calls Alertmanager's /api/v2/alerts through the Grafana
 // datasource proxy with the requested state/filter narrowing applied
 // server-side. Defaults state to "active" when empty.
-func fetchAlerts(ctx context.Context, d *deps, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
+func fetchAlerts(ctx context.Context, d *middleware.Deps, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
 	if state == "" {
 		state = "active"
 	}
@@ -142,7 +145,7 @@ func fetchAlerts(ctx context.Context, d *deps, orgID, dsID int64, state, filter 
 		q.Set("filter", filter)
 	}
 	observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/alerts").Inc()
-	return d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, "alertmanager/api/v2/alerts", q)
+	return d.Grafana.DatasourceProxy(ctx, middleware.GrafanaOpts(ctx, orgID), dsID, "alertmanager/api/v2/alerts", q)
 }
 
 // amAlert is the subset of Alertmanager's /api/v2/alerts shape we consume.

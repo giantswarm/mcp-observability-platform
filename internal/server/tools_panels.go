@@ -11,6 +11,7 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
 // maxRenderedImageBytes caps the PNG payload returned by get_panel_image.
@@ -19,9 +20,10 @@ import (
 // reasonable upper bound for practical panels.
 const maxRenderedImageBytes = 4 * 1024 * 1024
 
-func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
+func registerPanelTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	s.AddTool(
 		mcp.NewTool("get_panel_image",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription(
 				"Render a Grafana dashboard panel as a PNG image and return it as an MCP image resource. "+
 					"Requires the 'grafana-image-renderer' plugin, or the standalone renderer service "+
@@ -38,32 +40,32 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("theme", mcp.Description("'light' | 'dark' (default 'light').")),
 			mcp.WithString("tz", mcp.Description("IANA timezone for time axis, e.g. 'Europe/Paris'. Default: UTC.")),
 		),
-		instrument("get_panel_image", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_panel_image", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			panelID := intArg(args, "panelId")
+			panelID := middleware.IntArg(args, "panelId")
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			// Rendering is CPU-heavy on the renderer service; give it room.
-			ctx, cancel := withToolTimeout(ctx, 45*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 45*time.Second)
 			defer cancel()
 
 			// Short-circuit with a structured error when the plugin isn't
 			// installed — without this, Grafana returns a PNG of its own
 			// error message and the tool appears to succeed.
-			if present, err := d.grafana.HasImageRenderer(ctx); err == nil && !present {
+			if present, err := d.Grafana.HasImageRenderer(ctx); err == nil && !present {
 				return mcp.NewToolResultJSON(struct {
 					Error string `json:"error"`
 					Hint  string `json:"hint"`
@@ -76,27 +78,27 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 
 			q := url.Values{}
-			q.Set("from", firstNonEmptyStr(strArg(args, "from"), "now-1h"))
-			q.Set("to", firstNonEmptyStr(strArg(args, "to"), "now"))
-			width := intArg(args, "width")
+			q.Set("from", firstNonEmptyStr(middleware.StrArg(args, "from"), "now-1h"))
+			q.Set("to", firstNonEmptyStr(middleware.StrArg(args, "to"), "now"))
+			width := middleware.IntArg(args, "width")
 			if width <= 0 {
 				width = 1000
 			}
-			height := intArg(args, "height")
+			height := middleware.IntArg(args, "height")
 			if height <= 0 {
 				height = 500
 			}
 			q.Set("width", strconv.Itoa(width))
 			q.Set("height", strconv.Itoa(height))
-			if theme := strArg(args, "theme"); theme != "" {
+			if theme := middleware.StrArg(args, "theme"); theme != "" {
 				q.Set("theme", theme)
 			}
-			if tz := strArg(args, "tz"); tz != "" {
+			if tz := middleware.StrArg(args, "tz"); tz != "" {
 				q.Set("tz", tz)
 			}
 			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
 
-			png, contentType, err := d.grafana.RenderPanel(ctx, grafanaOpts(ctx, oa.OrgID), uid, panelID, q)
+			png, contentType, err := d.Grafana.RenderPanel(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid, panelID, q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("render panel", err), nil
 			}

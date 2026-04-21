@@ -1,8 +1,10 @@
-package server
+package middleware
 
 import (
 	"context"
+	"net/http"
 
+	oauth "github.com/giantswarm/mcp-oauth"
 	"github.com/giantswarm/mcp-oauth/providers"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -19,19 +21,19 @@ func CallerFromContext(ctx context.Context) (*providers.UserInfo, bool) {
 	return ui, ok
 }
 
-// withCaller attaches the caller identity to ctx. Internal only.
-func withCaller(ctx context.Context, ui *providers.UserInfo) context.Context {
+// WithCaller attaches the caller identity to ctx.
+func WithCaller(ctx context.Context, ui *providers.UserInfo) context.Context {
 	if ui == nil {
 		return ctx
 	}
 	return context.WithValue(ctx, callerKey{}, ui)
 }
 
-// callerSubject returns a stable identifier for the caller — provider ID
+// CallerSubject returns a stable identifier for the caller — provider ID
 // preferred over email; empty string when no identity is attached. Used for
 // audit logs and for the X-Grafana-User header so Grafana's audit log shows
 // who-did-what instead of the server-admin SA.
-func callerSubject(ctx context.Context) string {
+func CallerSubject(ctx context.Context) string {
 	ui, ok := CallerFromContext(ctx)
 	if !ok || ui == nil {
 		return ""
@@ -42,9 +44,10 @@ func callerSubject(ctx context.Context) string {
 	return ui.Email
 }
 
-// callerAuthz extracts the identifiers the authz resolver needs to ask
+// CallerAuthz extracts the identifiers the authz resolver needs to ask
 // Grafana who this caller is. Returns an empty Caller if no identity is
 // attached; the resolver then errors downstream.
+<<<<<<< HEAD:internal/server/context.go
 //
 // Subject is the OIDC sub claim, the stable unique identifier. Login is
 // deliberately left empty: OIDC sub is NOT a Grafana login name, and
@@ -52,9 +55,34 @@ func callerSubject(ctx context.Context) string {
 // miss when the user's email/login doesn't match their sub. The resolver
 // falls back to Email-based lookup when Login is empty.
 func callerAuthz(ctx context.Context) authz.Caller {
+=======
+func CallerAuthz(ctx context.Context) authz.Caller {
+>>>>>>> 40d177f (Compose tool middleware + add MCP annotations):internal/tools/middleware/context.go
 	ui, ok := CallerFromContext(ctx)
 	if !ok || ui == nil {
 		return authz.Caller{}
 	}
 	return authz.Caller{Email: ui.Email, Subject: ui.ID}
+}
+
+// CallerGroups returns the caller's groups or nil if identity is missing.
+// Nil is treated as "no access" everywhere downstream.
+func CallerGroups(ctx context.Context) []string {
+	ui, ok := CallerFromContext(ctx)
+	if !ok || ui == nil {
+		return nil
+	}
+	return ui.Groups
+}
+
+// PromoteOAuthCaller lifts the UserInfo attached by mcp-oauth's ValidateToken
+// middleware onto the context that mcp-go passes to tool/resource handlers.
+// Callers that reach a tool without a valid identity will be rejected at the
+// handler boundary (CallerGroups returns nil, and the resolver returns an
+// authorisation error).
+func PromoteOAuthCaller(ctx context.Context, r *http.Request) context.Context {
+	if ui, ok := oauth.UserInfoFromContext(r.Context()); ok {
+		return WithCaller(ctx, ui)
+	}
+	return ctx
 }

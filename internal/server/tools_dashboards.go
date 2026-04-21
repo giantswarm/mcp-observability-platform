@@ -15,11 +15,13 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
+func registerDashboardTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	s.AddTool(
 		mcp.NewTool("list_dashboards",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List dashboards in a Grafana org, grouped by folder. Returns a compact tree {total, folders:[{title, dashboards:[{title,uid,url}]}]} so large orgs fit in the LLM context."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("query", mcp.Description("Optional title-substring filter applied server-side by Grafana.")),
@@ -28,21 +30,21 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page over folders when a filtered result is still large. Optional.")),
 			mcp.WithNumber("pageSize", mcp.Description("Folder-page size (default 20, max 200). Optional.")),
 		),
-		instrument("list_dashboards", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("list_dashboards", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.SearchDashboards(ctx, grafanaOpts(ctx, oa.OrgID), strArg(args, "query"), intArg(args, "limit"))
+			body, err := d.Grafana.SearchDashboards(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), middleware.StrArg(args, "query"), middleware.IntArg(args, "limit"))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search failed", err), nil
 			}
-			tree, err := groupDashboardsByFolder(body, strArg(args, "folder"), intArg(args, "page"), intArg(args, "pageSize"))
+			tree, err := groupDashboardsByFolder(body, middleware.StrArg(args, "folder"), middleware.IntArg(args, "page"), middleware.IntArg(args, "pageSize"))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboards", err), nil
 			}
@@ -52,29 +54,30 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("get_dashboard_by_uid",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Fetch a Grafana dashboard's full JSON. Prefer get_dashboard_summary or get_dashboard_property when you can — full dashboards are often 100s of KB and easily exceed the response cap. Use this only when you actually need the raw document."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
 		),
-		instrument("get_dashboard_by_uid", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_dashboard_by_uid", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
-			if capErr := enforceResponseCap(body); capErr != nil {
+			if capErr := middleware.EnforceResponseCap(body); capErr != nil {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
@@ -83,25 +86,26 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("get_dashboard_summary",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Return a compact summary of a Grafana dashboard — title, tags, variables, row & panel layout — WITHOUT panel queries. Use this first to explore; then get_dashboard_panel_queries for the specific panel(s) you care about. Avoids pulling the full dashboard JSON (often 100s of KB)."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
 		),
-		instrument("get_dashboard_summary", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_dashboard_summary", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -115,31 +119,32 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("get_dashboard_panel_queries",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Return the data queries (PromQL/LogQL/TraceQL) for one panel — or all panels, or a title-substring match. Use after get_dashboard_summary to pinpoint the exact panel. Returns the raw expressions so you can re-run them via query_metrics / query_logs / query_traces."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
 			mcp.WithNumber("panelId", mcp.Description("Return only the panel with this id.")),
 			mcp.WithString("titleContains", mcp.Description("Case-insensitive panel-title substring filter.")),
 		),
-		instrument("get_dashboard_panel_queries", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_dashboard_panel_queries", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
-			res, err := extractDashboardQueries(body, intArg(args, "panelId"), strArg(args, "titleContains"))
+			res, err := extractDashboardQueries(body, middleware.IntArg(args, "panelId"), middleware.StrArg(args, "titleContains"))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
@@ -149,27 +154,28 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("get_dashboard_property",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Read a specific sub-tree of a Grafana dashboard by JSON Pointer (RFC 6901). Example pointers: '/dashboard/panels' (all panels), '/dashboard/templating/list' (variables), '/dashboard/panels/0/targets' (first panel's queries). Much cheaper than fetching the full dashboard JSON when you know the path."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
 			mcp.WithString("path", mcp.Required(), mcp.Description("JSON Pointer, e.g. '/dashboard/title' or '/dashboard/panels/0'. Empty '' or '/' returns the whole document.")),
 		),
-		instrument("get_dashboard_property", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_dashboard_property", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			path := strArg(args, "path")
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			path := middleware.StrArg(args, "path")
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -177,7 +183,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("json pointer", err), nil
 			}
-			if capErr := enforceResponseCap(sub); capErr != nil {
+			if capErr := middleware.EnforceResponseCap(sub); capErr != nil {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(sub)), nil
@@ -186,6 +192,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("get_annotations",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Read Grafana annotations (deploys, releases, manual notes) for a time window. Useful in RCA: 'what changed near 11:30?'. Filter by dashboard, panel, tags."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("from", mcp.Description("Unix ms or RFC3339; default now-1h.")),
@@ -195,44 +202,44 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("tags", mcp.Description("Comma-separated tag filter (annotations matching ALL tags).")),
 			mcp.WithNumber("limit", mcp.Description("Max annotations (default 100, max 1000).")),
 		),
-		instrument("get_annotations", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_annotations", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := url.Values{}
 			q.Set("from", grafanaTimeArg(args, "from", -time.Hour))
 			q.Set("to", grafanaTimeArg(args, "to", 0))
-			if uid := strArg(args, "dashboardUid"); uid != "" {
+			if uid := middleware.StrArg(args, "dashboardUid"); uid != "" {
 				q.Set("dashboardUID", uid)
 			}
-			if pid := intArg(args, "panelId"); pid > 0 {
+			if pid := middleware.IntArg(args, "panelId"); pid > 0 {
 				q.Set("panelId", strconv.Itoa(pid))
 			}
-			if tags := strArg(args, "tags"); tags != "" {
+			if tags := middleware.StrArg(args, "tags"); tags != "" {
 				for _, t := range strings.Split(tags, ",") {
 					if t = strings.TrimSpace(t); t != "" {
 						q.Add("tags", t)
 					}
 				}
 			}
-			limit := clampInt(intArg(args, "limit"), 1, 1000)
+			limit := middleware.ClampInt(middleware.IntArg(args, "limit"), 1, 1000)
 			if limit == 0 {
 				limit = 100
 			}
 			q.Set("limit", strconv.Itoa(limit))
-			body, err := d.grafana.GetAnnotations(ctx, grafanaOpts(ctx, oa.OrgID), q)
+			body, err := d.Grafana.GetAnnotations(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotations", err), nil
 			}
-			if capErr := enforceResponseCap(body); capErr != nil {
+			if capErr := middleware.EnforceResponseCap(body); capErr != nil {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
@@ -241,6 +248,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("run_panel_query",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Run the stored query for a single dashboard panel directly — no need to extract+rebuild. Resolves the panel's datasource type (Mimir/Loki/Tempo) and routes through the appropriate proxy. Saves the get_dashboard_panel_queries → query_metrics two-step."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
@@ -251,29 +259,29 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("step", mcp.Description("Step for range queries.")),
 			mcp.WithNumber("limit", mcp.Description("Max log entries / traces for Loki/Tempo panels.")),
 		),
-		instrument("run_panel_query", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("run_panel_query", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			panelID := intArg(args, "panelId")
+			panelID := middleware.IntArg(args, "panelId")
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
-			panel, target, kind, vars, err := pickPanelTarget(body, panelID, intArg(args, "targetIndex"))
+			panel, target, kind, vars, err := pickPanelTarget(body, panelID, middleware.IntArg(args, "targetIndex"))
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -285,9 +293,9 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 					newArgs[k] = v
 				}
 			}
-			step := strArg(args, "step")
+			step := middleware.StrArg(args, "step")
 			expanded := func(expr string) string {
-				return expandGrafanaVars(expr, vars, strArg(args, "start"), strArg(args, "end"), step)
+				return expandGrafanaVars(expr, vars, middleware.StrArg(args, "start"), middleware.StrArg(args, "end"), step)
 			}
 			switch kind {
 			case "mimir":
@@ -296,7 +304,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 				}
 				newArgs["query"] = expanded(target.Expr)
 				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				return middleware.DatasourceProxyHandler(d, middleware.DatasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{"mimir"},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
 				})(ctx, req)
@@ -306,7 +314,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 				}
 				newArgs["query"] = expanded(target.Expr)
 				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				return middleware.DatasourceProxyHandler(d, middleware.DatasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{"loki"},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ForceRange: true, DefaultRangeAgo: time.Hour, ExtraArg: "limit",
@@ -317,7 +325,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 				}
 				newArgs["query"] = expanded(target.Query)
 				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				return middleware.DatasourceProxyHandler(d, middleware.DatasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{"tempo"},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
 				})(ctx, req)
@@ -329,6 +337,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("generate_deeplink",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Build a ready-to-share Grafana URL for a dashboard (or a single panel in view mode) with an embedded time range and optional template-variable values. Hand the URL back to a human operator."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
@@ -337,29 +346,29 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("to", mcp.Description("Grafana time expression. Default 'now'.")),
 			mcp.WithObject("vars", mcp.Description("Template-variable values as {var: value} (e.g. {\"cluster\":\"prod-eu-1\"}).")),
 		),
-		instrument("generate_deeplink", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("generate_deeplink", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			base, err := d.grafana.BaseURL()
+			base, err := d.Grafana.BaseURL()
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("base url", err), nil
 			}
-			from := strArg(args, "from")
+			from := middleware.StrArg(args, "from")
 			if from == "" {
 				from = "now-1h"
 			}
-			to := strArg(args, "to")
+			to := middleware.StrArg(args, "to")
 			if to == "" {
 				to = "now"
 			}
@@ -367,7 +376,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
 			q.Set("from", from)
 			q.Set("to", to)
-			if pid := intArg(args, "panelId"); pid > 0 {
+			if pid := middleware.IntArg(args, "panelId"); pid > 0 {
 				q.Set("viewPanel", strconv.Itoa(pid))
 			}
 			if vars, ok := args["vars"].(map[string]any); ok {
@@ -390,7 +399,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 // When the named arg is set, it's passed through verbatim (already RFC3339,
 // "now-1h", or a unix-ms numeral). When absent, returns now+offset in ms.
 func grafanaTimeArg(args map[string]any, name string, offset time.Duration) string {
-	if s := strArg(args, name); s != "" {
+	if s := middleware.StrArg(args, name); s != "" {
 		return s
 	}
 	return fmt.Sprintf("%d", time.Now().Add(offset).UnixMilli())
@@ -765,7 +774,7 @@ func groupDashboardsByFolder(raw json.RawMessage, folderFilter string, page, pag
 	if pageSize <= 0 {
 		pageSize = 20
 	}
-	pageSize = clampInt(pageSize, 1, 200)
+	pageSize = middleware.ClampInt(pageSize, 1, 200)
 	if page < 0 {
 		page = 0
 	}

@@ -9,9 +9,10 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerPrompts(s *mcpsrv.MCPServer, _ *deps) {
+func registerPrompts(s *mcpsrv.MCPServer, _ *middleware.Deps) {
 	s.AddPrompt(
 		mcp.NewPrompt("investigate-alert",
 			mcp.WithPromptDescription(

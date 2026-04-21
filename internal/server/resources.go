@@ -12,6 +12,7 @@ package server
 
 import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerResources(_ *mcpsrv.MCPServer, _ *deps) {}
+func registerResources(_ *mcpsrv.MCPServer, _ *middleware.Deps) {}

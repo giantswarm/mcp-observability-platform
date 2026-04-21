@@ -16,14 +16,16 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
+func registerLogTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	// query_logs — Loki range queries with cursor pagination. Loki does not
 	// support instant queries for log streams, so we always call query_range
 	// and default to the last hour when start/end are missing.
 	s.AddTool(
 		mcp.NewTool("query_logs",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Run a LogQL query against Loki. Defaults to last 1h when start/end are omitted. Returns {data, nextStart} — when nextStart is set, the limit was hit; re-run with end=<nextStart> to page further back in time."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("query", mcp.Required(), mcp.Description("LogQL expression")),
@@ -31,33 +33,33 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix nanoseconds (default: now)")),
 			mcp.WithNumber("limit", mcp.Description("Max log entries per page (default 100, max 5000).")),
 		),
-		instrument("query_logs", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("query_logs", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+			oa, dsID, err := middleware.ResolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 30*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			query := strArg(args, "query")
+			query := middleware.StrArg(args, "query")
 			if query == "" {
 				return mcp.NewToolResultError("missing required argument 'query'"), nil
 			}
-			limit := intArg(args, "limit")
+			limit := middleware.IntArg(args, "limit")
 			if limit <= 0 {
 				limit = 100
 			}
-			limit = clampInt(limit, 1, 5000)
+			limit = middleware.ClampInt(limit, 1, 5000)
 
 			q := url.Values{}
 			q.Set("query", query)
-			start := strArg(args, "start")
-			end := strArg(args, "end")
+			start := middleware.StrArg(args, "start")
+			end := middleware.StrArg(args, "end")
 			if start == "" {
 				start = fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())
 			}
@@ -70,12 +72,12 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			q.Set("direction", "backward")
 
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/query_range").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/query_range", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/query_range", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("loki query_range", err), nil
 			}
 			cursor, hit := lokiPageCursor(body, limit)
-			if capErr := enforceResponseCap(body); capErr != nil {
+			if capErr := middleware.EnforceResponseCap(body); capErr != nil {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			// Attach a cursor wrapper so LLM clients can page.
@@ -93,14 +95,15 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("list_loki_label_names",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List log-stream label names in Loki for the given time window. Sorted alphabetically."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("start", mcp.Description("RFC3339 or unix ns; default now-1h.")),
 			mcp.WithString("end", mcp.Description("RFC3339 or unix ns; default now.")),
 		),
-		instrument("list_loki_label_names", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("list_loki_label_names", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
@@ -108,12 +111,13 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(names, "", 0, len(names)))
+			return mcp.NewToolResultJSON(middleware.PaginateStrings(names, "", 0, len(names)))
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("list_loki_label_values",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List values for a given Loki label (e.g. 'namespace', 'app'). Paginated, with optional prefix filter."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("label", mcp.Required(), mcp.Description("Label name, e.g. 'namespace'.")),
@@ -123,13 +127,13 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
-		instrument("list_loki_label_values", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("list_loki_label_values", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			label := strArg(args, "label")
+			label := middleware.StrArg(args, "label")
 			if label == "" {
 				return mcp.NewToolResultError("missing required argument 'label'"), nil
 			}
@@ -137,12 +141,13 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(values, strArg(args, "prefix"), intArg(args, "page"), intArg(args, "pageSize")))
+			return mcp.NewToolResultJSON(middleware.PaginateStrings(values, middleware.StrArg(args, "prefix"), middleware.IntArg(args, "page"), middleware.IntArg(args, "pageSize")))
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("query_loki_patterns",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Extract repeating log patterns from Loki for a LogQL selector (Loki's /loki/api/v1/patterns). Returns the top-N patterns ranked by total count, with per-pattern sample totals — the per-timestamp sample arrays are folded to a single count to keep responses compact. Requires Loki 3.x with the pattern-ingester feature."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("query", mcp.Required(), mcp.Description("LogQL selector, e.g. '{namespace=\"kube-system\"}'.")),
@@ -151,31 +156,31 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("step", mcp.Description("Pattern aggregation step, e.g. '1m'. Default unset (Loki picks).")),
 			mcp.WithNumber("limit", mcp.Description("Top-N patterns to return (default 50, max 500).")),
 		),
-		instrument("query_loki_patterns", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("query_loki_patterns", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			query := strArg(args, "query")
+			query := middleware.StrArg(args, "query")
 			if query == "" {
 				return mcp.NewToolResultError("missing required argument 'query'"), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+			oa, dsID, err := middleware.ResolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := url.Values{}
 			q.Set("query", query)
-			q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
-			q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
-			if step := strArg(args, "step"); step != "" {
+			q.Set("start", firstNonEmpty(middleware.StrArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
+			q.Set("end", firstNonEmpty(middleware.StrArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
+			if step := middleware.StrArg(args, "step"); step != "" {
 				q.Set("step", step)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/patterns").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/patterns", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/patterns", q)
 			if err != nil {
 				// Loki versions without the pattern ingester return 404 on
 				// this path; surface a readable error instead of leaking the
@@ -185,11 +190,11 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 				}
 				return mcp.NewToolResultErrorFromErr("loki patterns", err), nil
 			}
-			limit := intArg(args, "limit")
+			limit := middleware.IntArg(args, "limit")
 			if limit <= 0 {
 				limit = 50
 			}
-			limit = clampInt(limit, 1, 500)
+			limit = middleware.ClampInt(limit, 1, 500)
 			projected, err := projectLokiPatterns(body, limit)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse patterns", err), nil
@@ -200,34 +205,35 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("query_loki_stats",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Return Loki's size estimate (bytes, streams, chunks, entries) for a LogQL selector over a time window. Cheap way to check how much a query would return BEFORE actually running it."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("query", mcp.Required(), mcp.Description("LogQL selector (must be a selector/matcher, not a metric query).")),
 			mcp.WithString("start", mcp.Description("RFC3339 or unix ns; default now-1h.")),
 			mcp.WithString("end", mcp.Description("RFC3339 or unix ns; default now.")),
 		),
-		instrument("query_loki_stats", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("query_loki_stats", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			query := strArg(args, "query")
+			query := middleware.StrArg(args, "query")
 			if query == "" {
 				return mcp.NewToolResultError("missing required argument 'query'"), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+			oa, dsID, err := middleware.ResolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 10*time.Second)
+			ctx, cancel := middleware.WithToolTimeout(ctx, 10*time.Second)
 			defer cancel()
 			q := url.Values{}
 			q.Set("query", query)
-			q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
-			q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
+			q.Set("start", firstNonEmpty(middleware.StrArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
+			q.Set("end", firstNonEmpty(middleware.StrArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/index/stats").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/index/stats", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/index/stats", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("loki stats", err), nil
 			}
@@ -239,23 +245,23 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 // fetchLokiLabels hits /loki/api/v1/labels (when label is "") or
 // /loki/api/v1/label/{label}/values. Defaults the time window to last 1h
 // so callers don't have to specify it for simple discovery.
-func fetchLokiLabels(ctx context.Context, d *deps, org, label string, args map[string]any) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
+func fetchLokiLabels(ctx context.Context, d *middleware.Deps, org, label string, args map[string]any) ([]string, error) {
+	oa, dsID, err := middleware.ResolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := withToolTimeout(ctx, 15*time.Second)
+	ctx, cancel := middleware.WithToolTimeout(ctx, 15*time.Second)
 	defer cancel()
 	q := url.Values{}
-	q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
-	q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
+	q.Set("start", firstNonEmpty(middleware.StrArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
+	q.Set("end", firstNonEmpty(middleware.StrArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
 
 	path := "loki/api/v1/labels"
 	if label != "" {
 		path = "loki/api/v1/label/" + url.PathEscape(label) + "/values"
 	}
 	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
-	body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
+	body, err := d.Grafana.DatasourceProxy(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("loki %s: %w", path, err)
 	}

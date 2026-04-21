@@ -11,15 +11,17 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
+func registerOrgTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
 		),
-		instrument("list_orgs", d, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			access, err := d.resolver.Resolve(ctx, callerAuthz(ctx))
+		middleware.Handle("list_orgs", d, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			access, err := d.Resolver.Resolve(ctx, middleware.CallerAuthz(ctx))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
 			}
@@ -63,20 +65,21 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("list_datasources",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("List the Grafana datasources visible in an org, with name/type/uid. Tools like query_metrics pick a datasource by name substring; use this to see the full list if a selection fails."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 		),
-		instrument("list_datasources", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("list_datasources", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			raw, err := d.grafana.ListDatasources(ctx, grafanaOpts(ctx, oa.OrgID))
+			raw, err := d.Grafana.ListDatasources(ctx, middleware.GrafanaOpts(ctx, oa.OrgID))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana /api/datasources failed", err), nil
 			}
@@ -123,29 +126,30 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
 
 	s.AddTool(
 		mcp.NewTool("get_datasource",
+			middleware.ReadOnlyAnnotation(),
 			mcp.WithDescription("Return full Grafana datasource details by UID. Use after list_datasources to inspect access mode, JSON settings, etc."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Datasource UID. See list_datasources.")),
 		),
-		instrument("get_datasource", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		middleware.Handle("get_datasource", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
+			org, errRes := middleware.RequireOrg(args)
 			if errRes != nil {
 				return errRes, nil
 			}
-			uid := strArg(args, "uid")
+			uid := middleware.StrArg(args, "uid")
 			if uid == "" {
 				return mcp.NewToolResultError("missing required argument 'uid'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, middleware.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.GetDatasource(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDatasource(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana datasource", err), nil
 			}
-			if capErr := enforceResponseCap(body); capErr != nil {
+			if capErr := middleware.EnforceResponseCap(body); capErr != nil {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil

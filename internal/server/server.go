@@ -4,16 +4,15 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 
-	oauth "github.com/giantswarm/mcp-oauth"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
 // Config configures a new MCP HTTP server.
@@ -41,10 +40,10 @@ func New(cfg Config) (http.Handler, error) {
 		cfg.Version = "dev"
 	}
 
-	deps := &deps{
-		log:      cfg.Logger,
-		resolver: cfg.Resolver,
-		grafana:  cfg.Grafana,
+	deps := &middleware.Deps{
+		Log:      cfg.Logger,
+		Resolver: cfg.Resolver,
+		Grafana:  cfg.Grafana,
 	}
 
 	// Capabilities advertise static surfaces only. listChanged / subscribe are
@@ -67,36 +66,6 @@ func New(cfg Config) (http.Handler, error) {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
-		mcpsrv.WithHTTPContextFunc(promoteOAuthCaller),
+		mcpsrv.WithHTTPContextFunc(middleware.PromoteOAuthCaller),
 	), nil
-}
-
-// deps bundles the handler-scoped dependencies so tool/resource registration
-// stays concise.
-type deps struct {
-	log      *slog.Logger
-	resolver *authz.Resolver
-	grafana  *grafana.Client
-}
-
-// promoteOAuthCaller lifts the UserInfo attached by mcp-oauth's ValidateToken
-// middleware onto the context that mcp-go passes to tool/resource handlers.
-// Callers that reach a tool without a valid identity will be rejected at the
-// handler boundary (callerGroups returns nil, and the resolver returns an
-// authorisation error).
-func promoteOAuthCaller(ctx context.Context, r *http.Request) context.Context {
-	if ui, ok := oauth.UserInfoFromContext(r.Context()); ok {
-		return withCaller(ctx, ui)
-	}
-	return ctx
-}
-
-// callerGroups returns the caller's groups or nil if identity is missing.
-// Nil is treated as "no access" everywhere downstream.
-func callerGroups(ctx context.Context) []string {
-	ui, ok := CallerFromContext(ctx)
-	if !ok || ui == nil {
-		return nil
-	}
-	return ui.Groups
 }
