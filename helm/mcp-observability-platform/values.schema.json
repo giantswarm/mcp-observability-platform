@@ -123,19 +123,6 @@
                 }
             }
         },
-        "mcpOauth": {
-            "type": "object",
-            "properties": {
-                "encryption": {
-                    "type": "object",
-                    "properties": {
-                        "existingSecret": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
         "nameOverride": {
             "type": "string"
         },
@@ -175,6 +162,14 @@
                             "type": "string"
                         },
                         "issuerUrl": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "encryption": {
+                    "type": "object",
+                    "properties": {
+                        "existingSecret": {
                             "type": "string"
                         }
                     }
@@ -375,7 +370,12 @@
                     "type": "string"
                 },
                 "labels": {
-                    "type": "object"
+                    "type": "object",
+                    "properties": {
+                        "observability.giantswarm.io/tenant": {
+                            "type": "string"
+                        }
+                    }
                 },
                 "metricRelabelings": {
                     "type": "array"

@@ -47,8 +47,12 @@ serviceAccount:
 serviceMonitor:
   enabled: true
   interval: 30s
-  # Extra labels for Prometheus Operator selection.
-  labels: {}
+  # Extra labels for Prometheus Operator selection. Default includes the
+  # Giant Swarm observability-stack tenant routing label — override
+  # `observability.giantswarm.io/tenant` in customer installs to route
+  # metrics to a non-Giant-Swarm tenant.
+  labels:
+    observability.giantswarm.io/tenant: giantswarm
   relabelings: []
   metricRelabelings: []
 
@@ -137,10 +141,8 @@ oauth:
       tls: false
       # existingSecret must contain: password (only when backend=valkey and password is set)
       existingSecret: ""
-
-# AES-256 key used by mcp-oauth to encrypt tokens at rest (optional but
-# recommended). existingSecret must contain: encryptionKey (32 bytes, hex or raw)
-mcpOauth:
+  # AES-256 key used by mcp-oauth to encrypt tokens at rest (optional but
+  # recommended). existingSecret must contain: encryptionKey (32 bytes, hex or raw)
   encryption:
     existingSecret: ""
 

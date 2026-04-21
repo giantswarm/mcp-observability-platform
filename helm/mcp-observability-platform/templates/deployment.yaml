@@ -99,11 +99,11 @@ spec:
             {{- end }}
 
             # Optional: AES-256 encryption-at-rest for mcp-oauth
-            {{- if .Values.mcpOauth.encryption.existingSecret }}
+            {{- if .Values.oauth.encryption.existingSecret }}
             - name: MCP_OAUTH_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.mcpOauth.encryption.existingSecret }}
+                  name: {{ .Values.oauth.encryption.existingSecret }}
                   key: encryptionKey
             {{- end }}
 
