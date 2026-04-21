@@ -12,6 +12,7 @@ env:
   HELM_VERSION: "3.17.3"
   HELM_DOCS_VERSION: "1.14.2"
   HELM_VALUES_SCHEMA_JSON_VERSION: "2.3.1"
+  GOLANGCI_LINT_VERSION: "2.9.0"
 
 jobs:
   pre-commit:
@@ -42,5 +43,19 @@ jobs:
         download_url: "https://github.com/losisin/helm-values-schema-json/releases/download/v${version}/helm-values-schema-json_${version}_linux_amd64.tgz"
         tarball_binary_path: "schema"
         binary_new_name: "${binary}"
+    - name: Set up Go
+      uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
+      with:
+        go-version-file: go.mod
+        cache: true
+    - name: Install goimports
+      run: go install golang.org/x/tools/cmd/goimports@latest
+    - name: Install golangci-lint
+      uses: giantswarm/install-binary-action@e2730babbc89f02ef1559b042d33cbe24f5c3547 # v4.0.2
+      with:
+        binary: golangci-lint
+        version: "${{ env.GOLANGCI_LINT_VERSION }}"
+        download_url: "https://github.com/golangci/golangci-lint/releases/download/v${version}/${binary}-${version}-linux-amd64.tar.gz"
+        tarball_binary_path: "${binary}-${version}-linux-amd64/${binary}"
     - name: Execute pre-commit hooks
       uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
