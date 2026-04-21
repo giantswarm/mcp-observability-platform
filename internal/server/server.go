@@ -82,21 +82,11 @@ type deps struct {
 // promoteOAuthCaller lifts the UserInfo attached by mcp-oauth's ValidateToken
 // middleware onto the context that mcp-go passes to tool/resource handlers.
 // Callers that reach a tool without a valid identity will be rejected at the
-// handler boundary (callerGroups returns nil, and the resolver returns an
-// authorisation error).
+// authz boundary in PR #10 (resolver returns ErrNotAuthorised on an empty
+// Caller).
 func promoteOAuthCaller(ctx context.Context, r *http.Request) context.Context {
 	if ui, ok := oauth.UserInfoFromContext(r.Context()); ok {
 		return withCaller(ctx, ui)
 	}
 	return ctx
-}
-
-// callerGroups returns the caller's groups or nil if identity is missing.
-// Nil is treated as "no access" everywhere downstream.
-func callerGroups(ctx context.Context) []string {
-	ui, ok := CallerFromContext(ctx)
-	if !ok || ui == nil {
-		return nil
-	}
-	return ui.Groups
 }

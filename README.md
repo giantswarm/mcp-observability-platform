@@ -11,6 +11,16 @@ One MCP per Grafana instance. Authentication via MCP OAuth (Dex as IdP).
 Authorization resolved from the caller's OIDC groups against
 `GrafanaOrganization.spec.rbac.{admins,editors,viewers}`.
 
+> **Branch status (scaffold)**: this README describes the target MCP surface.
+> The current branch ports the Go scaffold only — no tools, resources, or
+> prompts are registered yet, the Helm chart is not present, and `/readyz`
+> is a liveness-equivalent stub. See [`docs/roadmap.md`](./docs/roadmap.md)
+> for the PR breakdown:
+> - Tools / resources / prompts → `port-tools` (PR #10)
+> - Helm chart → `pr-2-helm-hardening` (PR #5)
+> - Deep readiness + two-phase shutdown → `pr-4-readiness` (PR #7)
+> - CI expansion → `pr-3-ci` (PR #6)
+
 ## Roadmap
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization plan
@@ -167,23 +177,30 @@ reachable from Grafana.
 
 Env-var driven. Flags override env. See `cmd/serve.go`.
 
-| Env var                         | Required | Purpose                                            |
-| ------------------------------- | -------- | -------------------------------------------------- |
-| `GRAFANA_URL`                   | yes      | Grafana base URL                                   |
-| `GRAFANA_SA_TOKEN`              | yes      | Grafana **server-admin** SA token (see below)      |
-| `DEX_ISSUER_URL`                | yes      | Dex issuer                                         |
-| `DEX_CLIENT_ID`                 | yes      | Dex OAuth client                                   |
-| `DEX_CLIENT_SECRET`             | yes      | Dex OAuth client secret                            |
-| `MCP_OAUTH_ISSUER`              | yes      | Public issuer URL of this MCP                      |
-| `MCP_OAUTH_REDIRECT_URL`        | no       | Defaults to `$MCP_OAUTH_ISSUER/oauth/callback`     |
-| `MCP_OAUTH_ALLOW_INSECURE_HTTP` | no       | Set `true` for local-dev HTTP                      |
-| `MCP_OAUTH_ENCRYPTION_KEY`      | no       | AES-256 key for token encryption at rest (phase 2) |
-| `OAUTH_STORAGE`                 | no       | `memory` (default) or `valkey`                     |
-| `VALKEY_ADDR` / `_PASSWORD` / `_TLS` | no  | Required when `OAUTH_STORAGE=valkey`               |
-| `MCP_TRANSPORT`                 | no       | `streamable-http` (default), `sse`, `stdio`        |
-| `TOOL_MAX_RESPONSE_BYTES`       | no       | Cap on tool response body (default 131072; 0 = disabled) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`   | no       | OTLP/HTTP endpoint for span export                 |
-| `DEBUG`                         | no       | `true` to enable debug logging                     |
+| Env var                                     | Required       | Purpose                                                  |
+| ------------------------------------------- | -------------- | -------------------------------------------------------- |
+| `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
+| `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below)            |
+| `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin, as an alternative to `GRAFANA_SA_TOKEN` when SA promotion is unavailable |
+| `GRAFANA_PUBLIC_URL`                        | no             | Human-facing Grafana URL for deeplinks; defaults to `GRAFANA_URL` |
+| `DEX_ISSUER_URL`                            | yes            | Dex issuer                                               |
+| `DEX_CLIENT_ID`                             | yes            | Dex OAuth client                                         |
+| `DEX_CLIENT_SECRET`                         | yes            | Dex OAuth client secret                                  |
+| `MCP_OAUTH_ISSUER`                          | yes            | Public issuer URL of this MCP                            |
+| `MCP_OAUTH_REDIRECT_URL`                    | no             | Defaults to `$MCP_OAUTH_ISSUER/oauth/callback`           |
+| `MCP_OAUTH_ALLOW_INSECURE_HTTP`             | no             | `true` to allow plain-HTTP OAuth flows (local dev only)  |
+| `MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`| no             | `true` to open `/oauth/register` (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that use loopback redirect URIs per RFC 8252. |
+| `MCP_OAUTH_ENCRYPTION_KEY`                  | no             | AES-256 key for token encryption at rest; 64-char hex or 32 raw bytes |
+| `OAUTH_STORAGE`                             | no             | `memory` (default) or `valkey`                           |
+| `VALKEY_ADDR` / `_PASSWORD` / `_TLS`        | no             | Required when `OAUTH_STORAGE=valkey`                     |
+| `MCP_TRANSPORT`                             | no             | `streamable-http` only (default). `sse` / `stdio` reserved for a later PR and currently rejected at startup. |
+| `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`)   |
+| `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz` (default `:9091`) |
+| `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`               | no             | `http/protobuf` (default) or `grpc`                      |
+| `POD_NAME` / `POD_NAMESPACE` / `NODE_NAME`  | no             | Downward-API attributes added to OTEL resource when set  |
+| `DEBUG`                                     | no             | `true` to enable debug logging                           |
 
 ### Grafana service-account token
 
@@ -206,10 +223,18 @@ provisioned by the observability-operator (tracked in the plan).
 
 ## Local install
 
+Build and run the binary locally:
+
 ```sh
 go mod tidy
 make build
-make helm-template          # render
+./mcp-observability-platform serve
+```
+
+Helm chart installation lands in PR #5 (`pr-2-helm-hardening`). Once that
+chart is merged, the typical deploy will be:
+
+```sh
 helm install mcp-observability-platform ./helm/mcp-observability-platform \
   --namespace observability --create-namespace \
   --set grafana.url=https://grafana.example.com \
@@ -218,7 +243,7 @@ helm install mcp-observability-platform ./helm/mcp-observability-platform \
   --set oauth.dex.clientId=mcp-observability-platform
 ```
 
-Secrets you must create first:
+With secrets created beforehand:
 
 ```sh
 kubectl -n observability create secret generic mcp-observability-platform-grafana \

@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -16,9 +17,22 @@ import (
 const namespace = "mcp_observability_platform"
 
 // registry is the package-local registry backing every metric in this
-// package. Exposed only through MetricsHandler; tests that need a fresh
-// registry can call NewRegistry / RegisterOn directly (future extension).
-var registry = prometheus.NewRegistry()
+// package. We own it (rather than using prometheus.DefaultRegisterer) so
+// tests can instantiate the server twice without duplicate-registration
+// panics, and multiple MCP instances in one binary never cross-pollute.
+//
+// Go runtime + process collectors are registered explicitly because the
+// default registerer is what normally provides them; moving off it means
+// we must re-add them or operators lose `go_gc_*`, `process_resident_memory_bytes`
+// and friends.
+var registry = func() *prometheus.Registry {
+	r := prometheus.NewRegistry()
+	r.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	return r
+}()
 
 // ToolCallTotal counts every MCP tool invocation by name and outcome.
 // Outcome is one of "ok" | "err". Cardinality is bounded by the number of

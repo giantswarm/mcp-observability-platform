@@ -36,6 +36,25 @@ func TestPaginateStrings(t *testing.T) {
 			t.Errorf("clamp hi: got %d", got.PageSize)
 		}
 	})
+	t.Run("does not mutate caller's slice", func(t *testing.T) {
+		// Callers routinely pass cache-backed slices (resolver org list, CR
+		// listings). paginateStrings must not reorder them as a side effect.
+		in := []string{"zeta", "alpha", "beta"}
+		before := append([]string(nil), in...)
+		_ = paginateStrings(in, "", 0, 10)
+		for i := range before {
+			if in[i] != before[i] {
+				t.Fatalf("input mutated: before=%v after=%v", before, in)
+			}
+		}
+		// Same check with a prefix filter path.
+		_ = paginateStrings(in, "a", 0, 10)
+		for i := range before {
+			if in[i] != before[i] {
+				t.Fatalf("input mutated (prefix path): before=%v after=%v", before, in)
+			}
+		}
+	})
 }
 
 func TestClampInt(t *testing.T) {

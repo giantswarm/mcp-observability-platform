@@ -6,10 +6,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is injected at build time via
+// -ldflags="-X github.com/giantswarm/mcp-observability-platform/cmd.version=<ver>".
 var version = "dev"
-
-// SetVersion is called from main to inject the build-time version.
-func SetVersion(v string) { version = v }
 
 var rootCmd = &cobra.Command{
 	Use:   "mcp-observability-platform",

@@ -3,7 +3,6 @@ package grafana
 import (
 	"context"
 	"encoding/base64"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,7 +22,7 @@ func TestClient_AuthHeader_Bearer(t *testing.T) {
 	var gotAuth string
 	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	})
 	defer ts.Close()
 
@@ -40,7 +39,7 @@ func TestClient_AuthHeader_Basic(t *testing.T) {
 	var gotAuth string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	}))
 	defer ts.Close()
 	c, err := New(Config{URL: ts.URL, BasicAuth: "admin:pw"})
@@ -62,7 +61,7 @@ func TestClient_OrgIDAndCallerHeaders(t *testing.T) {
 	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		gotOrg = r.Header.Get("X-Grafana-Org-Id")
 		gotUser = r.Header.Get("X-Grafana-User")
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	})
 	defer ts.Close()
 
@@ -87,7 +86,7 @@ func TestClient_OmitsOrgIdWhenZero(t *testing.T) {
 		if r.Header.Get("X-Grafana-Org-Id") != "" {
 			sawHeader = true
 		}
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	})
 	defer ts.Close()
 
@@ -114,7 +113,7 @@ func TestClient_DetectsPrometheusErrorIn200(t *testing.T) {
 	// The client must treat this as an error.
 	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"error","errorType":"bad_data","error":"invalid query"}`))
+		_, _ = w.Write([]byte(`{"status":"error","errorType":"bad_data","error":"invalid query"}`))
 	})
 	defer ts.Close()
 
@@ -132,7 +131,7 @@ func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
-		w.Write([]byte("{}"))
+		_, _ = w.Write([]byte("{}"))
 	})
 	defer ts.Close()
 
@@ -159,7 +158,7 @@ func TestClient_RenderPanel_RendererMissing(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("<html>Rendering plugin is not installed</html>"))
+		_, _ = w.Write([]byte("<html>Rendering plugin is not installed</html>"))
 	}))
 	defer ts.Close()
 	c, _ := New(Config{URL: ts.URL, Token: "t"})
@@ -176,7 +175,7 @@ func TestClient_RenderPanel_RendererMissing(t *testing.T) {
 func TestClient_RenderPanel_Success(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		w.Write([]byte{0x89, 'P', 'N', 'G'})
+		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G'})
 	}))
 	defer ts.Close()
 	c, _ := New(Config{URL: ts.URL, Token: "t"})
@@ -209,6 +208,3 @@ func TestNew_Validation(t *testing.T) {
 		}
 	}
 }
-
-// Satisfy a linter complaint about unused imports if the test file is edited.
-var _ = io.EOF

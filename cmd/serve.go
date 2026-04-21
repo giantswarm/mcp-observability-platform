@@ -59,8 +59,22 @@ func init() {
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", envBool("DEBUG", false), "enable debug logging")
 }
 
+// validateTransport rejects MCP_TRANSPORT values that aren't wired yet.
+// Extracted so the rejection gate is unit-testable without standing up the
+// rest of runServe. stdio/sse land in PR #7.
+func validateTransport(transport string) error {
+	if transport != "streamable-http" {
+		return fmt.Errorf("transport %q not yet supported (only streamable-http is wired in this scaffold)", transport)
+	}
+	return nil
+}
+
 func runServe(_ *cobra.Command, _ []string) error {
 	logger := newLogger(flagDebug)
+
+	if err := validateTransport(flagTransport); err != nil {
+		return err
+	}
 
 	shutdownCtx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -69,6 +83,12 @@ func runServe(_ *cobra.Command, _ []string) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
+	}
+	if cfg.OAuthAllowInsecureHTTP {
+		logger.Warn("MCP_OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
+	}
+	if cfg.OAuthAllowPublicClientRegistration {
+		logger.Warn("MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
 	// --- Kubernetes client + informer cache for GrafanaOrganization CRs ---
@@ -116,16 +136,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	if err := gfClient.VerifyServerAdmin(shutdownCtx); err != nil {
 		return fmt.Errorf(
-			"Grafana credential is not server-admin (cannot list all orgs). "+
-				"Use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
+			"grafana credential is not server-admin (cannot list all orgs); "+
+				"use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
 	}
 	logger.Info("Grafana server-admin credential verified")
 
 	// authz uses Grafana as the source of truth for org membership. 30s
 	// per-caller cache to avoid hitting /api/users/lookup on every MCP call.
 	resolver := authz.NewResolver(ctrlCache, grafanaAuthz{c: gfClient}, logger, 30*time.Second)
-
-	// Grafana client is built during resolver construction above.
 
 	// --- mcp-oauth ---
 	dexProvider, err := dex.NewProvider(&dex.Config{
@@ -307,12 +325,12 @@ type config struct {
 
 func loadConfig() (*config, error) {
 	c := &config{
-		DexIssuerURL:                       os.Getenv("DEX_ISSUER_URL"),
-		DexClientID:                        os.Getenv("DEX_CLIENT_ID"),
-		DexClientSecret:                    os.Getenv("DEX_CLIENT_SECRET"),
-		OAuthIssuer:                        os.Getenv("MCP_OAUTH_ISSUER"),
-		OAuthRedirectURL:                   envOr("MCP_OAUTH_REDIRECT_URL", ""),
-		OAuthAllowInsecureHTTP:             envBool("MCP_OAUTH_ALLOW_INSECURE_HTTP", false),
+		DexIssuerURL:           os.Getenv("DEX_ISSUER_URL"),
+		DexClientID:            os.Getenv("DEX_CLIENT_ID"),
+		DexClientSecret:        os.Getenv("DEX_CLIENT_SECRET"),
+		OAuthIssuer:            os.Getenv("MCP_OAUTH_ISSUER"),
+		OAuthRedirectURL:       envOr("MCP_OAUTH_REDIRECT_URL", ""),
+		OAuthAllowInsecureHTTP: envBool("MCP_OAUTH_ALLOW_INSECURE_HTTP", false),
 		// Public client registration is off by default: letting arbitrary
 		// callers register an OAuth client against a production MCP is a
 		// standing risk. Opt-in per env for local dev and cluster test
@@ -412,10 +430,11 @@ func envOr(k, def string) string {
 	return def
 }
 
-// grafanaAuthz adapts *grafana.Client to authz.GrafanaOrgLookup without
-// leaking grafana-package types into authz (which would create an import
-// cycle since grafana already imports observability/metrics, and we want
-// authz to stay K8s-only).
+// grafanaAuthz adapts *grafana.Client to authz.GrafanaOrgLookup. Lives in
+// cmd/ (the composition root) rather than in authz/ or grafana/ so that
+// neither domain package has to know about the other: authz declares the
+// port it needs, grafana exposes a generic API, and this adapter bridges
+// them at wire-up time.
 type grafanaAuthz struct{ c *grafana.Client }
 
 func (g grafanaAuthz) LookupUserID(ctx context.Context, loginOrEmail string) (int64, bool, error) {

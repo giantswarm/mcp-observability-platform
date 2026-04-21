@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -89,13 +90,20 @@ func New(cfg Config) (*Client, error) {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
+		base := &http.Transport{
+			MaxIdleConns:        32,
+			MaxIdleConnsPerHost: 16,
+			IdleConnTimeout:     90 * time.Second,
+		}
+		// otelhttp.NewTransport emits a client span per request and injects the
+		// W3C traceparent header so downstream Grafana spans attach to our trace.
 		hc = &http.Client{
 			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        32,
-				MaxIdleConnsPerHost: 16,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Transport: otelhttp.NewTransport(base,
+				otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+					return "grafana " + r.Method + " " + r.URL.Path
+				}),
+			),
 		}
 	}
 	authHeader := "Bearer " + cfg.Token
@@ -124,7 +132,7 @@ func (c *Client) VerifyServerAdmin(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("grafana: GET /api/orgs: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("grafana: SA is not server-admin (status %d)", resp.StatusCode)
 	}
@@ -204,7 +212,7 @@ func (c *Client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 	if err != nil {
 		return nil, fmt.Errorf("grafana: lookup %q: %w", loginOrEmail, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
@@ -284,7 +292,7 @@ func (c *Client) HasImageRenderer(ctx context.Context) (bool, error) {
 		c.rendererAt = time.Now()
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// 200 -> plugin settings exist -> installed; 404 -> not installed.
 	// Anything else (403 etc.) treat as unknown; retry later.
 	c.rendererAt = time.Now()
@@ -332,13 +340,13 @@ func (c *Client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID
 		trace.WithAttributes(attribute.Int64("grafana.org_id", opts.OrgID), attribute.String("grafana.dashboard_uid", dashboardUID), attribute.Int("grafana.panel_id", panelID)),
 	)
 	defer span.End()
-	_ = ctx
+	req = req.WithContext(ctx)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, "", fmt.Errorf("grafana: render: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	ct := resp.Header.Get("Content-Type")
 	if resp.StatusCode >= 300 {
@@ -381,13 +389,13 @@ func (c *Client) do(ctx context.Context, req *http.Request, path string) (json.R
 		trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("grafana.path", path)),
 	)
 	defer span.End()
-	_ = ctx
+	req = req.WithContext(ctx)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("grafana: %s %s: %w", req.Method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 	if resp.StatusCode >= 300 {

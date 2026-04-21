@@ -6,7 +6,7 @@ COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
     -trimpath \
-    -ldflags="-s -w -X main.version=${VERSION}" \
+    -ldflags="-s -w -X github.com/giantswarm/mcp-observability-platform/cmd.version=${VERSION}" \
     -o /out/mcp-observability-platform .
 
 FROM gsoci.azurecr.io/giantswarm/alpine:3.20.3-giantswarm
