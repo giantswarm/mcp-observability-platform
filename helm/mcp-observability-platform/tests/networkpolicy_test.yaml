@@ -1,0 +1,47 @@
+suite: networkpolicy
+templates:
+  - templates/networkpolicy.yaml
+tests:
+  - it: not rendered by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: ingress-only when enabled without egressTo
+    set:
+      networkPolicy:
+        enabled: true
+    asserts:
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Ingress
+      - isNull:
+          path: spec.egress
+
+  - it: adds Egress + DNS rule when egressTo non-empty
+    set:
+      networkPolicy:
+        enabled: true
+        egressTo:
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+            ports:
+              - port: 3000
+                protocol: TCP
+    asserts:
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+      # First egress rule is always kube-dns.
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels.k8s-app
+          value: kube-dns
+      # User-supplied rule follows.
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 3000

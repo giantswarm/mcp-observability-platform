@@ -1,0 +1,21 @@
+{{- $vpa := (default dict (default dict .Values.autoscaling).vpa) }}
+{{- if $vpa.enabled }}
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "mcp-observability-platform.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mcp-observability-platform.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mcp-observability-platform.fullname" . }}
+  updatePolicy:
+    updateMode: {{ $vpa.updateMode | default "Auto" | quote }}
+  {{- with $vpa.resourcePolicy }}
+  resourcePolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

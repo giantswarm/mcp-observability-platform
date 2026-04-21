@@ -1,0 +1,187 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: gsoci.azurecr.io/giantswarm/mcp-observability-platform
+  # Defaults to .Chart.AppVersion when empty
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Pod / container security
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  mcpPort: 8080
+  metricsPort: 9091
+  annotations: {}
+
+serviceAccount:
+  # When false, the chart does not create a SA and uses 'name' as an
+  # externally-managed one (or 'default' if empty).
+  create: true
+  name: ""
+  annotations: {}
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  # Extra labels for Prometheus Operator selection. Default includes the
+  # Giant Swarm observability-stack tenant routing label — override
+  # `observability.giantswarm.io/tenant` in customer installs to route
+  # metrics to a non-Giant-Swarm tenant.
+  labels:
+    observability.giantswarm.io/tenant: giantswarm
+  relabelings: []
+  metricRelabelings: []
+
+# Optional PodDisruptionBudget — set enabled:true before scaling past 1 replica.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1  # set one of minAvailable / maxUnavailable
+
+# NetworkPolicy restricting ingress (and optionally egress) to the pod.
+#
+# Egress is off by default — when you supply `egressTo`, the policy switches
+# to Ingress+Egress and DNS to kube-system/kube-dns is added automatically so
+# outbound lookups for Grafana/Dex/OTLP still resolve. Each egressTo entry is
+# a raw NetworkPolicyEgressRule (to + ports). See values-autoscaling.yaml
+# for a worked example.
+networkPolicy:
+  enabled: false
+  # List of NetworkPolicyPeer objects permitted to reach the MCP.
+  ingressFrom: []
+  # List of {to: [...], ports: [...]} egress rules. Empty = egress unrestricted.
+  egressTo: []
+
+# --- Runtime tunables (ConfigMap-backed) ---
+# All fields here surface as env vars on the deployment via envFrom. Feature
+# PRs read them without needing to re-touch the chart.
+runtime:
+  # Per-tool handler deadline.
+  toolTimeout: 30s
+  # Cap on tool response body size in bytes. 0 disables the cap.
+  maxResponseBytes: 131072
+  # TTL for the per-caller org/role cache.
+  resolverCacheTTL: 30s
+  # Rate-limit thresholds in requests/sec (0 = disabled). Wired by PR 9.
+  rateLimit:
+    perCaller: 0
+    perOrg: 0
+    global: 0
+  # OAuth active-refresh window before token expiry. Wired by PR 9.
+  oauthRefreshAhead: 5m
+
+# --- Autoscaling (both opt-in, off by default) ---
+autoscaling:
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    # Optional HPA v2 behavior block for scale-up / scale-down policies.
+    behavior: {}
+  vpa:
+    enabled: false
+    # Off | Initial | Recreate | Auto. Auto rolls pods with new resource recs.
+    updateMode: Auto
+    # Per-container policy (minAllowed, maxAllowed, controlledResources, ...).
+    resourcePolicy: {}
+
+# --- MCP application configuration ---
+# All of these become env vars on the deployment. Secrets are mounted from
+# existing Kubernetes Secrets — do not put secret values inline here.
+mcp:
+  transport: "streamable-http" # stdio | sse | streamable-http
+  debug: false
+
+oauth:
+  # Public-facing issuer URL for this MCP (what MCP clients' OAuth requests target)
+  issuer: "https://mcp-observability-platform.example.com"
+  allowInsecureHTTP: false
+  # Enable Dynamic Client Registration (RFC 7591) without a registration token.
+  # OFF by default: letting arbitrary callers self-register against a
+  # production MCP is a standing risk. Flip to true for local dev and
+  # cluster-test deploys where MCP clients need to register themselves on
+  # first connect (e.g. Claude Code, mcp-inspector).
+  allowPublicClientRegistration: false
+  # Dex connection
+  dex:
+    issuerUrl: "https://dex.example.com"
+    clientId: ""
+    # existingSecret must contain: clientSecret
+    existingSecret: "mcp-observability-platform-oauth"
+  storage:
+    backend: "memory" # "memory" | "valkey"
+    valkey:
+      addr: ""
+      tls: false
+      # existingSecret must contain: password (only when backend=valkey and password is set)
+      existingSecret: ""
+  # AES-256 key used by mcp-oauth to encrypt tokens at rest (optional but
+  # recommended). existingSecret must contain: encryptionKey (32 bytes, hex or raw)
+  encryption:
+    existingSecret: ""
+
+grafana:
+  # Admin/API URL used by the MCP to reach Grafana. Typically the in-cluster
+  # service DNS name.
+  url: "https://grafana.example.com"
+  # Public-facing Grafana URL used ONLY for human-readable deeplinks returned
+  # by generate_deeplink. Leave empty to fall back to `url`.
+  publicUrl: ""
+  # The Secret must contain one of:
+  #   - serviceAccountToken  (Grafana server-admin SA token — preferred)
+  #   - basicAuth            ("admin:password" — fallback when SAs can't be
+  #                           promoted to Grafana Server Admin via API)
+  # A regular org-Admin SA will NOT work: it ignores X-Grafana-Org-Id.
+  existingSecret: "mcp-observability-platform-grafana"
+  # Which key from existingSecret to use: "serviceAccountToken" or "basicAuth".
+  authMode: "serviceAccountToken"
+
+# OpenTelemetry tracing — leave endpoint empty to disable.
+otel:
+  endpoint: ""              # e.g. "http://alloy-otlp.monitoring:4318"
+  protocol: "http/protobuf" # "http/protobuf" | "grpc"
+  insecure: true            # set false for TLS collectors
+  extraEnv: []
+
+# Kubernetes RBAC: only GrafanaOrganization CRs.
+rbac:
+  create: true
+
+# Extra env vars & envFrom (Secret/ConfigMap refs) for user-defined overrides.
+extraEnvVars: []
+extraEnvFrom: []
+
+podLabels: {}
+podAnnotations: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""

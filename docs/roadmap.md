@@ -60,10 +60,10 @@ LOC (except PR 0), independently reviewable. Tests live in the PR that
 adds the feature. Helm chart work is consolidated into one PR; feature
 PRs only read values seeded there.
 
-## PR 0 — Port the Go prototype (code import only)
+## PR 0 — Port the Go prototype (code import only) — LANDED as PR #3 (scaffold) + PR #10 (tools)
 
-One large PR, reviewed as a bulk import. No refactors — just get the
-prototype into this repo's git history under the correct module path.
+Ported as two stacked PRs: #3 brought the scaffold (no tools / no chart)
+and #10 brought the full MCP tool surface on top. Both merged to main.
 
 - *Copy from prototype*: `main.go`, `cmd/`, `internal/` (authz, grafana,
   observability, server, tracing), `go.mod`, `go.sum`, `Dockerfile`,
@@ -135,28 +135,32 @@ tool. No behavior change beyond annotations.
 - Files: new `internal/tools/wrap/wrap.go`; edit all `internal/server/tools*.go` (8 files); edit `internal/server/tools.go`
 - Verify: existing unit tests pass; `tools/list` response includes annotations
 
-**PR 2 · Helm chart productionization (all-in-one)**
-Single Helm PR — everything chart-related lands here. Covers restructure,
-schema, tests, and all opt-in hardening templates. Feature PRs later read
-these values; no later PR touches the chart.
-- *Restructure*: merge prototype's richer `helm/mcp-observability-platform/`
-  templates with this repo's scaffold. Chart name = repo name.
-- *Schema + tests*: `values.schema.json` + `.schema.yaml`; helm-unittest
-  specs under `helm/mcp-observability-platform/tests/`.
-- *Runtime ConfigMap*: all tunables exposed upfront — timeouts, response
-  cap, resolver cache TTL, rate-limit thresholds (per-caller/per-org/
-  global), token-refresh ahead-of-expiry window. Feature PRs (8, 9) read
-  these; fields start with safe no-op defaults until code consumes them.
-- *Opt-in templates*: `configmap.yaml`, `externalsecret.yaml` (Dex creds
-  pattern), `networkpolicy.yaml` with egress to Grafana + K8s API + Dex
-  + OTLP only, `poddisruptionbudget.yaml`.
-- *Autoscaling* (opt-in, default off): `hpa.yaml` (CPU 70% / memory 80%
-  targets, configurable), `vpa.yaml` (`updatePolicy: Auto` default,
-  configurable). Values gates: `hpa.enabled`, `vpa.enabled`.
-- *Example overlays*: `values-valkey.yaml`, `values-memory.yaml`,
-  `values-rbac-minimal.yaml`, `values-autoscaling.yaml`.
-- *Docs*: `README.md.gotmpl` for helm-docs.
-- Verify: `helm lint`; `helm unittest` green; `helm template -f values-valkey.yaml` produces expected manifests; kind deploy end-to-end with NetworkPolicy blocking external internet.
+**PR 2 · Helm chart productionization (all-in-one) — LANDED in `pr-2-helm-hardening` (#5)**
+Single Helm PR — everything chart-related landed here. Scope shipped:
+- Templates: Chart.yaml (audience/managed/team annotations), `_helpers.tpl`,
+  Deployment (with `checksum/config` rollout on ConfigMap changes, envFrom
+  runtime ConfigMap), Service, ServiceAccount, ClusterRole+Binding,
+  ServiceMonitor, PodDisruptionBudget, NetworkPolicy (ingress + optional
+  egress with auto-included kube-dns allow), HorizontalPodAutoscaler,
+  VerticalPodAutoscaler, runtime ConfigMap, NOTES.txt.
+- Runtime ConfigMap exposes `MCP_TOOL_TIMEOUT`, `TOOL_MAX_RESPONSE_BYTES`
+  (0 disables the cap), `MCP_RESOLVER_CACHE_TTL`,
+  `MCP_RATE_LIMIT_{PER_CALLER,PER_ORG,GLOBAL}`, `MCP_OAUTH_REFRESH_AHEAD`.
+  Feature PRs (8, 9) read these without chart changes.
+- `values.schema.json` regenerated via `helm-values-schema-json` v2.3.1
+  (the binary the pre-commit workflow installs).
+- helm-unittest specs: `tests/{configmap,deployment,hpa,networkpolicy,pdb,
+  servicemonitor,vpa}_test.yaml` (19 tests, all green).
+- Example overlays: `values-memory.yaml` (dev), `values-valkey.yaml` (prod
+  OAuth store), `values-rbac-minimal.yaml` (external SA), and
+  `values-autoscaling.yaml` (HPA + VPA Initial + PDB + NetworkPolicy egress).
+- `README.md.gotmpl` for helm-docs generation.
+
+**Deferred**: `externalsecret.yaml` (Dex creds via ESO) — postponed to a
+follow-up because mixing ESO with the existing `existingSecret` pattern
+cleanly is its own design call. `values.schema.yaml` (human-readable
+source for the generator) — the JSON is hand-edited for now and regen is
+a one-liner.
 
 **PR 3 · CI — match `giantswarm/mcp-kubernetes` full shape**
 Expand CircleCI to full 4-job mcp-kubernetes shape + add GitHub Actions

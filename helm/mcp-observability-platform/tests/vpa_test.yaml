@@ -1,0 +1,31 @@
+suite: vpa
+templates:
+  - templates/vpa.yaml
+tests:
+  - it: not rendered by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: rendered when autoscaling.vpa.enabled with Auto default
+    set:
+      autoscaling:
+        vpa:
+          enabled: true
+    asserts:
+      - isKind:
+          of: VerticalPodAutoscaler
+      - equal:
+          path: spec.updatePolicy.updateMode
+          value: Auto
+
+  - it: honors updateMode override
+    set:
+      autoscaling:
+        vpa:
+          enabled: true
+          updateMode: Initial
+    asserts:
+      - equal:
+          path: spec.updatePolicy.updateMode
+          value: Initial

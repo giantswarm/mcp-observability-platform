@@ -1,0 +1,18 @@
+# Minimal-RBAC overlay: the chart does NOT create ClusterRole /
+# ClusterRoleBinding / ServiceAccount. Use when your cluster has a
+# centrally-managed SA with the required GrafanaOrganization read
+# permissions and you want this chart to stay out of cluster-wide RBAC.
+#
+# Prereqs before install:
+#   - A ServiceAccount `$serviceAccount.name` already exists in the
+#     release namespace.
+#   - A ClusterRole granting `get/list/watch` on
+#     `grafanaorganizations.observability.giantswarm.io` exists and is
+#     bound to that SA (via an externally-managed ClusterRoleBinding).
+
+rbac:
+  create: false
+
+serviceAccount:
+  create: false
+  name: "mcp-observability-platform-external"

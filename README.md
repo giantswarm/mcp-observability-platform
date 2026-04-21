@@ -11,15 +11,12 @@ One MCP per Grafana instance. Authentication via MCP OAuth (Dex as IdP).
 Authorization resolved from the caller's OIDC groups against
 `GrafanaOrganization.spec.rbac.{admins,editors,viewers}`.
 
-> **Branch status (scaffold)**: this README describes the target MCP surface.
-> The current branch ports the Go scaffold only — no tools, resources, or
-> prompts are registered yet, the Helm chart is not present, and `/readyz`
-> is a liveness-equivalent stub. See [`docs/roadmap.md`](./docs/roadmap.md)
-> for the PR breakdown:
-> - Tools / resources / prompts → `port-tools` (PR #10)
-> - Helm chart → `pr-2-helm-hardening` (PR #5)
+> **Branch status (helm chart)**: this branch adds the Helm chart on top
+> of scaffold (#3) and tools (#10), both already merged to main. See
+> [`docs/roadmap.md`](./docs/roadmap.md) for the remaining PRs:
 > - Deep readiness + two-phase shutdown → `pr-4-readiness` (PR #7)
 > - CI expansion → `pr-3-ci` (PR #6)
+> - Composable middleware + MCP annotations → `pr-1-wrap-middleware` (PR #4)
 
 ## Roadmap
 
@@ -221,9 +218,46 @@ is not server-admin it fails to start.
 every Grafana org. Phase 2 narrows this by switching to per-org SA tokens
 provisioned by the observability-operator (tracked in the plan).
 
-## Local install
+## Install
 
-Build and run the binary locally:
+Create the required secrets first. The `serviceAccountToken` key holds the
+**Grafana** server-admin service-account token (not a Kubernetes one — the
+chart creates the K8s ServiceAccount itself via `templates/serviceaccount.yaml`).
+
+```sh
+kubectl -n observability create secret generic mcp-observability-platform-grafana \
+  --from-literal=serviceAccountToken=<grafana-sa-token>
+
+kubectl -n observability create secret generic mcp-observability-platform-oauth \
+  --from-literal=clientSecret=<dex-client-secret>
+```
+
+Then install the chart:
+
+```sh
+helm install mcp-observability-platform ./helm/mcp-observability-platform \
+  --namespace observability --create-namespace \
+  --set grafana.url=https://grafana.example.com \
+  --set oauth.issuer=https://mcp-observability-platform.example.com \
+  --set oauth.dex.issuerUrl=https://dex.example.com \
+  --set oauth.dex.clientId=mcp-observability-platform
+```
+
+Example overlays live under `helm/mcp-observability-platform/values-*.yaml`:
+
+| Values file                | Scenario                                                         |
+| -------------------------- | ---------------------------------------------------------------- |
+| `values-memory.yaml`       | Dev/test: memory-backed OAuth store, debug logging.              |
+| `values-valkey.yaml`       | Prod: Valkey-backed OAuth store (durable, shared across replicas). |
+| `values-rbac-minimal.yaml` | Externally-managed ServiceAccount + ClusterRoleBinding.          |
+| `values-autoscaling.yaml`  | HPA + VPA (Initial) + PDB + NetworkPolicy (ingress + egress).    |
+
+Runtime tunables (timeouts, response cap, rate-limit thresholds, OAuth
+refresh window) live under `runtime:` in `values.yaml` and are delivered
+through a ConfigMap mounted via `envFrom`. A `checksum/config` annotation
+on the pod template rolls the deployment whenever those change.
+
+## Run locally (without Kubernetes)
 
 ```sh
 go mod tidy
@@ -231,37 +265,18 @@ make build
 ./mcp-observability-platform serve
 ```
 
-Helm chart installation lands in PR #5 (`pr-2-helm-hardening`). Once that
-chart is merged, the typical deploy will be:
-
-```sh
-helm install mcp-observability-platform ./helm/mcp-observability-platform \
-  --namespace observability --create-namespace \
-  --set grafana.url=https://grafana.example.com \
-  --set oauth.issuer=https://mcp.example.com \
-  --set oauth.dex.issuerUrl=https://dex.example.com \
-  --set oauth.dex.clientId=mcp-observability-platform
-```
-
-With secrets created beforehand:
-
-```sh
-kubectl -n observability create secret generic mcp-observability-platform-grafana \
-  --from-literal=serviceAccountToken=<token>
-
-kubectl -n observability create secret generic mcp-observability-platform-oauth \
-  --from-literal=clientSecret=<dex-client-secret>
-```
-
 ## Layout
 
 ```
-cmd/              Cobra CLI (serve, version)
+cmd/                               Cobra CLI (serve, version)
 internal/
-  authz/          GrafanaOrganization CR cache + role resolver
-  grafana/        Grafana HTTP client (server-admin SA + X-Grafana-Org-Id)
-  server/         mark3labs/mcp-go wiring: tools + resource templates
+  authz/                           GrafanaOrganization CR cache + role resolver
+  grafana/                         Grafana HTTP client (server-admin SA + X-Grafana-Org-Id)
+  server/                          mark3labs/mcp-go wiring: tools + resource templates
 helm/mcp-observability-platform/   Helm chart
+  templates/                       Deployment, Service, ClusterRole(Binding), ConfigMap, NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, NOTES
+  tests/                           helm-unittest specs (configmap, deployment, hpa, networkpolicy, pdb, servicemonitor, vpa)
+  values-{memory,valkey,rbac-minimal,autoscaling}.yaml   Opinionated overlays
 ```
 
 ## Related
