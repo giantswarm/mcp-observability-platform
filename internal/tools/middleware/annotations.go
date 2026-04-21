@@ -9,14 +9,14 @@ import (
 )
 
 // ReadOnlyAnnotation returns the MCP tool option that flags a tool as
-// read-only, idempotent, and open-world. Every tool in this MCP is
-// read-only (no write operations by design), so this is applied uniformly.
-// Clients use these hints to decide whether to ask for user confirmation,
-// whether retrying is safe, and whether responses may change over time.
+// read-only, open-world, and non-destructive. Every tool in this MCP is
+// read-only (no write operations by design) so this is applied uniformly.
+// IdempotentHint is intentionally omitted — many tools (query_metrics,
+// query_logs, list_alerts) return live data that changes between calls,
+// so advertising idempotence across the whole surface would be wrong.
 func ReadOnlyAnnotation() mcp.ToolOption {
 	return mcp.WithToolAnnotation(mcp.ToolAnnotation{
 		ReadOnlyHint:    mcp.ToBoolPtr(true),
-		IdempotentHint:  mcp.ToBoolPtr(true),
 		OpenWorldHint:   mcp.ToBoolPtr(true),
 		DestructiveHint: mcp.ToBoolPtr(false),
 	})

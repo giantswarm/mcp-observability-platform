@@ -84,10 +84,14 @@ func DatasourceProxyHandler(d *Deps, spec DatasourceSpec) Handler {
 		useRange := spec.SupportsRange && (spec.ForceRange || (start != "" && end != ""))
 		if useRange {
 			path = spec.RangePath
+			// Backfill both start + end whenever the spec declares a default
+			// range, not only when ForceRange is set. Grafana rejects range
+			// queries with a missing end; anchoring both ends here keeps the
+			// shape stable regardless of which flag opted the tool in.
 			if start == "" && spec.DefaultRangeAgo > 0 {
 				start = fmt.Sprintf("%d", time.Now().Add(-spec.DefaultRangeAgo).UnixNano())
 			}
-			if end == "" && spec.ForceRange {
+			if end == "" && (spec.ForceRange || spec.DefaultRangeAgo > 0) {
 				end = fmt.Sprintf("%d", time.Now().UnixNano())
 			}
 			q.Set("start", start)
