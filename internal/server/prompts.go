@@ -8,4 +8,4 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 )
 
-func registerPrompts(_ *mcpsrv.MCPServer, _ *deps) {}
+func registerPrompts(_ *mcpsrv.MCPServer) {}

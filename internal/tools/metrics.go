@@ -1,4 +1,4 @@
-package server
+package tools
 
 import (
 	"cmp"
@@ -18,12 +18,13 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
+func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 	registerSingleAlertRuleTool(s, d)
 
 	// query_metrics — Mimir via Grafana datasource proxy.
 	s.AddTool(
 		mcp.NewTool("query_metrics",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("Run a PromQL query against Mimir via the org's multi-tenant datasource. Runs /api/v1/query_range when both start and end are set, otherwise /api/v1/query. Prefer aggregations (sum by / rate / topk) over raw series."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("query", mcp.Required(), mcp.Description("PromQL expression")),
@@ -31,7 +32,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix epoch")),
 			mcp.WithString("step", mcp.Description("Step for query_range, e.g. 30s, 1m")),
 		),
-		instrument("query_metrics", d, datasourceProxyHandler(d, datasourceSpec{
+		datasourceProxyHandler(d, datasourceSpec{
 			Role:          authz.RoleViewer,
 			NeedTenant:    obsv1alpha2.TenantTypeData,
 			NameContains:  []string{dsKindMimir},
@@ -40,11 +41,12 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			QueryArg:      "query",
 			SupportsRange: true,
 			Timeout:       30 * time.Second,
-		})),
+		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("list_prometheus_metric_names",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("List metric names available in Mimir. Use prefix to narrow by substring; use match[] to narrow by a PromQL selector (e.g. '{job=\"api\"}'). Paginated."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("prefix", mcp.Description("Case-insensitive substring filter applied after fetching.")),
@@ -54,18 +56,19 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
-		instrument("list_prometheus_metric_names", d, metricLabelValuesHandler(d, "__name__")),
+		metricLabelValuesHandler(d, "__name__"),
 	)
 
 	s.AddTool(
 		mcp.NewTool("list_prometheus_label_names",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("List label names for Mimir series matching an optional selector. Sorted alphabetically."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("match", mcp.Description("Optional PromQL selector, e.g. '{job=\"api\"}'.")),
 			mcp.WithString("start", mcp.Description("RFC3339 or unix epoch seconds.")),
 			mcp.WithString("end", mcp.Description("RFC3339 or unix epoch seconds.")),
 		),
-		instrument("list_prometheus_label_names", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -86,11 +89,12 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				Total int      `json:"total"`
 				Items []string `json:"items"`
 			}{Total: len(names), Items: names})
-		}),
+		},
 	)
 
 	s.AddTool(
 		mcp.NewTool("list_prometheus_label_values",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("List values for a given label from Mimir, optionally narrowed by a PromQL selector. Paginated."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("label", mcp.Required(), mcp.Description("Label name, e.g. 'cluster' or 'job'.")),
@@ -101,7 +105,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
-		instrument("list_prometheus_label_values", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -111,17 +115,18 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return runPromLabelValues(ctx, d, org, label, req)
-		}),
+		},
 	)
 
 	s.AddTool(
 		mcp.NewTool("list_prometheus_metric_metadata",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("Return Prometheus metric metadata (HELP, TYPE) from Mimir. Useful to understand what a metric measures before building a PromQL expression."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("metric", mcp.Description("Metric name. If empty, all metadata is returned (may be large).")),
 			mcp.WithNumber("limit", mcp.Description("Cap on the number of metric families returned (default 200).")),
 		),
-		instrument("list_prometheus_metric_metadata", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -140,7 +145,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				q.Set("limit", fmt.Sprintf("%d", lim))
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/metadata").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/metadata", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/metadata", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir metadata", err), nil
 			}
@@ -148,11 +153,12 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
-		}),
+		},
 	)
 
 	s.AddTool(
 		mcp.NewTool("query_prometheus_histogram",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("Convenience wrapper that computes a percentile over a Prometheus histogram metric. Builds and runs `histogram_quantile(q, sum by (le, ...) (rate(<metric>{<matchers>}[<window>])))` against Mimir. Use this instead of crafting the expression by hand when you know the metric is a `_bucket` histogram."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("metric", mcp.Required(), mcp.Description("The `_bucket` metric name, e.g. 'http_request_duration_seconds_bucket'.")),
@@ -164,7 +170,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix epoch.")),
 			mcp.WithString("step", mcp.Description("Step for query_range, e.g. '30s', '1m'.")),
 		),
-		instrument("query_prometheus_histogram", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -207,11 +213,12 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				SupportsRange: true,
 				Timeout:       30 * time.Second,
 			})(ctx, req)
-		}),
+		},
 	)
 
 	s.AddTool(
 		mcp.NewTool("list_alert_rules",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("List Prometheus recording & alerting rules loaded by Mimir (distinct from firing Alertmanager alerts). Filter by type, state, or name substring."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("type", mcp.Description("'alert' | 'record' | 'all' (default 'alert').")),
@@ -220,7 +227,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 50, max 500.")),
 		),
-		instrument("list_alert_rules", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -252,7 +259,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				q.Set("type", ruleType)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/rules").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/rules", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/rules", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir rules", err), nil
 			}
@@ -275,7 +282,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				HasMore:  end < len(rules),
 				Items:    rules[start:end],
 			})
-		}),
+		},
 	)
 }
 
@@ -325,15 +332,16 @@ func isValidPromIdent(s string) bool {
 	return true
 }
 
-func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
+func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("get_alert_rule",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("Return a single Prometheus rule (alerting or recording) by name and optional group. Use after list_alert_rules when you need the full expression + labels of one specific rule."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("name", mcp.Required(), mcp.Description("Exact rule name.")),
 			mcp.WithString("group", mcp.Description("Optional group name to disambiguate when several rules share a name.")),
 		),
-		instrument("get_alert_rule", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -350,7 +358,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/rules").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/rules", url.Values{})
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/rules", url.Values{})
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir rules", err), nil
 			}
@@ -375,13 +383,13 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
 			return mcp.NewToolResultJSON(struct {
 				Rules []ruleItem `json:"rules"`
 			}{Rules: out})
-		}),
+		},
 	)
 }
 
 // metricLabelValuesHandler wraps the shared handler that resolves Mimir and
 // runs /api/v1/label/{label}/values with optional match[] narrowing.
-func metricLabelValuesHandler(d *deps, label string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func metricLabelValuesHandler(d *Deps, label string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		org, err := req.RequireString("org")
 		if err != nil {
@@ -394,7 +402,7 @@ func metricLabelValuesHandler(d *deps, label string) func(context.Context, mcp.C
 // runPromLabelValues is the shared core of the metric-names and
 // label-values tools: call /api/v1/label/{label}/values with match[] +
 // time filters, then apply client-side prefix filter + pagination.
-func runPromLabelValues(ctx context.Context, d *deps, org, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func runPromLabelValues(ctx context.Context, d *Deps, org, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -428,9 +436,9 @@ func promSelectorArgs(req mcp.CallToolRequest) url.Values {
 
 // fetchPromLabelList hits a Prometheus label-list endpoint (labels or values)
 // and returns the data[] array.
-func fetchPromLabelList(ctx context.Context, d *deps, orgID, dsID int64, path string, q url.Values) ([]string, error) {
+func fetchPromLabelList(ctx context.Context, d *Deps, orgID, dsID int64, path string, q url.Values) ([]string, error) {
 	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
-	body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, path, q)
+	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus %s: %w", path, err)
 	}

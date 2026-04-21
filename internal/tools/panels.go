@@ -1,4 +1,4 @@
-package server
+package tools
 
 import (
 	"cmp"
@@ -12,6 +12,7 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 )
 
 // maxRenderedImageBytes caps the PNG payload returned by get_panel_image.
@@ -20,9 +21,10 @@ import (
 // reasonable upper bound for practical panels.
 const maxRenderedImageBytes = 4 * 1024 * 1024
 
-func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
+func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("get_panel_image",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription(
 				"Render a Grafana dashboard panel as a PNG image and return it as an MCP image resource. "+
 					"Requires the 'grafana-image-renderer' plugin, or the standalone renderer service "+
@@ -39,7 +41,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("theme", mcp.Description("'light' | 'dark' (default 'light').")),
 			mcp.WithString("tz", mcp.Description("IANA timezone for time axis, e.g. 'Europe/Paris'. Default: UTC.")),
 		),
-		instrument("get_panel_image", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -52,7 +54,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
+			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -63,7 +65,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			// Short-circuit with a structured error when the plugin isn't
 			// installed — without this, Grafana returns a PNG of its own
 			// error message and the tool appears to succeed.
-			if present, err := d.grafana.HasImageRenderer(ctx); err == nil && !present {
+			if present, err := d.Grafana.HasImageRenderer(ctx); err == nil && !present {
 				return mcp.NewToolResultJSON(struct {
 					Error string `json:"error"`
 					Hint  string `json:"hint"`
@@ -96,7 +98,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
 
-			png, contentType, err := d.grafana.RenderPanel(ctx, grafanaOpts(ctx, oa.OrgID), uid, panelID, q)
+			png, contentType, err := d.Grafana.RenderPanel(ctx, grafanaOpts(ctx, oa.OrgID), uid, panelID, q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("render panel", err), nil
 			}
@@ -119,6 +121,6 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 				base64.StdEncoding.EncodeToString(png),
 				contentType,
 			), nil
-		}),
+		},
 	)
 }

@@ -106,19 +106,68 @@ cmd/
 internal/
   authz/                # stays: OAuth, Dex, GrafanaOrganization resolver
   audit/                # NEW (PR 5): structured audit trail
+  identity/             # LANDED (PR 1): caller identity plumbing
   mcperr/               # NEW (PR 5): thin helper — classification internal only, wire payload is plain isError+text
   mcpprogress/          # NEW (PR 6): progress + cancellation plumbing
+  observability/        # LANDED (PR 1): Prometheus metrics + OTEL tracing (+ otelslog bridge planned)
   ratelimit/            # NEW (PR 9)
   server/
+    server.go           # mcp-go + HTTP wiring
     health.go           # NEW (PR 4): /healthz + /readyz + /healthz/detailed
-    middleware/         # NEW (PR 9): security headers, CORS, HTTP metrics, rate limit
-  tools/wrap/           # NEW (PR 1): single middleware — RBAC + audit + X-Grafana-User + progress + timeout + response cap
+    middleware/         # LANDED (PR 1): Tracing + Metrics (tool-handler middleware)
+    httpmiddleware/     # NEW (PR 9): security headers, CORS, HTTP metrics, rate limit
+  tools/                # LANDED (PR 1): 32 tool handlers + shared helpers + annotations
 helm/
   mcp-observability-platform/  # restructured + expanded in PR 2
 ```
 
-One enforcement point (`wrap.Wrap`) means every cross-cutting concern
-lives in one package.
+Cross-cutting tool-call concerns live in `internal/server/middleware/` and
+are registered once via `mcpsrv.WithToolHandlerMiddleware`. Adding Audit,
+Progress, RateLimit means one more middleware + one more `Use()` call —
+tool registrations stay untouched.
+
+## Deferred follow-up (out of scope for the PRs above)
+
+**OTLP logs via `otelslog`** — today logs emit to stderr via `slog`. Wiring
+`go.opentelemetry.io/contrib/bridges/otelslog` + `otlploghttp` onto the
+same `OTEL_EXPORTER_OTLP_ENDPOINT` as traces would give free
+`trace_id`/`span_id` correlation on every log record and unify all three
+signals onto one pipeline. Lives in `internal/observability/logging.go`
+alongside `metrics.go` + `tracing.go`.
+
+**Test-coverage gaps** (low-risk, ship when convenient):
+- `internal/tools/dashboards.go#expandGrafanaVars` — substring-replacement
+  logic for Grafana template macros (`$__rate_interval`, dashboard vars).
+  Previous bug was fixed by sorting vars length-DESC to avoid `$cluster`
+  corrupting `$cluster_id`; guard with a table test.
+- `internal/tools/dashboards.go#readJSONPointer` — our RFC 6901
+  implementation. Edge cases (escape sequences `~0`/`~1`, array indexing,
+  non-container traversal) deserve coverage.
+
+**`ARCHITECTURE.md`** — onboarding doc with the hex-arch dependency
+diagram, "where to add X" cheat sheet, and threat model. Extract from the
+review in PR #4 when the dust settles.
+
+**Helm PDB smart default** — gate
+`helm/mcp-observability-platform/templates/poddisruptionbudget.yaml` on
+`replicas > 1` and enable it by default. Safe on single-replica deploys
+(template renders nothing) + automatic protection once operators scale
+out. Small addition to PR #2's values.yaml.
+
+**Propagate pre-commit Go tools upstream** — `giantswarm/github` PR #5098
+adds the Go toolchain install to the central
+`zz_generated.pre-commit.yaml`. Once merged, this repo's local copy can
+be regenerated.
+
+**`mcp-oauth` session lifecycle adoption** — mcp-oauth v0.2.102 added
+`SessionIDFromContext`, `SetTokenRefreshHandler`,
+`SetSessionCreationHandler`, `SetSessionRevocationHandler`. These unlock:
+- Per-session state cleanup on logout (PR 9 rate-limit state, PR 8 audit
+  session correlation).
+- Active OAuth token refresh with a callback for downstream cache
+  invalidation (PR 9).
+- Session-scoped identity in `internal/identity/` — expose
+  `CallerSessionID(ctx)` once audit / progress PRs need it.
 
 ## The 10 productionization PRs
 
@@ -126,14 +175,34 @@ Each: branch, <500 LOC diff, single concern, green in CI.
 
 ### Wave 0 — Foundation
 
-**PR 1 · `tools/wrap` middleware + MCP tool annotations**
-Extract `instrument()`, RBAC, response cap, arg extraction, timeout,
-`X-Grafana-User` injection into `internal/tools/wrap`. Refactor the 8
-`tools_*.go` files to register through it. Add MCP annotations
-(`readOnlyHint: true`, `idempotentHint`, `openWorldHint: true`) on every
-tool. No behavior change beyond annotations.
-- Files: new `internal/tools/wrap/wrap.go`; edit all `internal/server/tools*.go` (8 files); edit `internal/server/tools.go`
-- Verify: existing unit tests pass; `tools/list` response includes annotations
+**PR 1 · Tool middleware + MCP annotations + package restructure — LANDED in `pr-1-wrap-middleware` (#4)**
+
+Replaced the in-package `instrument()` wrapper with mcp-go's built-in
+`server.ToolHandlerMiddleware` mechanism. Two runtime middlewares applied
+globally via `WithToolHandlerMiddleware`: `middleware.Tracing()` (OTEL span
+per call) and `middleware.Metrics()` (counter + histogram). mcp-go's
+`WithRecovery()` is wired too — panic safety we never had before.
+
+MCP tool annotations surface on every tool via `tools.ReadOnlyAnnotation()`:
+`readOnlyHint: true`, `openWorldHint: true`, `destructiveHint: false`.
+`idempotentHint` deliberately omitted — many tools (`query_metrics`,
+`query_logs`, `list_alerts`) return live data that changes between calls.
+
+Metric label `outcome` is 3-bucket (`ok` / `user_error` / `system_error`)
+so operators distinguish real incidents from expected user-visible failures
+(missing args, authz denials). Span `tool.outcome` attribute mirrors this.
+
+Package restructure landed alongside:
+- `internal/tracing/` merged into `internal/observability/`.
+- `internal/server/tools_*.go` (8 files) → `internal/tools/*.go` (package `tools`).
+- Caller identity plumbing → `internal/identity/`.
+- Tool middlewares → `internal/server/middleware/`.
+- MCP resources / prompts stubs stay in `internal/server/` (they're peer
+  MCP surfaces, not tools).
+
+Dependencies upgraded: `mark3labs/mcp-go` → v0.49.0 (the version that
+introduced `ToolHandlerMiddleware`, `WithRecovery`, `NewToolResultErrorf`),
+Go toolchain → 1.25.5.
 
 **PR 2 · Helm chart productionization (all-in-one) — LANDED in `pr-2-helm-hardening` (#5)**
 Single Helm PR — everything chart-related landed here. Scope shipped:
@@ -221,7 +290,7 @@ status. Two-phase graceful shutdown: drain metrics/health server first
 ### Wave 1 — Ship-ready + MCP fit
 
 **PR 5 · `internal/audit` + thin `mcperr`**
-Both hang off `tools/wrap`.
+Both hang off `server/middleware`.
 - *Audit*: structured JSON record per tool call — `{caller, org, tool,
   args_redacted, outcome, duration_ms, error_class}` + counter metric.
 - *Thin `mcperr`*: classification (`UserError`/`AuthzError`/
@@ -237,7 +306,7 @@ Both hang off `tools/wrap`.
 Long-running tools (`query_metrics` range, `query_logs`, `get_panel_image`)
 emit `notifications/progress`. MCP `notifications/cancelled` propagates
 into Grafana HTTP calls via context cancellation.
-- Files: new `internal/mcpprogress/mcpprogress.go`; edit `internal/tools/wrap/wrap.go`, handlers in `internal/server/tools_metrics.go`, `tools_logs.go`, `tools_panels.go`
+- Files: new `internal/mcpprogress/mcpprogress.go`; edit `internal/server/middleware/wrap.go`, handlers in `internal/tools/metrics.go`, `logs.go`, `panels.go`
 - Verify: component test issues a query then cancels mid-flight; progress events received
 
 **PR 7 · Refactor — `cmd/serve.go` split + implement `--transport` + config validators**
@@ -333,7 +402,7 @@ Waves sequential; within a wave, PRs parallelize across reviewers.
 - **Write operations** (silences create/delete, annotations create/
   update, dashboard patch, incident create). Architecture supports
   extension: gate via existing `Role` enum (`RoleEditor`/`RoleAdmin` on
-  `OrgAccess`), wrap through `tools/wrap` for audit, new
+  `OrgAccess`), wrap through `server/middleware` for audit, new
   `tools_*_write.go` files, MCP `destructiveHint: true` on every write
   tool.
 - **Upstream feature parity** (Pyroscope, OnCall, Incident, Sift,

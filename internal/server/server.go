@@ -4,16 +4,17 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 
-	oauth "github.com/giantswarm/mcp-oauth"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/identity"
+	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools"
 )
 
 // Config configures a new MCP HTTP server.
@@ -41,10 +42,9 @@ func New(cfg Config) (http.Handler, error) {
 		cfg.Version = "dev"
 	}
 
-	deps := &deps{
-		log:      cfg.Logger,
-		resolver: cfg.Resolver,
-		grafana:  cfg.Grafana,
+	deps := &tools.Deps{
+		Resolver: cfg.Resolver,
+		Grafana:  cfg.Grafana,
 	}
 
 	// Capabilities advertise static surfaces only. listChanged / subscribe are
@@ -52,41 +52,31 @@ func New(cfg Config) (http.Handler, error) {
 	// list_changed or notifications/resources/updated — the tool / resource /
 	// prompt set is built once at startup. Flip to true when a feature PR wires
 	// real change notifications.
+	//
+	// Middleware stack (outermost first):
+	//   1. WithRecovery()         — mcp-go's built-in panic guard.
+	//   2. middleware.Tracing()   — OTEL span per tool call.
+	//   3. middleware.Metrics()   — Prometheus counter + histogram per tool call.
+	// Ordered so a panic is caught before the span/metric closes, and the span
+	// wraps the metric timing (so span duration ≈ measured latency).
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
 		mcpsrv.WithResourceCapabilities(false, false),
 		mcpsrv.WithToolCapabilities(false),
 		mcpsrv.WithPromptCapabilities(false),
+		mcpsrv.WithRecovery(),
+		mcpsrv.WithToolHandlerMiddleware(middleware.Tracing()),
+		mcpsrv.WithToolHandlerMiddleware(middleware.Metrics()),
 	)
 
-	registerTools(mcp, deps)
-	registerResources(mcp, deps)
-	registerPrompts(mcp, deps)
+	tools.RegisterAll(mcp, deps)
+	registerResources(mcp)
+	registerPrompts(mcp)
 
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
-		mcpsrv.WithHTTPContextFunc(promoteOAuthCaller),
+		mcpsrv.WithHTTPContextFunc(identity.PromoteOAuthCaller),
 	), nil
-}
-
-// deps bundles the handler-scoped dependencies so tool/resource registration
-// stays concise.
-type deps struct {
-	log      *slog.Logger
-	resolver *authz.Resolver
-	grafana  *grafana.Client
-}
-
-// promoteOAuthCaller lifts the UserInfo attached by mcp-oauth's ValidateToken
-// middleware onto the context that mcp-go passes to tool/resource handlers.
-// Callers that reach a tool without a valid identity will be rejected at the
-// authz boundary in PR #10 (resolver returns ErrNotAuthorised on an empty
-// Caller).
-func promoteOAuthCaller(ctx context.Context, r *http.Request) context.Context {
-	if ui, ok := oauth.UserInfoFromContext(r.Context()); ok {
-		return withCaller(ctx, ui)
-	}
-	return ctx
 }

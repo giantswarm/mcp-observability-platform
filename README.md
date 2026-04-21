@@ -144,6 +144,14 @@ Prometheus metrics served at `:9091/metrics`:
 
 Plus default Go and process collectors.
 
+`outcome` values:
+
+- `ok` — handler returned a non-error result.
+- `user_error` — handler returned `isError: true` (user-visible failure such as a missing arg, authz denial, or `response_too_large`). Expected behaviour.
+- `system_error` — handler returned a Go error (upstream unreachable, panic caught by mcp-go's `WithRecovery`, bug). Ops-actionable.
+
+Spans mirror this on the `tool.outcome` attribute; the span is marked Error only on `system_error` (user errors are normal, same convention as HTTP servers not marking 4xx Error).
+
 ### Tracing
 
 OpenTelemetry tracing is wired via the standard `OTEL_EXPORTER_OTLP_*`
@@ -272,7 +280,11 @@ cmd/                               Cobra CLI (serve, version)
 internal/
   authz/                           GrafanaOrganization CR cache + role resolver
   grafana/                         Grafana HTTP client (server-admin SA + X-Grafana-Org-Id)
-  server/                          mark3labs/mcp-go wiring: tools + resource templates
+  identity/                        Caller identity plumbing (OIDC UserInfo on ctx)
+  observability/                   Prometheus metrics + OTEL tracing setup
+  server/                          mcp-go transport wiring
+    middleware/                    Tracing + Metrics runtime interceptors
+  tools/                           MCP tool surface (32 tools) + shared tool helpers
 helm/mcp-observability-platform/   Helm chart
   templates/                       Deployment, Service, ClusterRole(Binding), ConfigMap, NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, NOTES
   tests/                           helm-unittest specs (configmap, deployment, hpa, networkpolicy, pdb, servicemonitor, vpa)

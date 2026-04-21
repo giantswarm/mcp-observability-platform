@@ -30,7 +30,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
-	"github.com/giantswarm/mcp-observability-platform/internal/tracing"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -197,7 +196,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	oauthHandler := oauth.NewHandler(oauthSrv, logger)
 
 	// Best-effort OTEL init. No-op when no OTEL_EXPORTER_OTLP_ENDPOINT is set.
-	shutdownOTEL, err := tracing.Init(shutdownCtx, "mcp-observability-platform", version)
+	shutdownOTEL, err := observability.InitTracing(shutdownCtx, "mcp-observability-platform", version)
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
