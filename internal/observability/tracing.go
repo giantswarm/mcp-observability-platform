@@ -1,4 +1,4 @@
-// Package tracing sets up a best-effort OpenTelemetry tracer provider from
+// Package observability sets up a best-effort OpenTelemetry tracer provider from
 // the standard OTEL_* environment variables. If no OTLP endpoint is
 // configured the returned Shutdown is a no-op and spans go to a no-op
 // tracer. Both OTLP/HTTP (default) and OTLP/gRPC are supported via
@@ -7,7 +7,7 @@
 // Resource attributes are auto-detected from the K8s downward-API env vars
 // (POD_NAME, POD_NAMESPACE, NODE_NAME) when present, plus the standard
 // OTEL_RESOURCE_ATTRIBUTES env var.
-package tracing
+package observability
 
 import (
 	"context"
@@ -29,11 +29,11 @@ import (
 // Shutdown drains any pending spans. Safe to call multiple times.
 type Shutdown func(ctx context.Context) error
 
-// Init installs a global OTEL tracer provider. If OTEL_EXPORTER_OTLP_ENDPOINT
-// (or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) is unset, Init returns a no-op
+// InitTracing installs a global OTEL tracer provider. If OTEL_EXPORTER_OTLP_ENDPOINT
+// (or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) is unset, InitTracing returns a no-op
 // shutdown but still installs the W3C propagator so incoming traceparent
 // headers are honoured.
-func Init(ctx context.Context, serviceName, serviceVersion string) (Shutdown, error) {
+func InitTracing(ctx context.Context, serviceName, serviceVersion string) (Shutdown, error) {
 	// Always install propagator — cheap and means inbound trace context is
 	// preserved even before we actually export anywhere.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(

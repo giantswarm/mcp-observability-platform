@@ -1,10 +1,10 @@
-// Package server wires the MCP protocol layer for this MCP.
+// Package tools wires the MCP tool surface of this MCP.
 //
 // tools.go holds the shared helpers used by tool handlers. Each category of
 // tool (orgs, dashboards, metrics, logs, traces, alerts, silences, panels)
-// lives in its own tools_*.go file and registers itself via its own
-// register*Tools function called from registerTools below.
-package server
+// lives in its own file and registers itself via its own register*Tools
+// function called from RegisterAll below.
+package tools
 
 import (
 	"context"
@@ -20,17 +20,20 @@ import (
 	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/codes"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-// tracer is the OTEL tracer scoped to the server package; spans emitted here
-// carry the MCP tool boundary and wrap downstream Grafana calls.
-var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/internal/server")
+// Deps bundles the handler-scoped dependencies so tool registration stays
+// concise. Exported so the server package can build one and hand it off
+// to RegisterAll.
+type Deps struct {
+	Resolver *authz.Resolver
+	Grafana  *grafana.Client
+}
 
 // Package-wide string tokens. Kept as untyped constants so they drop into
 // []string{...} literals and switch arms cleanly.
@@ -58,9 +61,9 @@ const (
 	panelTypeRow = "row"
 )
 
-// registerTools wires every category of tool into the MCP server. Tool
-// definitions themselves live in the corresponding tools_*.go file.
-func registerTools(s *mcpsrv.MCPServer, d *deps) {
+// RegisterAll wires every category of tool into the MCP server. Tool
+// definitions themselves live in the corresponding per-category file.
+func RegisterAll(s *mcpsrv.MCPServer, d *Deps) {
 	registerOrgTools(s, d)
 	registerDashboardTools(s, d)
 	registerMetricsTools(s, d)
@@ -114,38 +117,6 @@ func enforceResponseCap(body []byte) *responseCapError {
 	}
 }
 
-// instrument wraps a tool handler so every call updates the tool-call counter
-// and latency histogram with the final outcome (ok|err). Also opens a server
-// span per call so downstream Grafana requests are correlated. Panics in the
-// handler are NOT recovered — a panicking tool tears down the serving
-// goroutine. A recovery middleware is planned for the composable-middleware
-// PR; until then tool handlers must not panic on input the user controls.
-func instrument(name string, d *deps, h func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		ctx, span := tracer.Start(ctx, "tool."+name)
-		defer span.End()
-		start := time.Now()
-		res, err := h(ctx, req)
-		outcome := "ok"
-		if err != nil || (res != nil && res.IsError) {
-			outcome = "err"
-			span.SetStatus(codes.Error, "tool returned error")
-		}
-		dur := time.Since(start).Seconds()
-		observability.ToolCallTotal.WithLabelValues(name, outcome).Inc()
-		observability.ToolCallDuration.WithLabelValues(name, outcome).Observe(dur)
-		if d.log != nil {
-			d.log.Debug("tool call",
-				"tool", name,
-				"outcome", outcome,
-				"duration_s", dur,
-				"caller", callerSubject(ctx),
-			)
-		}
-		return res, err
-	}
-}
-
 // withToolTimeout returns a derived context that enforces a per-tool handler
 // deadline. A bounded budget keeps a pathological LogQL query from holding
 // the MCP goroutine open until the Grafana HTTP client times out at 30s.
@@ -159,7 +130,7 @@ func withToolTimeout(ctx context.Context, d time.Duration) (context.Context, con
 // grafanaOpts packages orgID and caller-subject into a RequestOpts so every
 // downstream call attributes to the caller via X-Grafana-User.
 func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
-	return grafana.RequestOpts{OrgID: orgID, Caller: callerSubject(ctx)}
+	return grafana.RequestOpts{OrgID: orgID, Caller: identity.CallerSubject(ctx)}
 }
 
 // clampInt clamps n into [lo, hi]. Used for pagination sizes.
@@ -180,8 +151,8 @@ func clampInt(n, lo, hi int) int {
 // required tenant type (empty = skip), and a datasource whose name contains
 // all nameContains substrings (case-insensitive) must exist. Errors are
 // caller-ready strings so handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, d *deps, org string, role authz.Role, tenantType obsv1alpha2.TenantType, nameContains ...string) (authz.OrgAccess, int64, error) {
-	oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, role)
+func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role, tenantType obsv1alpha2.TenantType, nameContains ...string) (authz.OrgAccess, int64, error) {
+	oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, role)
 	if err != nil {
 		return authz.OrgAccess{}, 0, err
 	}
@@ -215,7 +186,7 @@ type datasourceSpec struct {
 // datasourceProxyHandler returns a tool handler that: authorises the caller
 // on the given org, picks the correct datasource, validates tenant type, and
 // forwards the query through Grafana's datasource proxy.
-func datasourceProxyHandler(d *deps, spec datasourceSpec) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		org, err := req.RequireString("org")
 		if err != nil {
@@ -276,7 +247,7 @@ func datasourceProxyHandler(d *deps, spec datasourceSpec) func(context.Context, 
 
 		observability.GrafanaProxyTotal.WithLabelValues(spec.InstantPath).Inc()
 		dsStart := time.Now()
-		body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
+		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
 		observability.GrafanaProxyDuration.WithLabelValues(spec.InstantPath).Observe(time.Since(dsStart).Seconds())
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil

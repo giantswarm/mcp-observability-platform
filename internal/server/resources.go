@@ -14,4 +14,4 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 )
 
-func registerResources(_ *mcpsrv.MCPServer, _ *deps) {}
+func registerResources(_ *mcpsrv.MCPServer) {}

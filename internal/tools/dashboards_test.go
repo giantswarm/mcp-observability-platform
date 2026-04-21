@@ -1,4 +1,4 @@
-package server
+package tools
 
 import (
 	"encoding/json"
@@ -68,7 +68,7 @@ func TestGroupDashboardsByFolder_FolderFilterCaseInsensitive(t *testing.T) {
 func TestGroupDashboardsByFolder_Pagination(t *testing.T) {
 	// 5 folders with 1 dash each; pageSize 2 → 3 pages.
 	items := []byte(`[`)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if i > 0 {
 			items = append(items, ',')
 		}

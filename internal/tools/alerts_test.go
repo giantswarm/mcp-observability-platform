@@ -1,4 +1,4 @@
-package server
+package tools
 
 import (
 	"encoding/json"
@@ -81,7 +81,7 @@ func TestPaginateAlerts_SortsBySeverityThenStart(t *testing.T) {
 
 func TestPaginateAlerts_PageBoundaries(t *testing.T) {
 	specs := []struct{ Name, Sev, State, Fp, Start string }{}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		specs = append(specs, struct{ Name, Sev, State, Fp, Start string }{
 			Name:  "A",
 			Sev:   "warning",

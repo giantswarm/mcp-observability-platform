@@ -1,10 +1,10 @@
-// Package server — tools_silences.go: alert silences from Alertmanager.
+// Package tools — silences.go: alert silences from Alertmanager.
 //
 // list_silences reads /api/v2/silences (AM live state). A K8s-backed
 // list_silence_crs (the silence-operator's declared state) is planned as a
-// follow-up — it needs a dynamic client wired through deps and is its own
+// follow-up — it needs a dynamic client wired through Deps and is its own
 // reviewable change.
-package server
+package tools
 
 import (
 	"context"
@@ -21,9 +21,10 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
+func registerSilenceTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("list_silences",
+			ReadOnlyAnnotation(),
 			mcp.WithDescription("List silences as Alertmanager actually sees them (/api/v2/silences). Use this to answer 'is this alert silenced and by what?'."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'pending' | 'expired' | 'all'.")),
@@ -31,7 +32,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 50, max 500.")),
 		),
-		instrument("list_silences", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -53,7 +54,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 				q.Set("filter", filter)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/silences").Inc()
-			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "alertmanager/api/v2/silences", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "alertmanager/api/v2/silences", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager silences", err), nil
 			}
@@ -62,7 +63,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 				return mcp.NewToolResultErrorFromErr("parse silences", err), nil
 			}
 			return mcp.NewToolResultJSON(result)
-		}),
+		},
 	)
 }
 
