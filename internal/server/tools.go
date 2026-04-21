@@ -59,8 +59,12 @@ func registerPrompts(_ *mcpsrv.MCPServer, _ *deps) {}
 // maxResponseBytes returns the configured cap on tool response body size.
 // Set TOOL_MAX_RESPONSE_BYTES to 0 to disable. Default 131072 (128 KiB) —
 // enough for most structured responses, small enough that a pathologically
-// broad query like `up` on a large cluster returns a useful error instead
-// of flooding the LLM context.
+// broad query like `up` on a large cluster returns a useful error instead of
+// flooding the LLM context.
+//
+// Note: env-read per call is intentional — the cost is sub-microsecond and
+// tests need to flip the value via t.Setenv between subtests. Caching via
+// sync.OnceValue would break TestEnforceResponseCap_DisabledWithZero.
 func maxResponseBytes() int {
 	if v := os.Getenv("TOOL_MAX_RESPONSE_BYTES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -82,15 +86,15 @@ type responseCapError struct {
 }
 
 func enforceResponseCap(body []byte) *responseCapError {
-	max := maxResponseBytes()
-	if max <= 0 || len(body) <= max {
+	limit := maxResponseBytes()
+	if limit <= 0 || len(body) <= limit {
 		return nil
 	}
 	return &responseCapError{
 		Error:   "response_too_large",
 		Bytes:   len(body),
-		Limit:   max,
-		Message: fmt.Sprintf("response is %d bytes, exceeds %d byte limit", len(body), max),
+		Limit:   limit,
+		Message: fmt.Sprintf("response is %d bytes, exceeds %d byte limit", len(body), limit),
 		Hint:    "narrow the query: add label matchers, aggregate with sum/rate/topk, or shorten the time range",
 	}
 }
@@ -98,7 +102,9 @@ func enforceResponseCap(body []byte) *responseCapError {
 // instrument wraps a tool handler so every call updates the tool-call counter
 // and latency histogram with the final outcome (ok|err). Also opens a server
 // span per call so downstream Grafana requests are correlated. Panics in the
-// handler are not caught here; the MCP transport recovers separately.
+// handler are NOT recovered — a panicking tool tears down the serving
+// goroutine. A recovery middleware is planned for the composable-middleware
+// PR; until then tool handlers must not panic on input the user controls.
 func instrument(name string, d *deps, h func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		ctx, span := tracer.Start(ctx, "tool."+name)
@@ -259,10 +265,14 @@ func datasourceProxyHandler(d *deps, spec datasourceSpec) func(context.Context, 
 		useRange := spec.SupportsRange && (spec.ForceRange || (start != "" && end != ""))
 		if useRange {
 			path = spec.RangePath
+			// Backfill both start + end whenever the spec declares a default
+			// range, not only when ForceRange is set. Grafana rejects range
+			// queries with a missing end; anchoring both ends here keeps the
+			// shape stable regardless of which flag opted the tool in.
 			if start == "" && spec.DefaultRangeAgo > 0 {
 				start = fmt.Sprintf("%d", time.Now().Add(-spec.DefaultRangeAgo).UnixNano())
 			}
-			if end == "" && spec.ForceRange {
+			if end == "" && (spec.ForceRange || spec.DefaultRangeAgo > 0) {
 				end = fmt.Sprintf("%d", time.Now().UnixNano())
 			}
 			q.Set("start", start)
@@ -313,16 +323,22 @@ type paginatedStrings struct {
 // paginateStrings slices values[] into a page. If prefix is non-empty, only
 // values whose lowercase form contains the lowercase prefix are kept (applied
 // before paging so totals are accurate). Output is always sorted alphabetically.
+//
+// A defensive copy is made before sorting so callers can pass a slice backed
+// by a cache (e.g. the resolver's org list) without having their cache
+// reordered as a side effect.
 func paginateStrings(values []string, prefix string, page, pageSize int) paginatedStrings {
 	if prefix != "" {
 		lp := strings.ToLower(prefix)
-		filtered := values[:0:0]
+		filtered := make([]string, 0, len(values))
 		for _, v := range values {
 			if strings.Contains(strings.ToLower(v), lp) {
 				filtered = append(filtered, v)
 			}
 		}
 		values = filtered
+	} else {
+		values = append([]string(nil), values...)
 	}
 	sort.Strings(values)
 	if pageSize <= 0 {

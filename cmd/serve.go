@@ -144,6 +144,15 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	defer storeClose()
 
+	// In-cluster deployments lose OAuth state on pod restart when the memory
+	// store is used, and per-pod isolation makes horizontal scaling break
+	// mid-flow. Warn loudly so operators notice before users do.
+	if cfg.OAuthStorage == "" || cfg.OAuthStorage == "memory" {
+		if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+			logger.Warn("OAUTH_STORAGE=memory in a Kubernetes deployment — OAuth state is lost on pod restart and NOT shared across replicas; use OAUTH_STORAGE=valkey for production")
+		}
+	}
+
 	oauthSrv, err := oauth.NewServer(
 		dexProvider,
 		tokenStore, clientStore, flowStore,
@@ -304,7 +313,11 @@ func loadConfig() (*config, error) {
 		OAuthIssuer:                        os.Getenv("MCP_OAUTH_ISSUER"),
 		OAuthRedirectURL:                   envOr("MCP_OAUTH_REDIRECT_URL", ""),
 		OAuthAllowInsecureHTTP:             envBool("MCP_OAUTH_ALLOW_INSECURE_HTTP", false),
-		OAuthAllowPublicClientRegistration: envBool("MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION", true),
+		// Public client registration is off by default: letting arbitrary
+		// callers register an OAuth client against a production MCP is a
+		// standing risk. Opt-in per env for local dev and cluster test
+		// deployments where ergonomics beat that risk.
+		OAuthAllowPublicClientRegistration: envBool("MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION", false),
 		OAuthStorage:                       strings.ToLower(envOr("OAUTH_STORAGE", "memory")),
 		ValkeyAddr:                         os.Getenv("VALKEY_ADDR"),
 		ValkeyPassword:                     os.Getenv("VALKEY_PASSWORD"),

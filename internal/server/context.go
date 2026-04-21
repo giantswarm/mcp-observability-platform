@@ -45,10 +45,16 @@ func callerSubject(ctx context.Context) string {
 // callerAuthz extracts the identifiers the authz resolver needs to ask
 // Grafana who this caller is. Returns an empty Caller if no identity is
 // attached; the resolver then errors downstream.
+//
+// Subject is the OIDC sub claim, the stable unique identifier. Login is
+// deliberately left empty: OIDC sub is NOT a Grafana login name, and
+// collapsing the two here would make Grafana's /api/users/lookup silently
+// miss when the user's email/login doesn't match their sub. The resolver
+// falls back to Email-based lookup when Login is empty.
 func callerAuthz(ctx context.Context) authz.Caller {
 	ui, ok := CallerFromContext(ctx)
 	if !ok || ui == nil {
 		return authz.Caller{}
 	}
-	return authz.Caller{Email: ui.Email, Login: ui.ID, Subject: ui.ID}
+	return authz.Caller{Email: ui.Email, Subject: ui.ID}
 }

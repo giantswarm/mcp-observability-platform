@@ -47,12 +47,17 @@ func New(cfg Config) (http.Handler, error) {
 		grafana:  cfg.Grafana,
 	}
 
+	// Capabilities advertise static surfaces only. listChanged / subscribe are
+	// false because this MCP never emits notifications/{tools,resources,prompts}/
+	// list_changed or notifications/resources/updated — the tool / resource /
+	// prompt set is built once at startup. Flip to true when a feature PR wires
+	// real change notifications.
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
-		mcpsrv.WithResourceCapabilities(true, true),
-		mcpsrv.WithToolCapabilities(true),
-		mcpsrv.WithPromptCapabilities(true),
+		mcpsrv.WithResourceCapabilities(false, false),
+		mcpsrv.WithToolCapabilities(false),
+		mcpsrv.WithPromptCapabilities(false),
 	)
 
 	registerTools(mcp, deps)

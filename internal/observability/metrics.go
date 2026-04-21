@@ -1,6 +1,8 @@
 // Package observability owns the Prometheus metrics and /metrics HTTP handler
-// for this MCP. Counters/gauges are registered on the default registry so
-// promhttp.Handler() serves them without extra wiring.
+// for this MCP. Metrics are registered on a package-local registry (not the
+// global default) so tests can instantiate the server twice without hitting
+// duplicate-registration panics, and so multiple MCP instances in one binary
+// never cross-pollute metric streams.
 package observability
 
 import (
@@ -13,10 +15,15 @@ import (
 
 const namespace = "mcp_observability_platform"
 
+// registry is the package-local registry backing every metric in this
+// package. Exposed only through MetricsHandler; tests that need a fresh
+// registry can call NewRegistry / RegisterOn directly (future extension).
+var registry = prometheus.NewRegistry()
+
 // ToolCallTotal counts every MCP tool invocation by name and outcome.
 // Outcome is one of "ok" | "err". Cardinality is bounded by the number of
 // registered tools.
-var ToolCallTotal = promauto.NewCounterVec(
+var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "tool_call_total",
@@ -27,7 +34,7 @@ var ToolCallTotal = promauto.NewCounterVec(
 
 // ToolCallDuration measures per-tool handler latency. Buckets chosen to cover
 // both fast (cached CR reads) and slow (broad LogQL) tool calls.
-var ToolCallDuration = promauto.NewHistogramVec(
+var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "tool_call_duration_seconds",
@@ -39,7 +46,7 @@ var ToolCallDuration = promauto.NewHistogramVec(
 
 // GrafanaProxyTotal counts datasource-proxy calls by downstream path so we can
 // see which observability backend (Mimir/Loki/Tempo/AM) is most used.
-var GrafanaProxyTotal = promauto.NewCounterVec(
+var GrafanaProxyTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "grafana_proxy_total",
@@ -51,7 +58,7 @@ var GrafanaProxyTotal = promauto.NewCounterVec(
 // GrafanaProxyDuration measures per-path Grafana proxy latency. The path
 // label is the downstream API path (bounded cardinality: one label value per
 // registered tool), which makes this safe to aggregate by backend.
-var GrafanaProxyDuration = promauto.NewHistogramVec(
+var GrafanaProxyDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "grafana_proxy_duration_seconds",
@@ -63,7 +70,7 @@ var GrafanaProxyDuration = promauto.NewHistogramVec(
 
 // OrgCacheSize reports the number of GrafanaOrganization CRs currently cached.
 // Updated periodically by the authz layer.
-var OrgCacheSize = promauto.NewGauge(
+var OrgCacheSize = promauto.With(registry).NewGauge(
 	prometheus.GaugeOpts{
 		Namespace: namespace,
 		Name:      "org_cache_size",
@@ -72,5 +79,7 @@ var OrgCacheSize = promauto.NewGauge(
 )
 
 // MetricsHandler returns an http.Handler that serves /metrics in Prometheus
-// text format from the default registry.
-func MetricsHandler() http.Handler { return promhttp.Handler() }
+// text format from the package-local registry.
+func MetricsHandler() http.Handler {
+	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+}
