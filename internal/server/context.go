@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/giantswarm/mcp-oauth/providers"
+
+	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
 // callerKey is an unexported type used as the context key for the caller's
