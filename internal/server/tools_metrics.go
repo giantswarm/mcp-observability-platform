@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -65,10 +66,9 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix epoch seconds.")),
 		),
 		instrument("list_prometheus_label_names", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
 			if err != nil {
@@ -76,7 +76,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			q := promSelectorArgs(args)
+			q := promSelectorArgs(req)
 			names, err := fetchPromLabelList(ctx, d, oa.OrgID, dsID, "api/v1/labels", q)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -102,16 +102,15 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		instrument("list_prometheus_label_values", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			label := strArg(args, "label")
-			if label == "" {
-				return mcp.NewToolResultError("missing required argument 'label'"), nil
+			label, err := req.RequireString("label")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return runPromLabelValues(ctx, d, org, label, args)
+			return runPromLabelValues(ctx, d, org, label, req)
 		}),
 	)
 
@@ -123,10 +122,9 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("limit", mcp.Description("Cap on the number of metric families returned (default 200).")),
 		),
 		instrument("list_prometheus_metric_metadata", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
 			if err != nil {
@@ -135,10 +133,10 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := url.Values{}
-			if m := strArg(args, "metric"); m != "" {
+			if m := req.GetString("metric", ""); m != "" {
 				q.Set("metric", m)
 			}
-			if lim := intArg(args, "limit"); lim > 0 {
+			if lim := req.GetInt("limit", 0); lim > 0 {
 				q.Set("limit", fmt.Sprintf("%d", lim))
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/metadata").Inc()
@@ -167,14 +165,13 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("step", mcp.Description("Step for query_range, e.g. '30s', '1m'.")),
 		),
 		instrument("query_prometheus_histogram", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			metric := strArg(args, "metric")
-			if metric == "" {
-				return mcp.NewToolResultError("missing required argument 'metric'"), nil
+			metric, err := req.RequireString("metric")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			// Validate metric name (basic safety — PromQL metric names are
 			// [a-zA-Z_:][a-zA-Z0-9_:]*). This prevents a caller from
@@ -182,10 +179,10 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			if !isValidPromIdent(metric) {
 				return mcp.NewToolResultError("invalid metric name; must match [a-zA-Z_:][a-zA-Z0-9_:]*"), nil
 			}
-			q := histogramQuantileArg(args)
-			window := firstNonEmptyStr(strArg(args, "window"), "5m")
-			matchers := strArg(args, "matchers")
-			groupBy := strArg(args, "groupBy")
+			q := histogramQuantileArg(req)
+			window := cmp.Or(req.GetString("window", ""), "5m")
+			matchers := req.GetString("matchers", "")
+			groupBy := req.GetString("groupBy", "")
 
 			expr := buildHistogramQuantile(q, metric, matchers, window, groupBy)
 			// Forward to the same proxy path as query_metrics.
@@ -194,7 +191,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 				"query": expr,
 			}
 			for _, k := range []string{"start", "end", "step"} {
-				if v := strArg(args, k); v != "" {
+				if v := req.GetString(k, ""); v != "" {
 					newArgs[k] = v
 				}
 			}
@@ -224,10 +221,9 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 50, max 500.")),
 		),
 		instrument("list_alert_rules", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
 			if err != nil {
@@ -235,17 +231,17 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			ruleType := strings.ToLower(strArg(args, "type"))
+			ruleType := strings.ToLower(req.GetString("type", ""))
 			if ruleType == "" {
 				ruleType = "alert"
 			}
-			wantState := strings.ToLower(strArg(args, "state"))
+			wantState := strings.ToLower(req.GetString("state", ""))
 			if wantState == "" {
 				wantState = "all"
 			}
-			nameLC := strings.ToLower(strArg(args, "nameContains"))
-			page := intArg(args, "page")
-			pageSize := intArg(args, "pageSize")
+			nameLC := strings.ToLower(req.GetString("nameContains", ""))
+			page := req.GetInt("page", 0)
+			pageSize := req.GetInt("pageSize", 0)
 			if pageSize <= 0 {
 				pageSize = 50
 			}
@@ -285,14 +281,8 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *deps) {
 
 // histogramQuantileArg extracts the quantile arg with a 0.95 default, and
 // clamps it into [0,1] to avoid degenerate queries.
-func histogramQuantileArg(args map[string]any) float64 {
-	q := 0.95
-	switch v := args["quantile"].(type) {
-	case float64:
-		q = v
-	case int:
-		q = float64(v)
-	}
+func histogramQuantileArg(req mcp.CallToolRequest) float64 {
+	q := req.GetFloat("quantile", 0.95)
 	if q < 0 {
 		q = 0
 	}
@@ -344,16 +334,15 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("group", mcp.Description("Optional group name to disambiguate when several rules share a name.")),
 		),
 		instrument("get_alert_rule", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			name := strArg(args, "name")
-			if name == "" {
-				return mcp.NewToolResultError("missing required argument 'name'"), nil
+			name, err := req.RequireString("name")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			group := strArg(args, "group")
+			group := req.GetString("group", "")
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -394,46 +383,44 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *deps) {
 // runs /api/v1/label/{label}/values with optional match[] narrowing.
 func metricLabelValuesHandler(d *deps, label string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := req.GetArguments()
-		org, errRes := requireOrg(args)
-		if errRes != nil {
-			return errRes, nil
+		org, err := req.RequireString("org")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		args["label"] = label
-		return runPromLabelValues(ctx, d, org, label, args)
+		return runPromLabelValues(ctx, d, org, label, req)
 	}
 }
 
 // runPromLabelValues is the shared core of the metric-names and
 // label-values tools: call /api/v1/label/{label}/values with match[] +
 // time filters, then apply client-side prefix filter + pagination.
-func runPromLabelValues(ctx context.Context, d *deps, org, label string, args map[string]any) (*mcp.CallToolResult, error) {
+func runPromLabelValues(ctx context.Context, d *deps, org, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "mimir")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 	defer cancel()
-	q := promSelectorArgs(args)
+	q := promSelectorArgs(req)
 	path := "api/v1/label/" + url.PathEscape(label) + "/values"
 	names, err := fetchPromLabelList(ctx, d, oa.OrgID, dsID, path, q)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultJSON(paginateStrings(names, strArg(args, "prefix"), intArg(args, "page"), intArg(args, "pageSize")))
+	return mcp.NewToolResultJSON(paginateStrings(names, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 }
 
 // promSelectorArgs collects optional match[] / start / end args into a
 // url.Values suitable for Prometheus/Mimir label-discovery endpoints.
-func promSelectorArgs(args map[string]any) url.Values {
+func promSelectorArgs(req mcp.CallToolRequest) url.Values {
 	q := url.Values{}
-	if m := strArg(args, "match"); m != "" {
+	if m := req.GetString("match", ""); m != "" {
 		q.Set("match[]", m)
 	}
-	if s := strArg(args, "start"); s != "" {
+	if s := req.GetString("start", ""); s != "" {
 		q.Set("start", s)
 	}
-	if e := strArg(args, "end"); e != "" {
+	if e := req.GetString("end", ""); e != "" {
 		q.Set("end", e)
 	}
 	return q

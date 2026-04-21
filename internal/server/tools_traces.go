@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -48,14 +49,13 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("step", mcp.Description("Step, e.g. 30s, 1m.")),
 		),
 		instrument("query_tempo_metrics", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			query := strArg(args, "query")
-			if query == "" {
-				return mcp.NewToolResultError("missing required argument 'query'"), nil
+			query, err := req.RequireString("query")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "tempo")
 			if err != nil {
@@ -65,9 +65,9 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *deps) {
 			defer cancel()
 			q := url.Values{}
 			q.Set("q", query)
-			q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())))
-			q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().Unix())))
-			if step := strArg(args, "step"); step != "" {
+			q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())))
+			q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().Unix())))
+			if step := req.GetString("step", ""); step != "" {
 				q.Set("step", step)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/metrics/query_range").Inc()
@@ -91,12 +91,11 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("Unix seconds; default now.")),
 		),
 		instrument("list_tempo_tag_names", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			names, err := fetchTempoTags(ctx, d, org, "", args)
+			names, err := fetchTempoTags(ctx, d, org, "", req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -116,20 +115,19 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		instrument("list_tempo_tag_values", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
-			}
-			tag := strArg(args, "tag")
-			if tag == "" {
-				return mcp.NewToolResultError("missing required argument 'tag'"), nil
-			}
-			values, err := fetchTempoTags(ctx, d, org, tag, args)
+			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(values, strArg(args, "prefix"), intArg(args, "page"), intArg(args, "pageSize")))
+			tag, err := req.RequireString("tag")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			values, err := fetchTempoTags(ctx, d, org, tag, req)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultJSON(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 		}),
 	)
 }
@@ -162,7 +160,7 @@ func qualifyTempoTag(scope, tag string) string {
 // /api/v2/search/tag/{tag}/values. Tempo's v2 API returns a single-level
 // {scopes:[{name, tags:[...]}]} structure for tag names and
 // {tagValues:[{type, value}]} for values; we flatten both to a []string.
-func fetchTempoTags(ctx context.Context, d *deps, org, tag string, args map[string]any) ([]string, error) {
+func fetchTempoTags(ctx context.Context, d *deps, org, tag string, req mcp.CallToolRequest) ([]string, error) {
 	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "tempo")
 	if err != nil {
 		return nil, err
@@ -170,9 +168,9 @@ func fetchTempoTags(ctx context.Context, d *deps, org, tag string, args map[stri
 	ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 	defer cancel()
 	q := url.Values{}
-	q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())))
-	q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().Unix())))
-	if scope := strArg(args, "scope"); scope != "" && scope != "all" {
+	q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())))
+	q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().Unix())))
+	if scope := req.GetString("scope", ""); scope != "" && scope != "all" {
 		q.Set("scope", scope)
 	}
 

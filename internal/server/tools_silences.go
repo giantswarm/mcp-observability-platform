@@ -32,10 +32,9 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 50, max 500.")),
 		),
 		instrument("list_silences", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveAlertmanagerDS(ctx, d, org)
 			if err != nil {
@@ -43,14 +42,14 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			page := intArg(args, "page")
-			pageSize := intArg(args, "pageSize")
+			page := req.GetInt("page", 0)
+			pageSize := req.GetInt("pageSize", 0)
 			if pageSize <= 0 {
 				pageSize = 50
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 			q := url.Values{}
-			if filter := strArg(args, "filter"); filter != "" {
+			if filter := req.GetString("filter", ""); filter != "" {
 				q.Set("filter", filter)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/silences").Inc()
@@ -58,7 +57,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager silences", err), nil
 			}
-			result, err := paginateSilences(body, strArg(args, "state"), page, pageSize)
+			result, err := paginateSilences(body, req.GetString("state", ""), page, pageSize)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse silences", err), nil
 			}

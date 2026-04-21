@@ -19,7 +19,6 @@ import (
 
 func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
 	registerAlertDetailTool(s, d)
-	registerSilenceTools(s, d)
 
 	s.AddTool(
 		mcp.NewTool("list_alerts",
@@ -31,10 +30,9 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
 		),
 		instrument("list_alerts", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveAlertmanagerDS(ctx, d, org)
 			if err != nil {
@@ -43,14 +41,14 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *deps) {
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 
-			page := intArg(args, "page")
-			pageSize := intArg(args, "pageSize")
+			page := req.GetInt("page", 0)
+			pageSize := req.GetInt("pageSize", 0)
 			if pageSize <= 0 {
 				pageSize = 50
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 
-			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, strArg(args, "state"), strArg(args, "filter"))
+			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
 			}
@@ -74,14 +72,13 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
 		),
 		instrument("get_alert", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			fp := strArg(args, "fingerprint")
-			if fp == "" {
-				return mcp.NewToolResultError("missing required argument 'fingerprint'"), nil
+			fp, err := req.RequireString("fingerprint")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveAlertmanagerDS(ctx, d, org)
 			if err != nil {

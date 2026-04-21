@@ -82,7 +82,7 @@ func TestGroupDashboardsByFolder_Pagination(t *testing.T) {
 	}
 	b, _ := json.Marshal(res)
 	var out struct {
-		TotalFolders int `json:"totalFolders"`
+		TotalFolders int  `json:"totalFolders"`
 		HasMore      bool `json:"hasMore"`
 		Folders      []struct {
 			Title string `json:"title"`

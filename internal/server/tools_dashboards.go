@@ -29,20 +29,19 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Folder-page size (default 20, max 200). Optional.")),
 		),
 		instrument("list_dashboards", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.grafana.SearchDashboards(ctx, grafanaOpts(ctx, oa.OrgID), strArg(args, "query"), intArg(args, "limit"))
+			body, err := d.grafana.SearchDashboards(ctx, grafanaOpts(ctx, oa.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search failed", err), nil
 			}
-			tree, err := groupDashboardsByFolder(body, strArg(args, "folder"), intArg(args, "page"), intArg(args, "pageSize"))
+			tree, err := groupDashboardsByFolder(body, req.GetString("folder", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboards", err), nil
 			}
@@ -57,14 +56,13 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
 		),
 		instrument("get_dashboard_by_uid", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -88,14 +86,13 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
 		),
 		instrument("get_dashboard_summary", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -122,14 +119,13 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("titleContains", mcp.Description("Case-insensitive panel-title substring filter.")),
 		),
 		instrument("get_dashboard_panel_queries", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -139,7 +135,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
-			res, err := extractDashboardQueries(body, intArg(args, "panelId"), strArg(args, "titleContains"))
+			res, err := extractDashboardQueries(body, req.GetInt("panelId", 0), req.GetString("titleContains", ""))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
@@ -155,16 +151,15 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("path", mcp.Required(), mcp.Description("JSON Pointer, e.g. '/dashboard/title' or '/dashboard/panels/0'. Empty '' or '/' returns the whole document.")),
 		),
 		instrument("get_dashboard_property", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			path := strArg(args, "path")
+			path := req.GetString("path", "")
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -196,10 +191,9 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("limit", mcp.Description("Max annotations (default 100, max 1000).")),
 		),
 		instrument("get_annotations", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -208,25 +202,26 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := url.Values{}
-			q.Set("from", grafanaTimeArg(args, "from", -time.Hour))
-			q.Set("to", grafanaTimeArg(args, "to", 0))
-			if uid := strArg(args, "dashboardUid"); uid != "" {
+			q.Set("from", grafanaTimeArg(req, "from", -time.Hour))
+			q.Set("to", grafanaTimeArg(req, "to", 0))
+			if uid := req.GetString("dashboardUid", ""); uid != "" {
 				q.Set("dashboardUID", uid)
 			}
-			if pid := intArg(args, "panelId"); pid > 0 {
+			if pid := req.GetInt("panelId", 0); pid > 0 {
 				q.Set("panelId", strconv.Itoa(pid))
 			}
-			if tags := strArg(args, "tags"); tags != "" {
-				for _, t := range strings.Split(tags, ",") {
+			if tags := req.GetString("tags", ""); tags != "" {
+				for t := range strings.SplitSeq(tags, ",") {
 					if t = strings.TrimSpace(t); t != "" {
 						q.Add("tags", t)
 					}
 				}
 			}
-			limit := clampInt(intArg(args, "limit"), 1, 1000)
-			if limit == 0 {
+			limit := req.GetInt("limit", 0)
+			if limit <= 0 {
 				limit = 100
 			}
+			limit = clampInt(limit, 1, 1000)
 			q.Set("limit", strconv.Itoa(limit))
 			body, err := d.grafana.GetAnnotations(ctx, grafanaOpts(ctx, oa.OrgID), q)
 			if err != nil {
@@ -253,15 +248,15 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 		),
 		instrument("run_panel_query", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			panelID := intArg(args, "panelId")
+			panelID := req.GetInt("panelId", 0)
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
@@ -273,7 +268,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
-			panel, target, kind, vars, err := pickPanelTarget(body, panelID, intArg(args, "targetIndex"))
+			panel, target, kind, vars, err := pickPanelTarget(body, panelID, req.GetInt("targetIndex", 0))
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -285,9 +280,9 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 					newArgs[k] = v
 				}
 			}
-			step := strArg(args, "step")
+			step := req.GetString("step", "")
 			expanded := func(expr string) string {
-				return expandGrafanaVars(expr, vars, strArg(args, "start"), strArg(args, "end"), step)
+				return expandGrafanaVars(expr, vars, req.GetString("start", ""), req.GetString("end", ""), step)
 			}
 			switch kind {
 			case "mimir":
@@ -338,14 +333,13 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithObject("vars", mcp.Description("Template-variable values as {var: value} (e.g. {\"cluster\":\"prod-eu-1\"}).")),
 		),
 		instrument("generate_deeplink", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -355,11 +349,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("base url", err), nil
 			}
-			from := strArg(args, "from")
+			from := req.GetString("from", "")
 			if from == "" {
 				from = "now-1h"
 			}
-			to := strArg(args, "to")
+			to := req.GetString("to", "")
 			if to == "" {
 				to = "now"
 			}
@@ -367,10 +361,10 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
 			q.Set("from", from)
 			q.Set("to", to)
-			if pid := intArg(args, "panelId"); pid > 0 {
+			if pid := req.GetInt("panelId", 0); pid > 0 {
 				q.Set("viewPanel", strconv.Itoa(pid))
 			}
-			if vars, ok := args["vars"].(map[string]any); ok {
+			if vars, ok := req.GetArguments()["vars"].(map[string]any); ok {
 				for k, v := range vars {
 					if sv, ok := v.(string); ok {
 						q.Set("var-"+k, sv)
@@ -389,8 +383,8 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *deps) {
 // grafanaTimeArg returns a Grafana-friendly time string (unix ms by default).
 // When the named arg is set, it's passed through verbatim (already RFC3339,
 // "now-1h", or a unix-ms numeral). When absent, returns now+offset in ms.
-func grafanaTimeArg(args map[string]any, name string, offset time.Duration) string {
-	if s := strArg(args, name); s != "" {
+func grafanaTimeArg(req mcp.CallToolRequest, name string, offset time.Duration) string {
+	if s := req.GetString(name, ""); s != "" {
 		return s
 	}
 	return fmt.Sprintf("%d", time.Now().Add(offset).UnixMilli())
@@ -478,9 +472,9 @@ func templateVarsToMap(vars []rawTemplateVar) map[string]string {
 // variables in `expr` so the resulting PromQL/LogQL/TraceQL is acceptable
 // to Mimir/Loki/Tempo. Built-ins covered:
 //
-//   $__rate_interval / $__interval — defaults to step (or 5m).
-//   $__interval_ms                 — step in ms (or 300000).
-//   $__range / $__range_s / $__range_ms — end-start as a duration.
+//	$__rate_interval / $__interval — defaults to step (or 5m).
+//	$__interval_ms                 — step in ms (or 300000).
+//	$__range / $__range_s / $__range_ms — end-start as a duration.
 //
 // Dashboard variables are taken from `vars` (sourced from templating.list).
 // Substitution is purely textual; values are not URL-encoded.
@@ -510,12 +504,18 @@ func expandGrafanaVars(expr string, vars map[string]string, start, end, step str
 	for _, r := range replacements {
 		expr = strings.ReplaceAll(expr, r.from, r.to)
 	}
-	// Dashboard variables. Replace `${name}` first, then `$name` to avoid
-	// `$name` matching a prefix of a longer name. We don't try to honour
-	// `${name:format}` formatters — most queries use the bare form.
-	for name, val := range vars {
-		expr = strings.ReplaceAll(expr, "${"+name+"}", val)
-		expr = strings.ReplaceAll(expr, "$"+name, val)
+	// Dashboard variables. Two-pass: `${name}` forms first (unambiguous,
+	// brace-delimited), then `$name` forms sorted by length DESC so e.g.
+	// `$cluster_id` replaces before `$cluster` (otherwise map-iteration
+	// order could turn `$cluster_id` into `<val>_id`).
+	names := make([]string, 0, len(vars))
+	for name := range vars {
+		expr = strings.ReplaceAll(expr, "${"+name+"}", vars[name])
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
+	for _, name := range names {
+		expr = strings.ReplaceAll(expr, "$"+name, vars[name])
 	}
 	return expr
 }
@@ -657,7 +657,7 @@ func readJSONPointer(doc []byte, pointer string) ([]byte, error) {
 	if err := json.Unmarshal(doc, &v); err != nil {
 		return nil, fmt.Errorf("unmarshal dashboard: %w", err)
 	}
-	for _, raw := range strings.Split(pointer[1:], "/") {
+	for raw := range strings.SplitSeq(pointer[1:], "/") {
 		// RFC 6901 escapes: ~1 = /, ~0 = ~
 		tok := strings.ReplaceAll(strings.ReplaceAll(raw, "~1", "/"), "~0", "~")
 		switch cur := v.(type) {
@@ -773,12 +773,12 @@ func groupDashboardsByFolder(raw json.RawMessage, folderFilter string, page, pag
 	end := min(start+pageSize, len(folders))
 
 	return struct {
-		Total         int          `json:"total"`
-		TotalFolders  int          `json:"totalFolders"`
-		Page          int          `json:"page"`
-		PageSize      int          `json:"pageSize"`
-		HasMore       bool         `json:"hasMore"`
-		Folders       []folderView `json:"folders"`
+		Total        int          `json:"total"`
+		TotalFolders int          `json:"totalFolders"`
+		Page         int          `json:"page"`
+		PageSize     int          `json:"pageSize"`
+		HasMore      bool         `json:"hasMore"`
+		Folders      []folderView `json:"folders"`
 	}{
 		Total:        total,
 		TotalFolders: len(folders),
@@ -795,12 +795,12 @@ func groupDashboardsByFolder(raw json.RawMessage, folderFilter string, page, pag
 func summariseDashboard(raw json.RawMessage) (any, error) {
 	var doc struct {
 		Dashboard struct {
-			UID       string `json:"uid"`
-			Title     string `json:"title"`
-			Tags      []string `json:"tags"`
+			UID   string   `json:"uid"`
+			Title string   `json:"title"`
+			Tags  []string `json:"tags"`
 			// Grafana permits either a string ("30s") or boolean false (disabled).
 			// Use RawMessage and render as a string below.
-			Refresh   json.RawMessage `json:"refresh"`
+			Refresh    json.RawMessage `json:"refresh"`
 			Templating struct {
 				List []struct {
 					Name    string `json:"name"`
@@ -876,16 +876,16 @@ func summariseDashboard(raw json.RawMessage) (any, error) {
 	}
 
 	return struct {
-		UID       string     `json:"uid"`
-		Title     string     `json:"title"`
-		Tags      []string   `json:"tags,omitempty"`
-		Refresh   string     `json:"refresh,omitempty"`
-		URL       string     `json:"url,omitempty"`
-		Version   int        `json:"version,omitempty"`
-		Updated   string     `json:"updated,omitempty"`
-		Variables []tmplVar  `json:"variables,omitempty"`
-		Rows      []rowSummary `json:"rows"`
-		TotalPanels int      `json:"totalPanels"`
+		UID         string       `json:"uid"`
+		Title       string       `json:"title"`
+		Tags        []string     `json:"tags,omitempty"`
+		Refresh     string       `json:"refresh,omitempty"`
+		URL         string       `json:"url,omitempty"`
+		Version     int          `json:"version,omitempty"`
+		Updated     string       `json:"updated,omitempty"`
+		Variables   []tmplVar    `json:"variables,omitempty"`
+		Rows        []rowSummary `json:"rows"`
+		TotalPanels int          `json:"totalPanels"`
 	}{
 		UID:         doc.Dashboard.UID,
 		Title:       doc.Dashboard.Title,
@@ -921,12 +921,12 @@ func refreshToString(raw json.RawMessage) string {
 // retained as json.RawMessage because Grafana shells out query expressions in
 // different fields per datasource type (expr / query / rawSql / queryText…).
 type rawPanel struct {
-	ID      int               `json:"id"`
-	Type    string            `json:"type"`
-	Title   string            `json:"title"`
-	Targets []json.RawMessage `json:"targets"`
-	Panels  []rawPanel        `json:"panels"`
-	Datasource json.RawMessage `json:"datasource"`
+	ID         int               `json:"id"`
+	Type       string            `json:"type"`
+	Title      string            `json:"title"`
+	Targets    []json.RawMessage `json:"targets"`
+	Panels     []rawPanel        `json:"panels"`
+	Datasource json.RawMessage   `json:"datasource"`
 }
 
 func countPanels(ps []rawPanel) int {
@@ -957,12 +957,12 @@ func extractDashboardQueries(raw json.RawMessage, panelID int, titleContains str
 	}
 
 	type query struct {
-		RefID         string `json:"refId,omitempty"`
-		Expr          string `json:"expr,omitempty"`          // Prometheus
-		Query         string `json:"query,omitempty"`         // many
-		RawSQL        string `json:"rawSql,omitempty"`        // SQL-ish
-		QueryText     string `json:"queryText,omitempty"`     // some
-		Datasource    any    `json:"datasource,omitempty"`
+		RefID      string `json:"refId,omitempty"`
+		Expr       string `json:"expr,omitempty"`      // Prometheus
+		Query      string `json:"query,omitempty"`     // many
+		RawSQL     string `json:"rawSql,omitempty"`    // SQL-ish
+		QueryText  string `json:"queryText,omitempty"` // some
+		Datasource any    `json:"datasource,omitempty"`
 	}
 	type panelOut struct {
 		ID         int     `json:"id"`

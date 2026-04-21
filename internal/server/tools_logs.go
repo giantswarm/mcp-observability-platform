@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,10 +33,9 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("limit", mcp.Description("Max log entries per page (default 100, max 5000).")),
 		),
 		instrument("query_logs", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 			if err != nil {
@@ -44,11 +44,11 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			ctx, cancel := withToolTimeout(ctx, 30*time.Second)
 			defer cancel()
 
-			query := strArg(args, "query")
-			if query == "" {
-				return mcp.NewToolResultError("missing required argument 'query'"), nil
+			query, err := req.RequireString("query")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			limit := intArg(args, "limit")
+			limit := req.GetInt("limit", 0)
 			if limit <= 0 {
 				limit = 100
 			}
@@ -56,8 +56,8 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 
 			q := url.Values{}
 			q.Set("query", query)
-			start := strArg(args, "start")
-			end := strArg(args, "end")
+			start := req.GetString("start", "")
+			end := req.GetString("end", "")
 			if start == "" {
 				start = fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())
 			}
@@ -99,12 +99,11 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix ns; default now.")),
 		),
 		instrument("list_loki_label_names", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			names, err := fetchLokiLabels(ctx, d, org, "", args)
+			names, err := fetchLokiLabels(ctx, d, org, "", req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -124,20 +123,19 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		instrument("list_loki_label_values", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
-			}
-			label := strArg(args, "label")
-			if label == "" {
-				return mcp.NewToolResultError("missing required argument 'label'"), nil
-			}
-			values, err := fetchLokiLabels(ctx, d, org, label, args)
+			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(values, strArg(args, "prefix"), intArg(args, "page"), intArg(args, "pageSize")))
+			label, err := req.RequireString("label")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			values, err := fetchLokiLabels(ctx, d, org, label, req)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultJSON(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 		}),
 	)
 
@@ -152,14 +150,13 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithNumber("limit", mcp.Description("Top-N patterns to return (default 50, max 500).")),
 		),
 		instrument("query_loki_patterns", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			query := strArg(args, "query")
-			if query == "" {
-				return mcp.NewToolResultError("missing required argument 'query'"), nil
+			query, err := req.RequireString("query")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 			if err != nil {
@@ -169,9 +166,9 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			defer cancel()
 			q := url.Values{}
 			q.Set("query", query)
-			q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
-			q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
-			if step := strArg(args, "step"); step != "" {
+			q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
+			q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().UnixNano())))
+			if step := req.GetString("step", ""); step != "" {
 				q.Set("step", step)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/patterns").Inc()
@@ -185,7 +182,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 				}
 				return mcp.NewToolResultErrorFromErr("loki patterns", err), nil
 			}
-			limit := intArg(args, "limit")
+			limit := req.GetInt("limit", 0)
 			if limit <= 0 {
 				limit = 50
 			}
@@ -207,14 +204,13 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix ns; default now.")),
 		),
 		instrument("query_loki_stats", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			query := strArg(args, "query")
-			if query == "" {
-				return mcp.NewToolResultError("missing required argument 'query'"), nil
+			query, err := req.RequireString("query")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 			if err != nil {
@@ -224,8 +220,8 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 			defer cancel()
 			q := url.Values{}
 			q.Set("query", query)
-			q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
-			q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
+			q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
+			q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().UnixNano())))
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/index/stats").Inc()
 			body, err := d.grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/index/stats", q)
 			if err != nil {
@@ -239,7 +235,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *deps) {
 // fetchLokiLabels hits /loki/api/v1/labels (when label is "") or
 // /loki/api/v1/label/{label}/values. Defaults the time window to last 1h
 // so callers don't have to specify it for simple discovery.
-func fetchLokiLabels(ctx context.Context, d *deps, org, label string, args map[string]any) ([]string, error) {
+func fetchLokiLabels(ctx context.Context, d *deps, org, label string, req mcp.CallToolRequest) ([]string, error) {
 	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, "loki")
 	if err != nil {
 		return nil, err
@@ -247,8 +243,8 @@ func fetchLokiLabels(ctx context.Context, d *deps, org, label string, args map[s
 	ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 	defer cancel()
 	q := url.Values{}
-	q.Set("start", firstNonEmpty(strArg(args, "start"), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
-	q.Set("end", firstNonEmpty(strArg(args, "end"), fmt.Sprintf("%d", time.Now().UnixNano())))
+	q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
+	q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().UnixNano())))
 
 	path := "loki/api/v1/labels"
 	if label != "" {
@@ -272,7 +268,7 @@ func fetchLokiLabels(ctx context.Context, d *deps, org, label string, args map[s
 // projectLokiPatterns folds Loki's /api/v1/patterns response down to a
 // compact top-N view. Loki returns
 //
-//   {"status":"success","data":[{"pattern":"...","samples":[[ts,count],...]}]}
+//	{"status":"success","data":[{"pattern":"...","samples":[[ts,count],...]}]}
 //
 // Per-timestamp sample arrays dominate the payload and aren't useful for an
 // LLM asked "what's spamming this stream?". We sum per pattern, sort desc,
@@ -281,7 +277,7 @@ func projectLokiPatterns(raw json.RawMessage, limit int) (any, error) {
 	var env struct {
 		Status string `json:"status"`
 		Data   []struct {
-			Pattern string  `json:"pattern"`
+			Pattern string   `json:"pattern"`
 			Samples [][2]any `json:"samples"` // [ts, count] pairs; ts+count are JSON numbers
 		} `json:"data"`
 	}
@@ -357,13 +353,4 @@ func lokiPageCursor(body []byte, limit int) (nextStart string, limitHit bool) {
 		return "", false
 	}
 	return oldest, true
-}
-
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if s != "" {
-			return s
-		}
-	}
-	return ""
 }

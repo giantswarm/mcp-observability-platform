@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -67,10 +66,9 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 		),
 		instrument("list_datasources", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -84,13 +82,13 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
 			// the fields the MCP surface actually needs. Cuts the payload
 			// from ~2KB/DS to ~200B/DS.
 			type raw_ struct {
-				ID       int64  `json:"id"`
-				UID      string `json:"uid"`
-				Name     string `json:"name"`
-				Type     string `json:"type"`
-				Access   string `json:"access"`
-				URL      string `json:"url"`
-				IsDefault bool  `json:"isDefault"`
+				ID        int64  `json:"id"`
+				UID       string `json:"uid"`
+				Name      string `json:"name"`
+				Type      string `json:"type"`
+				Access    string `json:"access"`
+				URL       string `json:"url"`
+				IsDefault bool   `json:"isDefault"`
 			}
 			var in []raw_
 			if err := json.Unmarshal(raw, &in); err != nil {
@@ -128,14 +126,13 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Datasource UID. See list_datasources.")),
 		),
 		instrument("get_datasource", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			oa, err := d.resolver.Require(ctx, callerAuthz(ctx), org, authz.RoleViewer)
 			if err != nil {
@@ -152,6 +149,3 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *deps) {
 		}),
 	)
 }
-
-// ensure "fmt" import is needed (used by error messages indirectly)
-var _ = fmt.Sprintf

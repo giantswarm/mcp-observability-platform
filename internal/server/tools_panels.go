@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"net/url"
@@ -39,16 +40,15 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			mcp.WithString("tz", mcp.Description("IANA timezone for time axis, e.g. 'Europe/Paris'. Default: UTC.")),
 		),
 		instrument("get_panel_image", d, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
-			org, errRes := requireOrg(args)
-			if errRes != nil {
-				return errRes, nil
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			uid := strArg(args, "uid")
-			if uid == "" {
-				return mcp.NewToolResultError("missing required argument 'uid'"), nil
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			panelID := intArg(args, "panelId")
+			panelID := req.GetInt("panelId", 0)
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
@@ -76,22 +76,22 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 
 			q := url.Values{}
-			q.Set("from", firstNonEmptyStr(strArg(args, "from"), "now-1h"))
-			q.Set("to", firstNonEmptyStr(strArg(args, "to"), "now"))
-			width := intArg(args, "width")
+			q.Set("from", cmp.Or(req.GetString("from", ""), "now-1h"))
+			q.Set("to", cmp.Or(req.GetString("to", ""), "now"))
+			width := req.GetInt("width", 0)
 			if width <= 0 {
 				width = 1000
 			}
-			height := intArg(args, "height")
+			height := req.GetInt("height", 0)
 			if height <= 0 {
 				height = 500
 			}
 			q.Set("width", strconv.Itoa(width))
 			q.Set("height", strconv.Itoa(height))
-			if theme := strArg(args, "theme"); theme != "" {
+			if theme := req.GetString("theme", ""); theme != "" {
 				q.Set("theme", theme)
 			}
-			if tz := strArg(args, "tz"); tz != "" {
+			if tz := req.GetString("tz", ""); tz != "" {
 				q.Set("tz", tz)
 			}
 			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
@@ -102,10 +102,10 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			}
 			if len(png) > maxRenderedImageBytes {
 				return mcp.NewToolResultJSON(struct {
-					Error   string `json:"error"`
-					Bytes   int    `json:"bytes"`
-					Limit   int    `json:"limit"`
-					Hint    string `json:"hint"`
+					Error string `json:"error"`
+					Bytes int    `json:"bytes"`
+					Limit int    `json:"limit"`
+					Hint  string `json:"hint"`
 				}{
 					Error: "image_too_large",
 					Bytes: len(png),
@@ -121,11 +121,4 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *deps) {
 			), nil
 		}),
 	)
-}
-
-func firstNonEmptyStr(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
