@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/mcpprogress"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
@@ -114,9 +115,18 @@ func DatasourceProxyHandler(d *Deps, spec DatasourceSpec) Handler {
 		}
 
 		observability.GrafanaProxyTotal.WithLabelValues(spec.InstantPath).Inc()
+		// Range queries are the slow ones; emit "started" progress so
+		// clients showing a spinner stop guessing. Instant queries skip
+		// the notification to avoid spamming the channel.
+		if useRange {
+			mcpprogress.Report(ctx, req, 0.1, 1.0, "querying "+path)
+		}
 		dsStart := time.Now()
 		body, err := d.Grafana.DatasourceProxy(ctx, GrafanaOpts(ctx, oa.OrgID), dsID, path, q)
 		observability.GrafanaProxyDuration.WithLabelValues(spec.InstantPath).Observe(time.Since(dsStart).Seconds())
+		if useRange {
+			mcpprogress.Report(ctx, req, 1.0, 1.0, "done")
+		}
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil
 		}

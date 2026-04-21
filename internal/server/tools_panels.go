@@ -11,6 +11,7 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/mcpprogress"
 	"github.com/giantswarm/mcp-observability-platform/internal/tools/middleware"
 )
 
@@ -98,7 +99,11 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *middleware.Deps) {
 			}
 			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
 
+			// Rendering can take 5-20s on large dashboards; surface progress
+			// so clients show "rendering..." instead of a blank wait.
+			mcpprogress.Report(ctx, req, 0.1, 1.0, "rendering panel")
 			png, contentType, err := d.Grafana.RenderPanel(ctx, middleware.GrafanaOpts(ctx, oa.OrgID), uid, panelID, q)
+			mcpprogress.Report(ctx, req, 1.0, 1.0, "done")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("render panel", err), nil
 			}
