@@ -128,7 +128,6 @@ func (h *HealthChecker) Detailed(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-
 // runAll executes every registered probe in parallel with h.timeout. Probes
 // that exceed the deadline report "deadline exceeded".
 func (h *HealthChecker) runAll(parent context.Context) map[string]Check {
