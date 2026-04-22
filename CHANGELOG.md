@@ -20,9 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   react instead of silently truncating.
 - **Per-org tenant/datasource selection** via `GrafanaOrganization` CR metadata, with the multi-tenant header already baked into each
   datasource by observability-operator — the MCP picks the datasource, Grafana applies the tenant.
-- **Prometheus metrics** on `:9091/metrics` (namespace `mcp_*`; see README), OTel tracing via `OTEL_EXPORTER_OTLP_*`, and a structured
-  audit log (`{timestamp, caller, tool, args, outcome, duration_ms, error}`) on stderr — always on, stable schema, ingestable by SIEM.
-  Shared `Classify()` feeds audit + metrics + span attribute so cross-signal correlation never drifts.
+- **Prometheus metrics** on `:9091/metrics` (namespace `mcp_*`; realistic latency buckets from 25 ms to 60 s; see README), OTel tracing
+  via `OTEL_EXPORTER_OTLP_*`, OTLP logs via the `otelslog` bridge when
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set (every slog record picks up `trace_id`/`span_id` for jump-from-span-to-log correlation), and
+  a structured audit log (`{timestamp, caller, caller_token_source, tool, args, outcome, duration_ms, error}`) on stderr — always on,
+  stable schema, ingestable by SIEM. Args strings >4 KiB are truncated with a `…[truncated N bytes]` marker and the whole args map is
+  replaced with `{truncated: true, bytes: N}` if the total exceeds 16 KiB, so audit lines always stay well under Loki's 256 KiB ingest
+  ceiling. One `Instrument` middleware feeds audit + metrics + span attribute from a single `Classify()` call so cross-signal
+  correlation never drifts.
 - **Deep readiness** (`/readyz` probes Grafana + Dex + K8s informer with 2s per-check deadline; `/healthz/detailed` returns JSON summary) and
   two-phase graceful shutdown (MCP drains first, observability stays answering probes during drain).
 - **Hardened OAuth config** — `MCP_OAUTH_TRUSTED_AUDIENCES` for SSO token forwarding (muster / sibling MCPs), `MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES`
