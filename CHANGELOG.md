@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work in progress toward v0.1.0. Shipped so far:
+### Added
 
 - Go MCP server with `streamable-http` (default), `sse`, and `stdio` transports.
 - OAuth 2.1 via `mcp-oauth` with Dex; authz derived from `GrafanaOrganization` CR membership.
