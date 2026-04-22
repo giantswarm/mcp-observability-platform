@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/audit"
-	"github.com/giantswarm/mcp-observability-platform/internal/identity"
+	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
@@ -55,8 +55,8 @@ func Instrument(auditor *audit.Logger) server.ToolHandlerMiddleware {
 			// nil-safe so a nil auditor short-circuits without a branch here.
 			auditor.Record(ctx, audit.Record{
 				Timestamp:   start,
-				Caller:      identity.CallerSubject(ctx),
-				TokenSource: identity.CallerTokenSource(ctx),
+				Caller:      authz.CallerSubject(ctx),
+				TokenSource: authz.CallerTokenSource(ctx),
 				Tool:        name,
 				Args:        req.GetArguments(),
 				Outcome:     outcome,

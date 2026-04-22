@@ -14,7 +14,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 	"github.com/giantswarm/mcp-observability-platform/internal/tools"
 )
@@ -107,7 +106,7 @@ func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
-		mcpsrv.WithHTTPContextFunc(identity.PromoteOAuthCaller),
+		mcpsrv.WithHTTPContextFunc(authz.PromoteOAuthCaller),
 	)
 }
 
@@ -120,6 +119,6 @@ func SSEHandler(mcp *mcpsrv.MCPServer) http.Handler {
 		mcp,
 		mcpsrv.WithSSEEndpoint("/sse"),
 		mcpsrv.WithMessageEndpoint("/message"),
-		mcpsrv.WithSSEContextFunc(identity.PromoteOAuthCaller),
+		mcpsrv.WithSSEContextFunc(authz.PromoteOAuthCaller),
 	)
 }

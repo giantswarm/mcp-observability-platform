@@ -11,7 +11,6 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 )
 
 func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
@@ -21,7 +20,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			access, err := d.Authorizer.Resolve(ctx, identity.CallerAuthz(ctx))
+			access, err := d.Authorizer.Resolve(ctx, authz.CallerFromContext(ctx))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
 			}
@@ -74,7 +73,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -139,7 +138,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

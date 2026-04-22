@@ -13,7 +13,6 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 )
 
 // maxRenderedImageBytes caps the PNG payload returned by get_panel_image.
@@ -55,7 +54,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

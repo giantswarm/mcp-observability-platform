@@ -15,7 +15,6 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 )
 
 func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
@@ -35,7 +34,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -67,7 +66,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -95,7 +94,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -129,7 +128,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -163,7 +162,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			path := req.GetString("path", "")
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -192,7 +191,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -217,7 +216,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -253,7 +252,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -315,7 +314,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -408,7 +407,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
