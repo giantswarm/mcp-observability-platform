@@ -9,6 +9,10 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 )
@@ -125,6 +129,73 @@ func TestInstrument_NilLoggerIsPassthrough(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("nil-logger middleware did not call the handler")
+	}
+}
+
+// TestInstrument_SpanCarriesOutcomeAndStatus installs a recording
+// TracerProvider and asserts the span side-effects: attribute
+// "tool.outcome" is set on every call, but span status is Error only for
+// system_error. User errors are expected behaviour — same convention as
+// HTTP servers not marking 4xx Error.
+func TestInstrument_SpanCarriesOutcomeAndStatus(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	original := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(original) })
+
+	cases := []struct {
+		name       string
+		handler    server.ToolHandlerFunc
+		wantOutc   string
+		wantStatus codes.Code
+	}{
+		{
+			name:       "ok",
+			handler:    func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, nil },
+			wantOutc:   OutcomeOK,
+			wantStatus: codes.Unset,
+		},
+		{
+			name: "user_error",
+			handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{IsError: true}, nil
+			},
+			wantOutc:   OutcomeUserError,
+			wantStatus: codes.Unset, // NOT Error — 4xx-equivalent
+		},
+		{
+			name:       "system_error",
+			handler:    func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, errors.New("boom") },
+			wantOutc:   OutcomeSystemError,
+			wantStatus: codes.Error,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec.Reset()
+			_, _ = Instrument(nil)(c.handler)(context.Background(), stubRequest("probe", nil))
+			spans := rec.Ended()
+			if len(spans) != 1 {
+				t.Fatalf("want 1 span, got %d", len(spans))
+			}
+			sp := spans[0]
+			if sp.Name() != "tool.probe" {
+				t.Errorf("span name = %q, want tool.probe", sp.Name())
+			}
+			if sp.Status().Code != c.wantStatus {
+				t.Errorf("status = %v, want %v", sp.Status().Code, c.wantStatus)
+			}
+			var gotOutc string
+			for _, kv := range sp.Attributes() {
+				if kv.Key == "tool.outcome" {
+					gotOutc = kv.Value.AsString()
+				}
+			}
+			if gotOutc != c.wantOutc {
+				t.Errorf("tool.outcome = %q, want %q", gotOutc, c.wantOutc)
+			}
+		})
 	}
 }
 

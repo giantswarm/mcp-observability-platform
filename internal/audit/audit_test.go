@@ -112,6 +112,36 @@ func TestWithRedactor_MasksSensitiveKeys(t *testing.T) {
 	}
 }
 
+func TestLogger_Record_RedactorRunsBeforeTruncation(t *testing.T) {
+	// A redactor that expands a value (e.g. pads a credential with a
+	// fingerprint) must see its output then truncated — order matters
+	// because truncation preserves the marker, while reordering would
+	// let an unredacted value slip past the cap.
+	var buf bytes.Buffer
+	l := NewJSON(&buf, WithRedactor(func(args map[string]any) map[string]any {
+		if _, ok := args["token"]; ok {
+			args["token"] = strings.Repeat("X", maxArgStringBytes+200) // redactor returns a huge string
+		}
+		return args
+	}))
+	l.Record(context.Background(), Record{
+		Tool: "x",
+		Args: map[string]any{"token": "secret"},
+	})
+	got := decodeOne(t, &buf)
+	args := got["args"].(map[string]any)
+	s, ok := args["token"].(string)
+	if !ok {
+		t.Fatalf("token not a string: %+v", args)
+	}
+	if !strings.HasPrefix(s, "XXXX") {
+		t.Errorf("redactor output not seen: %q", s[:20])
+	}
+	if !strings.HasSuffix(s, "truncated 200 bytes]") {
+		t.Errorf("truncation did not run after redactor: %q", s[len(s)-40:])
+	}
+}
+
 func TestLogger_Record_PassesThroughSmallArgs(t *testing.T) {
 	// Regression guard: normal-sized args must not be mutated or reshaped
 	// by the size-cap logic. A 100-byte string and a handful of keys fit
