@@ -33,5 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MCP_OAUTH_ENCRYPTION_KEY` now rejects keys with Shannon entropy below 4.0 bits/byte. Catches placeholder / all-zero / all-`a` inputs that pass mcp-oauth's length check but encrypt with a trivially-known key. Will propose upstream as a native `security.NewEncryptor` guard.
 - Startup validates URL + OAuth client ID inputs via mcp-oauth's native exports (`oidc.ValidateHTTPSURL` on issuer URLs; `dex.ValidateAudience`/`ValidateAudiences` on client IDs and trusted-audience entries). Skipped when `MCP_OAUTH_ALLOW_INSECURE_HTTP=true` so local dev still works against an HTTP Dex.
 - `internal/server.New` now returns `(*mcpsrv.MCPServer, error)` rather than `(http.Handler, error)`. HTTP-transport wrapping moved to new helpers `server.StreamableHTTPHandler(mcp)` and `server.SSEHandler(mcp)` so callers pick the transport. Stdio callers drive `mcpsrv.ServeStdio(mcp)` directly.
+- **Resolver cache hardened** (`internal/authz/resolver.go`): (a) concurrent callers on a cold key share one upstream round-trip via `golang.org/x/sync/singleflight` — no more stampedes; (b) cache key is the OIDC `sub` claim, not email — stable and non-spoofable; (c) positive entries TTL 30s, negative entries (user-not-found / empty memberships) 5s — mid-SSO-outage failures no longer lock users out for half a minute; (d) cache bounded by `hashicorp/golang-lru/v2`, default 10 000 entries — long-running pods no longer leak; (e) returned `Tenants` + `Datasources` slices are cloned so handler mutations can't escape into the cache; (f) the double CR list on the unauthorised path is gone — `Require` now uses a cached name-set. `NewResolver` signature: `(reader, grafana, logger, cacheTTL, negativeCacheTTL, cacheSize)`.
+- **Distinct `ErrOrgNotFound` vs `ErrNotAuthorised`** from `Resolver.Require`. Today both return `ErrNotAuthorised` which hides "org doesn't exist" bugs. Wrappable via `errors.Is`.
+- **Readiness probe reflects informer liveness.** `cmd/serve.go` now tracks `ctrlCache.Start` state via `sync/atomic.Bool`; the `k8s_cache` probe returns 503 when the informer goroutine has exited. Previously `List` would keep returning the last-known snapshot and readyz would lie.
+- **`Role.AtLeast(other)` method** replaces silent `oa.Role < minRole` iota comparison. Catches future reorders.
+
+### Removed
+
+- `authz.Caller.Login` field — production code never set it; only test fixtures did. `Caller.Identity()` now picks Email first, Subject second (Login fallback removed).
 
 [Unreleased]: https://github.com/giantswarm/mcp-observability-platform/tree/main

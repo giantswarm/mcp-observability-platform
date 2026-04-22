@@ -74,14 +74,11 @@ func TestCallerAuthz_LeavesLoginEmpty(t *testing.T) {
 	if got.Subject != "sub-1" {
 		t.Errorf("Subject = %q, want sub-1", got.Subject)
 	}
-	if got.Login != "" {
-		t.Errorf("Login = %q, want empty (OIDC sub must not leak into Grafana login field)", got.Login)
-	}
 }
 
 func TestCallerAuthz_EmptyOnMissingIdentity(t *testing.T) {
 	got := CallerAuthz(context.Background())
-	if got.Email != "" || got.Login != "" || got.Subject != "" {
+	if got.Email != "" || got.Subject != "" {
 		t.Errorf("CallerAuthz without identity = %+v, want empty Caller", got)
 	}
 }

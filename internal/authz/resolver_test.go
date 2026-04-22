@@ -2,8 +2,10 @@ package authz
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +54,19 @@ func newFakeReader(t *testing.T, objs ...ctrlclient.Object) ctrlclient.Reader {
 		Build()
 }
 
+// mustNewResolver constructs a Resolver with default TTLs and the given
+// cache size, and fails the test if construction errors. Pass cacheSize=-1
+// to disable caching (uncached read-through every call) — the most common
+// shape for tests that assert upstream-call counts.
+func mustNewResolver(t *testing.T, r ctrlclient.Reader, g GrafanaOrgLookup, cacheSize int) *Resolver {
+	t.Helper()
+	res, err := NewResolver(r, g, nil, 0, 0, cacheSize)
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	return res
+}
+
 // fakeGrafana is a deterministic in-memory stub of the GrafanaOrgLookup
 // interface. Tests configure which user IDs exist and what their orgs are.
 type fakeGrafana struct {
@@ -83,7 +98,7 @@ func TestResolver_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 			},
 		},
 	}
-	r := NewResolver(newFakeReader(t, alpha, beta), g, nil, 0)
+	r := mustNewResolver(t, newFakeReader(t, alpha, beta), g, -1)
 
 	got, err := r.Resolve(context.Background(), Caller{Email: "u@example.com"})
 	if err != nil {
@@ -109,7 +124,7 @@ func TestResolver_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 			},
 		},
 	}
-	r := NewResolver(newFakeReader(t, alpha), g, nil, 0)
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, -1)
 
 	got, _ := r.Resolve(context.Background(), Caller{Email: "u@e.com"})
 	if len(got) != 0 {
@@ -121,7 +136,7 @@ func TestResolver_Resolve_UserNeverLoggedIn(t *testing.T) {
 	// Grafana returns 404 on lookup → found=false → resolver returns empty
 	// without erroring, so the UX is "no access yet; log into Grafana first".
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
-	r := NewResolver(newFakeReader(t), g, nil, 0)
+	r := mustNewResolver(t, newFakeReader(t), g, -1)
 
 	got, err := r.Resolve(context.Background(), Caller{Email: "new@e.com"})
 	if err != nil {
@@ -138,7 +153,7 @@ func TestResolver_Resolve_Cache(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := NewResolver(newFakeReader(t, alpha), g, nil, time.Minute)
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, 100)
 
 	_, _ = r.Resolve(context.Background(), Caller{Email: "u@e.com"})
 	_, _ = r.Resolve(context.Background(), Caller{Email: "u@e.com"})
@@ -154,7 +169,7 @@ func TestResolver_Require_InsufficientRole(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := NewResolver(newFakeReader(t, alpha), g, nil, 0)
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, -1)
 
 	_, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleAdmin)
 	if err == nil {
@@ -168,7 +183,7 @@ func TestResolver_Require_NotAuthorised(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {}}, // user exists but in no orgs
 	}
-	r := NewResolver(newFakeReader(t, alpha), g, nil, 0)
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, -1)
 
 	_, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleViewer)
 	if err == nil {
@@ -182,7 +197,7 @@ func TestResolver_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := NewResolver(newFakeReader(t, alpha), g, nil, 0)
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, -1)
 
 	oa, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "ALPHA TEAM", RoleAdmin)
 	if err != nil {
@@ -274,6 +289,171 @@ func TestRole_MarshalJSON(t *testing.T) {
 	}
 }
 
+// blockingGrafana lets tests gate LookupUserID on a channel so concurrent
+// callers are guaranteed to arrive at the cache miss together. Counts both
+// LookupUserID and UserOrgs calls atomically under -race.
+type blockingGrafana struct {
+	users       map[string]int64
+	orgs        map[int64][]Membership
+	lookupCalls atomic.Int32
+	userOrgs    atomic.Int32
+	release     chan struct{}
+}
+
+func (b *blockingGrafana) LookupUserID(_ context.Context, loginOrEmail string) (int64, bool, error) {
+	b.lookupCalls.Add(1)
+	if b.release != nil {
+		<-b.release
+	}
+	id, ok := b.users[loginOrEmail]
+	return id, ok, nil
+}
+
+func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]Membership, error) {
+	b.userOrgs.Add(1)
+	return b.orgs[userID], nil
+}
+
+// TestResolver_Singleflight_CollapsesConcurrentCallers proves that N
+// concurrent callers on the same cold cache key do exactly ONE upstream
+// round-trip, not N. Guards against the "stampede / thundering herd"
+// failure mode where a cache expiry under load fans out.
+func TestResolver_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 1)
+	g := &blockingGrafana{
+		users:   map[string]int64{"u@e.com": 1},
+		orgs:    map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
+		release: make(chan struct{}),
+	}
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, 100)
+
+	const callers = 50
+	var started sync.WaitGroup
+	started.Add(callers)
+	var done sync.WaitGroup
+	done.Add(callers)
+
+	for range callers {
+		go func() {
+			defer done.Done()
+			started.Done()
+			_, err := r.Resolve(context.Background(), Caller{Email: "u@e.com", Subject: "sub-1"})
+			if err != nil {
+				t.Errorf("Resolve: %v", err)
+			}
+		}()
+	}
+	started.Wait()
+	// Race window: all 50 goroutines are blocked on the singleflight group
+	// waiting for one to finish the upstream call. Release the single in-
+	// flight caller; the rest share its result.
+	close(g.release)
+	done.Wait()
+
+	if got := g.lookupCalls.Load(); got != 1 {
+		t.Errorf("LookupUserID calls = %d, want 1 (singleflight should collapse %d concurrent callers)", got, callers)
+	}
+	if got := g.userOrgs.Load(); got != 1 {
+		t.Errorf("UserOrgs calls = %d, want 1", got)
+	}
+}
+
+// TestResolver_CacheKeyIsSubjectNotEmail proves the same Subject under two
+// different Email values shares a cache entry. Fixes the spoofability
+// concern: email can change or be unverified, subject cannot.
+func TestResolver_CacheKeyIsSubjectNotEmail(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 1)
+	g := &fakeGrafana{
+		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
+		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
+	}
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, 100)
+
+	// Same subject, different emails — second call should hit cache.
+	_, _ = r.Resolve(context.Background(), Caller{Email: "u@old.com", Subject: "sub-1"})
+	_, _ = r.Resolve(context.Background(), Caller{Email: "u@new.com", Subject: "sub-1"})
+	if g.calls.lookup != 1 {
+		t.Errorf("LookupUserID calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
+	}
+}
+
+// TestResolver_ReturnedSlicesAreCloned proves handler mutations of the
+// returned OrgAccess don't escape into the cache. Before the fix, appending
+// to oa.Datasources silently corrupted every future cache hit.
+func TestResolver_ReturnedSlicesAreCloned(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 1)
+	g := &fakeGrafana{
+		users: map[string]int64{"u@e.com": 1},
+		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
+	}
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, 100)
+
+	oa1, err := r.Require(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
+	if err != nil {
+		t.Fatalf("Require: %v", err)
+	}
+	// Mutation simulating a handler that appends to the datasource list.
+	oa1.Datasources = append(oa1.Datasources, obsv1alpha2.DataSource{ID: 999, Name: "poisoned"})
+
+	oa2, err := r.Require(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
+	if err != nil {
+		t.Fatalf("second Require: %v", err)
+	}
+	for _, ds := range oa2.Datasources {
+		if ds.ID == 999 {
+			t.Fatalf("cache was poisoned by handler-side append (ds=%+v)", ds)
+		}
+	}
+}
+
+// TestResolver_Require_OrgNotFoundVsNotAuthorised proves that Require
+// returns a distinct ErrOrgNotFound when the org simply doesn't exist,
+// vs ErrNotAuthorised when the org exists but the caller isn't a member.
+// Today both cases are indistinguishable from the caller's side.
+func TestResolver_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 1)
+	g := &fakeGrafana{
+		users: map[string]int64{"u@e.com": 1},
+		orgs:  map[int64][]Membership{1: {}}, // user exists in Grafana but in no orgs
+	}
+	r := mustNewResolver(t, newFakeReader(t, alpha), g, -1)
+
+	// alpha exists as a CR but the caller isn't a member → ErrNotAuthorised.
+	_, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleViewer)
+	if err == nil {
+		t.Fatal("expected error for known-org-but-no-access, got nil")
+	}
+	if errors.Is(err, ErrOrgNotFound) {
+		t.Errorf("err = %v, want NOT-ErrOrgNotFound (alpha exists as a CR)", err)
+	}
+
+	// nonexistent has no CR → ErrOrgNotFound.
+	_, err = r.Require(context.Background(), Caller{Email: "u@e.com"}, "nonexistent", RoleViewer)
+	if !errors.Is(err, ErrOrgNotFound) {
+		t.Errorf("err = %v, want wraps ErrOrgNotFound", err)
+	}
+}
+
+// TestResolver_Role_AtLeast guards the iota ordering — future reorders
+// that would silently break privilege checks fail here.
+func TestResolver_Role_AtLeast(t *testing.T) {
+	cases := []struct {
+		have, need Role
+		want       bool
+	}{
+		{RoleAdmin, RoleAdmin, true},
+		{RoleAdmin, RoleViewer, true},
+		{RoleEditor, RoleAdmin, false},
+		{RoleViewer, RoleEditor, false},
+		{RoleNone, RoleViewer, false},
+	}
+	for _, c := range cases {
+		if got := c.have.AtLeast(c.need); got != c.want {
+			t.Errorf("(%v).AtLeast(%v) = %v, want %v", c.have, c.need, got, c.want)
+		}
+	}
+}
+
 func TestCaller_IdentityAndEmpty(t *testing.T) {
 	if !(Caller{}).Empty() {
 		t.Error("zero Caller should be Empty")
@@ -281,11 +461,8 @@ func TestCaller_IdentityAndEmpty(t *testing.T) {
 	if (Caller{Subject: "x"}).Empty() {
 		t.Error("with Subject should not be Empty")
 	}
-	if got := (Caller{Email: "e", Login: "l", Subject: "s"}).Identity(); got != "e" {
+	if got := (Caller{Email: "e", Subject: "s"}).Identity(); got != "e" {
 		t.Errorf("Identity email-preferred = %q, want e", got)
-	}
-	if got := (Caller{Login: "l", Subject: "s"}).Identity(); got != "l" {
-		t.Errorf("Identity login-fallback = %q, want l", got)
 	}
 	if got := (Caller{Subject: "s"}).Identity(); got != "s" {
 		t.Errorf("Identity subject-fallback = %q, want s", got)
