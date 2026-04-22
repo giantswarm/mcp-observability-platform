@@ -215,7 +215,7 @@ func TestRoleFromGrafana(t *testing.T) {
 	}
 }
 
-func TestOrgAccess_FindDatasourceID(t *testing.T) {
+func TestOrganization_FindDatasourceID(t *testing.T) {
 	org := Organization{
 		Datasources: []Datasource{
 			{ID: 1, Name: "mimir-prod"},
@@ -242,7 +242,7 @@ func TestOrgAccess_FindDatasourceID(t *testing.T) {
 	}
 }
 
-func TestOrgAccess_HasTenantType(t *testing.T) {
+func TestOrganization_HasTenantType(t *testing.T) {
 	org := Organization{
 		Tenants: []Tenant{
 			{Name: "t1", Types: []TenantType{TenantTypeData}},
