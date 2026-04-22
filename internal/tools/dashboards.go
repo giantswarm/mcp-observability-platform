@@ -20,7 +20,7 @@ import (
 
 func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
-		mcp.NewTool("list_dashboards",
+		mcp.NewTool("search_dashboards",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("List dashboards in a Grafana org, grouped by folder. Returns a compact tree {total, folders:[{title, dashboards:[{title,uid,url}]}]} so large orgs fit in the LLM context."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
@@ -56,7 +56,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Fetch a Grafana dashboard's full JSON. Prefer get_dashboard_summary or get_dashboard_property when you can — full dashboards are often 100s of KB and easily exceed the response cap. Use this only when you actually need the raw document."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
-			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
+			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See search_dashboards.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
@@ -87,7 +87,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Return a compact summary of a Grafana dashboard — title, tags, variables, row & panel layout — WITHOUT panel queries. Use this first to explore; then get_dashboard_panel_queries for the specific panel(s) you care about. Avoids pulling the full dashboard JSON (often 100s of KB)."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
-			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
+			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See search_dashboards.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
@@ -117,7 +117,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("get_dashboard_panel_queries",
 			ReadOnlyAnnotation(),
-			mcp.WithDescription("Return the data queries (PromQL/LogQL/TraceQL) for one panel — or all panels, or a title-substring match. Use after get_dashboard_summary to pinpoint the exact panel. Returns the raw expressions so you can re-run them via query_metrics / query_logs / query_traces."),
+			mcp.WithDescription("Return the data queries (PromQL/LogQL/TraceQL) for one panel — or all panels, or a title-substring match. Use after get_dashboard_summary to pinpoint the exact panel. Returns the raw expressions so you can re-run them via query_prometheus / query_loki_logs / query_traces."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
 			mcp.WithNumber("panelId", mcp.Description("Return only the panel with this id.")),
@@ -244,7 +244,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("run_panel_query",
 			ReadOnlyAnnotation(),
-			mcp.WithDescription("Run the stored query for a single dashboard panel directly — no need to extract+rebuild. Resolves the panel's datasource type (Mimir/Loki/Tempo) and routes through the appropriate proxy. Saves the get_dashboard_panel_queries → query_metrics two-step."),
+			mcp.WithDescription("Run the stored query for a single dashboard panel directly — no need to extract+rebuild. Resolves the panel's datasource type (Mimir/Loki/Tempo) and routes through the appropriate proxy. Saves the get_dashboard_panel_queries → query_prometheus two-step."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
 			mcp.WithNumber("panelId", mcp.Required(), mcp.Description("Panel id.")),
@@ -910,7 +910,9 @@ func summariseDashboard(raw json.RawMessage) (any, error) {
 }
 
 // refreshToString renders Grafana's polymorphic "refresh" field (string or
-// bool) as a single string: "30s" stays as "30s", false becomes "" (disabled).
+// bool) as a single string: "30s" stays as "30s", `false` (disabled) becomes
+// "". Returns "" for any other shape — the string-or-bool decode covers
+// every valid Grafana dashboard export.
 func refreshToString(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -919,11 +921,7 @@ func refreshToString(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
-	var b bool
-	if err := json.Unmarshal(raw, &b); err == nil {
-		return ""
-	}
-	return strings.Trim(string(raw), `"`)
+	return ""
 }
 
 // rawPanel is the subset of the Grafana panel shape we decode. Targets are

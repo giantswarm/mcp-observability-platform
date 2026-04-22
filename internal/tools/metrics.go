@@ -21,9 +21,9 @@ import (
 func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 	registerSingleAlertRuleTool(s, d)
 
-	// query_metrics — Mimir via Grafana datasource proxy.
+	// query_prometheus — Mimir via Grafana datasource proxy.
 	s.AddTool(
-		mcp.NewTool("query_metrics",
+		mcp.NewTool("query_prometheus",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Run a PromQL query against Mimir via the org's multi-tenant datasource. Runs /api/v1/query_range when both start and end are set, otherwise /api/v1/query. Prefer aggregations (sum by / rate / topk) over raw series."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
@@ -56,7 +56,13 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("page", mcp.Description("0-based page (default 0).")),
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
-		metricLabelValuesHandler(d, "__name__"),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return runPromLabelValues(ctx, d, org, "__name__", req)
+		},
 	)
 
 	s.AddTool(
@@ -191,7 +197,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			groupBy := req.GetString("groupBy", "")
 
 			expr := buildHistogramQuantile(q, metric, matchers, window, groupBy)
-			// Forward to the same proxy path as query_metrics.
+			// Forward to the same proxy path as query_prometheus.
 			newArgs := map[string]any{
 				"org":   org,
 				"query": expr,
@@ -367,7 +373,10 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultErrorFromErr("parse rules", err), nil
 			}
 			// Exact-name match (flatten uses substring); optional group filter.
-			out := matches[:0]
+			// Allocate a fresh slice rather than `matches[:0]` — the latter
+			// aliases the caller-visible slice and is a foot-gun if flattenAlertRules
+			// ever returns a cached slice.
+			out := make([]ruleItem, 0, len(matches))
 			for _, r := range matches {
 				if !strings.EqualFold(r.Name, name) {
 					continue
@@ -385,18 +394,6 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 			}{Rules: out})
 		},
 	)
-}
-
-// metricLabelValuesHandler wraps the shared handler that resolves Mimir and
-// runs /api/v1/label/{label}/values with optional match[] narrowing.
-func metricLabelValuesHandler(d *Deps, label string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		org, err := req.RequireString("org")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return runPromLabelValues(ctx, d, org, label, req)
-	}
 }
 
 // runPromLabelValues is the shared core of the metric-names and

@@ -112,7 +112,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 					Error: "image_too_large",
 					Bytes: len(png),
 					Limit: maxRenderedImageBytes,
-					Hint:  "reduce width/height, narrow the time range, or use get_dashboard_panel_queries + query_metrics to summarise numerically",
+					Hint:  "reduce width/height, narrow the time range, or use get_dashboard_panel_queries + query_prometheus to summarise numerically",
 				})
 			}
 			// MCP ImageContent uses base64-encoded data.

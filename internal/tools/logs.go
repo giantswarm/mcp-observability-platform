@@ -20,11 +20,11 @@ import (
 )
 
 func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
-	// query_logs — Loki range queries with cursor pagination. Loki does not
+	// query_loki_logs — Loki range queries with cursor pagination. Loki does not
 	// support instant queries for log streams, so we always call query_range
 	// and default to the last hour when start/end are missing.
 	s.AddTool(
-		mcp.NewTool("query_logs",
+		mcp.NewTool("query_loki_logs",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Run a LogQL query against Loki. Defaults to last 1h when start/end are omitted. Returns {data, nextStart} — when nextStart is set, the limit was hit; re-run with end=<nextStart> to page further back in time."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
