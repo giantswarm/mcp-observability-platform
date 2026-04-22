@@ -33,18 +33,18 @@ func decodeAuditLine(t *testing.T, buf *bytes.Buffer) map[string]any {
 	return rec
 }
 
-// applyHandler runs the Audit middleware around a fake handler. Returns the
-// decoded audit line.
+// applyHandler runs Instrument around a fake handler. Returns the decoded
+// audit line emitted by the composite middleware.
 func applyHandler(t *testing.T, h server.ToolHandlerFunc, name string, args map[string]any) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
 	log := audit.NewJSON(&buf)
-	wrapped := Audit(log)(h)
+	wrapped := Instrument(log)(h)
 	_, _ = wrapped(context.Background(), stubRequest(name, args))
 	return decodeAuditLine(t, &buf)
 }
 
-func TestAudit_SuccessRecordsOK(t *testing.T) {
+func TestInstrument_SuccessRecordsOK(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
@@ -68,7 +68,7 @@ func TestAudit_SuccessRecordsOK(t *testing.T) {
 	}
 }
 
-func TestAudit_HandlerErrorRecordsSystemError(t *testing.T) {
+func TestInstrument_HandlerErrorRecordsSystemError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return nil, errors.New("downstream 502")
@@ -83,7 +83,7 @@ func TestAudit_HandlerErrorRecordsSystemError(t *testing.T) {
 	}
 }
 
-func TestAudit_IsErrorResultRecordsUserError(t *testing.T) {
+func TestInstrument_IsErrorResultRecordsUserError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
@@ -101,7 +101,7 @@ func TestAudit_IsErrorResultRecordsUserError(t *testing.T) {
 	}
 }
 
-func TestAudit_IsErrorWithNoContentRecordsPlaceholder(t *testing.T) {
+func TestInstrument_IsErrorWithNoContentRecordsPlaceholder(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{IsError: true}, nil
@@ -112,9 +112,11 @@ func TestAudit_IsErrorWithNoContentRecordsPlaceholder(t *testing.T) {
 	}
 }
 
-func TestAudit_NilLoggerIsPassthrough(t *testing.T) {
+func TestInstrument_NilLoggerIsPassthrough(t *testing.T) {
+	// audit.Logger.Record is nil-safe, so Instrument(nil) must still drive
+	// the handler and emit span + metric side-effects without panicking.
 	called := false
-	h := Audit(nil)(func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h := Instrument(nil)(func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		called = true
 		return nil, nil
 	})
@@ -123,5 +125,26 @@ func TestAudit_NilLoggerIsPassthrough(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("nil-logger middleware did not call the handler")
+	}
+}
+
+// Ensure Instrument doesn't panic on any of the three outcomes — exact
+// counter / histogram values are asserted in the observability /metrics
+// scrape test; here we only guard the composite's survival.
+func TestInstrument_ExercisesAllThreeOutcomes(t *testing.T) {
+	mw := Instrument(nil)
+	req := stubRequest("probe", nil)
+
+	handlers := []server.ToolHandlerFunc{
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, nil },
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{IsError: true}, nil
+		},
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, errors.New("boom")
+		},
+	}
+	for _, handler := range handlers {
+		_, _ = mw(handler)(context.Background(), req)
 	}
 }

@@ -1,34 +1,27 @@
 // Package middleware holds the cross-cutting concerns applied to every MCP
-// tool handler: a tracing span and the Prometheus counter/histogram.
+// tool handler: one OTEL span, one metric pair, one audit record per
+// invocation, plus a response-size cap and outcome classifier.
 //
 // Middlewares use mcp-go's built-in mechanism — `server.ToolHandlerMiddleware`
-// plus the `WithToolHandlerMiddleware` server option (or `MCPServer.Use`) —
-// so they run automatically on every tool call without per-handler wrapping.
-// The tool name is read from the request (`req.Params.Name`) rather than
-// threaded through a closure argument.
+// plus the `WithToolHandlerMiddleware` server option — so they run
+// automatically on every tool call without per-handler wrapping. The tool
+// name is read from the request (`req.Params.Name`) rather than threaded
+// through a closure argument.
 //
 // Wiring happens once in `internal/server.New`:
 //
-//	mcpsrv.WithRecovery(),                                   // panic guard (mcp-go)
-//	mcpsrv.WithToolHandlerMiddleware(middleware.Tracing()),  // OTEL span
-//	mcpsrv.WithToolHandlerMiddleware(middleware.Metrics()),  // counter + histogram
+//	mcpsrv.WithRecovery(),                                        // panic guard (mcp-go)
+//	mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(a)),   // tracing + metrics + audit
+//	mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),   // enforce body-size cap
 //
-// Extending the stack (e.g. Audit, progress, rate-limit) only requires adding
-// another `WithToolHandlerMiddleware` call — tool registration code stays
-// untouched.
+// Instrument collapses what used to be three independent middlewares
+// (Tracing/Metrics/Audit) into one so `Classify` is computed once and the
+// span, metric, and audit outcome can never drift.
 package middleware
 
 import (
-	"context"
-	"time"
-
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-
-	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
 var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/internal/server/middleware")
@@ -55,8 +48,8 @@ const (
 //     (missing arg, not authorised, response_too_large). Expected behaviour.
 //   - otherwise      → ok.
 //
-// Shared by Tracing, Metrics, and Audit so the metric label, span
-// attribute, and audit outcome never drift apart.
+// Shared by Instrument and ResponseCap's IsError marker so the metric label,
+// span attribute, and audit outcome never drift apart.
 func Classify(res *mcp.CallToolResult, err error) string {
 	switch {
 	case err != nil:
@@ -65,42 +58,5 @@ func Classify(res *mcp.CallToolResult, err error) string {
 		return OutcomeUserError
 	default:
 		return OutcomeOK
-	}
-}
-
-// Tracing opens an OTEL span "tool.<name>" around each tool invocation so
-// downstream Grafana / HTTP spans attach beneath it. The span is marked
-// Error ONLY on system_error — user_error is expected behaviour, same
-// convention as HTTP servers not marking 4xx spans Error. The outcome is
-// always recorded as the `tool.outcome` span attribute.
-func Tracing() server.ToolHandlerMiddleware {
-	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			ctx, span := tracer.Start(ctx, "tool."+req.Params.Name)
-			defer span.End()
-			res, err := next(ctx, req)
-			o := Classify(res, err)
-			span.SetAttributes(attribute.String("tool.outcome", o))
-			if o == OutcomeSystemError {
-				span.SetStatus(codes.Error, "tool returned error")
-			}
-			return res, err
-		}
-	}
-}
-
-// Metrics increments the tool-call counter and records the latency histogram
-// per invocation, labelled by tool name and outcome
-// ("ok" | "user_error" | "system_error"; see package docs).
-func Metrics() server.ToolHandlerMiddleware {
-	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			start := time.Now()
-			res, err := next(ctx, req)
-			o := Classify(res, err)
-			observability.ToolCallTotal.WithLabelValues(req.Params.Name, o).Inc()
-			observability.ToolCallDuration.WithLabelValues(req.Params.Name, o).Observe(time.Since(start).Seconds())
-			return res, err
-		}
 	}
 }

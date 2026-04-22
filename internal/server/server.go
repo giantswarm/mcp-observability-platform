@@ -65,23 +65,27 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	// notifications/tools/list_changed.
 	//
 	// Middleware stack (outermost first):
-	//   1. WithRecovery()            — mcp-go's built-in panic guard.
-	//   2. middleware.Tracing()      — OTEL span per tool call.
-	//   3. middleware.Metrics()      — Prometheus counter + histogram per call.
-	//   4. middleware.Audit()        — structured JSON record per call.
-	//   5. middleware.ResponseCap()  — replace oversized text content with a
-	//                                  structured response_too_large payload.
-	// Ordered so a panic is caught first, the span/metric wrap everything
-	// else, audit sees the post-cap outcome, and ResponseCap runs closest
-	// to the handler so the cap applies to the handler's actual output.
+	//   1. WithRecovery()                   — mcp-go's built-in panic guard.
+	//   2. middleware.Instrument(cfg.Audit) — one OTEL span + one metric pair
+	//                                         + one audit record per call.
+	//                                         Classify(res,err) is computed
+	//                                         once and fanned out, so the
+	//                                         span status, metric label, and
+	//                                         audit outcome never drift apart.
+	//   3. middleware.ResponseCap()         — replace oversized text content
+	//                                         with a structured
+	//                                         response_too_large payload.
+	// Ordered so a panic is caught first, Instrument wraps the handler to
+	// see every exit path, and ResponseCap runs closest to the handler so
+	// the cap applies to the handler's actual output — and Instrument then
+	// sees the post-cap outcome (a capped response classifies as user_error
+	// via IsError).
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
 		mcpsrv.WithToolCapabilities(false),
 		mcpsrv.WithRecovery(),
-		mcpsrv.WithToolHandlerMiddleware(middleware.Tracing()),
-		mcpsrv.WithToolHandlerMiddleware(middleware.Metrics()),
-		mcpsrv.WithToolHandlerMiddleware(middleware.Audit(cfg.Audit)),
+		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Audit)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),
 	)
 
