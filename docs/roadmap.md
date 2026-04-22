@@ -20,6 +20,10 @@ landed. For what's already shipped:
 | Deep readiness + two-phase shutdown | `/healthz` vs `/readyz` split, JSON `/healthz/detailed`, graceful drain ordered MCP → observability | #7 |
 | Audit middleware | Structured JSON per tool call on stderr. Shared `Classify()` feeds audit + metrics + span attributes. Pluggable `Redactor` | #8 |
 | Transports + config validators | All three MCP transports wired (`streamable-http` default, `sse`, `stdio`). Config validators reusing mcp-oauth exports. Encryption-key entropy check. `MCP_OAUTH_TRUSTED_AUDIENCES` / `MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES` for SSO token forwarding + CLI redirect schemes | #19 |
+| Resolver cache correctness | Singleflight-collapsed stampedes; cache keyed on OIDC `sub`; split positive/negative TTLs (30s / 5s); bounded by `hashicorp/golang-lru/v2`; slice-cloned returns; distinct `ErrOrgNotFound` vs `ErrNotAuthorised`; informer-alive atomic bool feeding the `k8s_cache` readiness probe; `Caller.Login` field deleted | #21 |
+| Tool layer cleanup + upstream alignment | Stop mutating `req.Params.Arguments` in re-dispatching handlers (audit records now show caller's actual args); uniform `response_too_large` payload; tool renames to match `grafana/mcp-grafana` (`query_prometheus`, `query_loki_logs`, `search_dashboards`); new `search_folders` + `get_annotation_tags`; deleted `DatasourceProxyPOST` + `doPOSTForm` + `prompts.go` + `resources.go` + `annotations.go` + `metricLabelValuesHandler`; `GrafanaProxyDuration` gained a `status` label and error-path observation | #22 |
+| Authz package split + deep-clone | `internal/authz/` split into `resolver.go` / `cache.go` / `role.go` / `access.go` / `caller.go` / `errors.go` (each file is now one concept). `cloneOrgAccess` uses CR-generated `DeepCopyInto` so handler mutations of `Tenants[i].Types` (or other nested slices) can't escape into the cache | #23 |
+| Response-cap as middleware + YAGNI sweep + doc fix | Response cap moved from ~22 per-handler call sites into `middleware.ResponseCap()`. `datasourceSpec.ForceRange` + `DefaultRangeAgo` (single caller each) removed, `invocationFromRequest` inlined. README "Prompts" + "Resource templates" sections deleted (they advertised things that don't register); all 34 registered tools listed under current names. Package-doc comments added to every `internal/tools/*.go` file | #24 |
 
 ## Orientation — pre-release cleanup
 
@@ -41,88 +45,9 @@ release. Glossary of jargon used in the Tier 1 descriptions:
 
 ## Tier 1 — ship next (before v0.1.0)
 
-Six PRs. Default sequence: PR 8 → 9 → 10 → 11 → 12 → 13. PRs 8 and 9 are
-independent; PRs 10 and 11 both touch `cmd/serve.go` and should be
-serialised; PR 12 depends on 9's tool-rename; PR 13 depends on 10's
-compute-once middleware. Total ≈ 3000 LOC across the six.
-
-### PR 8 — Resolver cache + identity correctness (~450 LOC)
-
-Resolver cache has the highest runtime-bug density:
-
-- **Single-flight** the read-through (`golang.org/x/sync/singleflight`).
-  Concurrent callers on a cold key share one upstream call.
-- **Key the cache on OIDC `sub`**, not email. Subject is stable and
-  non-spoofable; email can change or be unverified. Email stays as input
-  to Grafana's `/api/users/lookup`.
-- **Split positive/negative TTLs** (30s / 5s). A failed SSO lookup
-  stops poisoning authz for 30s.
-- **Bound cache with LRU** (`hashicorp/golang-lru/v2`). Default 10k,
-  env-configurable. No more unbounded map growth.
-- **Clone returned slices.** Today handler mutations of
-  `oa.Tenants` / `oa.Datasources` escape into the cache.
-- **Kill the double-list** on unauthorised path. `Require` today calls
-  `Resolve` (list) then `lookupCR` (get + list). Collapse; return
-  `ErrOrgNotFound` distinct from `ErrNotAuthorised`.
-- **Readiness probe reflects informer state.** Today a dead
-  `ctrlCache.Start` still passes readyz because `List` returns stale
-  snapshot. Flip a `sync/atomic.Bool`; dead informer → 503.
-- **Delete `Caller.Login`**. Production never sets it.
-
-Files: `internal/authz/resolver.go` + test, `internal/identity/caller.go` + test, `cmd/serve.go`, `go.mod`.
-
-### PR 9 — Tool layer cleanup + upstream alignment (~550 LOC net)
-
-**Correctness:**
-
-- **Stop mutating `req.Params.Arguments`** (`dashboards.go`, `metrics.go`).
-  Today some handlers rewrite the request to re-dispatch; the audit
-  record captures the rewritten args, not what the LLM sent. Extract a
-  `datasourceInvocation` struct; keep the request read-only.
-- **Response cap applied uniformly.** Add `resultJSONWithCap(v)` helper;
-  replace every bare `mcp.NewToolResultJSON(x)` that's missing a cap
-  (8 tools today can silently blow the LLM context).
-- **`get_alert` uses Alertmanager `filter=`** instead of downloading
-  every alert in the org.
-- **Unified pagination** via `Paginated[T any]`. Four near-identical
-  envelopes collapse to one.
-- **Defer `GrafanaProxyDuration.Observe`** so error paths record latency
-  (half the signal vanishes during incidents today); add `status` label.
-
-**Upstream alignment** (matches `grafana/mcp-grafana` so LLMs trained on
-upstream docs hit our tools on first try):
-
-| Ours today | Rename to | Why |
-|---|---|---|
-| `query_metrics` | `query_prometheus` | Signals PromQL explicitly |
-| `query_logs` | `query_loki_logs` | Disambiguates vs other log backends |
-| `list_dashboards` | `search_dashboards` | Matches upstream; better conveys the `query` arg |
-
-Plus two new tools matching upstream names:
-- **`search_folders`** — Grafana folder listing.
-- **`get_annotation_tags`** — completes annotations read surface.
-
-**Deletions** (all empty / dead / single-caller):
-
-- `internal/server/resources.go` + `registerResources()` +
-  `mcpsrv.WithResourceCapabilities(...)`.
-- `internal/server/prompts.go` + `registerPrompts()` +
-  `mcpsrv.WithPromptCapabilities(...)`. No prompts are being built.
-- `internal/tools/annotations.go` (18 LOC, confusing name — folds into
-  `tools.go`).
-- `internal/tools/metrics.go` — `metricLabelValuesHandler` single-caller.
-- `internal/tools/dashboards.go` — unreachable branch in
-  `refreshToString`.
-- `internal/tools/metrics.go` — `flattenAlertRules` in-place slice
-  mutation; allocate fresh.
-- `internal/grafana/client.go` — `DatasourceProxyPOST` + `doPOSTForm`
-  (no callers after the request-mutation fix).
-- Repeated `fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())`
-  at 12+ sites. Extract `defaultStartNs / EndNs / StartSec / EndSec`.
-
-LLM-visible description polish: `list_alerts` and `list_orgs` today
-point at dead resource URIs in their descriptions; replace with pointers
-to the actual tools.
+Four PRs remaining. PRs 10 and 11 both touch `cmd/serve.go` so are
+serialised; PR 13 depends on PR 10's compute-once middleware. Total
+≈ 2000 LOC across the four.
 
 ### PR 10 — Observability + audit + OTLP logs + metric namespace (~500 LOC)
 
@@ -277,11 +202,14 @@ Files: new `internal/server/httpmiddleware/*.go`, new
 Zero behaviour change. Defer unless someone needs to touch the large
 files.
 
+## Tier 3 — post-release features
+
 ### Per-org Grafana SA tokens — phase-2 blast-radius fix
 
-**Biggest unresolved security concern.** Today one compromised MCP pod
-with a server-admin SA exposes every Grafana org. Fix requires
-`observability-operator` coordination:
+Biggest unresolved security gap but deferred past v0.1.0 because it
+needs `observability-operator` coordination (new CRD / Secret
+conventions) — not purely in this repo. Today one compromised MCP pod
+with a server-admin SA exposes every Grafana org.
 
 - Operator provisions per-`GrafanaOrganization` SAs, writes each to a
   namespaced Secret.
@@ -289,8 +217,6 @@ with a server-admin SA exposes every Grafana org. Fix requires
   `OrgAccess.OrgID`.
 - `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` remain as bootstrap fallback,
   documented "dev/bootstrap only; never production".
-
-## Tier 3 — post-release features
 
 ### Write tools gated on Editor / Admin
 
