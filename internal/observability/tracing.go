@@ -113,4 +113,3 @@ func buildResource(ctx context.Context, serviceName, serviceVersion string) (*re
 		resource.WithAttributes(attrs...),
 	)
 }
-

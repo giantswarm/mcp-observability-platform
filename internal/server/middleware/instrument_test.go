@@ -165,8 +165,10 @@ func TestInstrument_SpanCarriesOutcomeAndStatus(t *testing.T) {
 			wantStatus: codes.Unset, // NOT Error — 4xx-equivalent
 		},
 		{
-			name:       "system_error",
-			handler:    func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, errors.New("boom") },
+			name: "system_error",
+			handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return nil, errors.New("boom")
+			},
 			wantOutc:   OutcomeSystemError,
 			wantStatus: codes.Error,
 		},
