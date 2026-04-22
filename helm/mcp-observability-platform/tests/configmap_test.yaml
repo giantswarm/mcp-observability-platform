@@ -27,6 +27,29 @@ tests:
       - equal:
           path: data.MCP_OAUTH_REFRESH_AHEAD
           value: "5m"
+      - equal:
+          path: data.MCP_OAUTH_TRUSTED_AUDIENCES
+          value: ""
+      - equal:
+          path: data.MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES
+          value: ""
+
+  - it: joins trusted audiences + schemes as CSV
+    set:
+      oauth:
+        trustedAudiences:
+          - muster-client
+          - sibling-mcp
+        trustedRedirectSchemes:
+          - cursor
+          - vscode
+    asserts:
+      - equal:
+          path: data.MCP_OAUTH_TRUSTED_AUDIENCES
+          value: "muster-client,sibling-mcp"
+      - equal:
+          path: data.MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES
+          value: "cursor,vscode"
 
   - it: honours runtime overrides
     set:

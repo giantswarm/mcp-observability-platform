@@ -1,5 +1,6 @@
 {{- $rt := (default dict .Values.runtime) }}
 {{- $rl := (default dict $rt.rateLimit) }}
+{{- $oa := (default dict .Values.oauth) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,3 +34,14 @@ data:
   # --- OAuth token refresh (wired by PR 9) ---
   # Active-refresh window before token expiry. 0 = disabled.
   MCP_OAUTH_REFRESH_AHEAD: {{ $rt.oauthRefreshAhead | default "5m" | quote }}
+
+  # --- OAuth trust config (SSO token forwarding + CLI client schemes) ---
+  # CSV of OAuth client IDs whose tokens are accepted as if minted for this
+  # server's own client ID. Tokens still must be signed by the configured
+  # Dex issuer. Same semantic as mcp-kubernetes / muster. Empty = accept
+  # only our own tokens.
+  MCP_OAUTH_TRUSTED_AUDIENCES: {{ $oa.trustedAudiences | default (list) | join "," | quote }}
+  # CSV of custom URI schemes accepted during public client registration
+  # (e.g. "cursor,vscode"). Loopback HTTPS is always accepted. mcp-oauth
+  # validates each scheme per RFC 3986.
+  MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES: {{ $oa.trustedRedirectSchemes | default (list) | join "," | quote }}

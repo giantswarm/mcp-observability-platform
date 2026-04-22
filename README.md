@@ -203,10 +203,12 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `MCP_OAUTH_REDIRECT_URL`                    | no             | Defaults to `$MCP_OAUTH_ISSUER/oauth/callback`           |
 | `MCP_OAUTH_ALLOW_INSECURE_HTTP`             | no             | `true` to allow plain-HTTP OAuth flows (local dev only)  |
 | `MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`| no             | `true` to open `/oauth/register` (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that use loopback redirect URIs per RFC 8252. |
-| `MCP_OAUTH_ENCRYPTION_KEY`                  | no             | AES-256 key for token encryption at rest; 64-char hex or 32 raw bytes |
+| `MCP_OAUTH_ENCRYPTION_KEY`                  | no             | AES-256 key for token encryption at rest; 64-char hex or 32 raw bytes. Rejected if entropy is too low (all-zeros, repeated byte). |
+| `MCP_OAUTH_TRUSTED_AUDIENCES`               | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `DEX_ISSUER_URL`. Empty = own-tokens-only. |
+| `MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES`        | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
 | `OAUTH_STORAGE`                             | no             | `memory` (default) or `valkey`                           |
 | `VALKEY_ADDR` / `_PASSWORD` / `_TLS`        | no             | Required when `OAUTH_STORAGE=valkey`                     |
-| `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`.          |
+| `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
 | `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
 | `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`) |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |

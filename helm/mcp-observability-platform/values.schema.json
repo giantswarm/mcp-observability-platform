@@ -198,6 +198,18 @@
                             }
                         }
                     }
+                },
+                "trustedAudiences": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "trustedRedirectSchemes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

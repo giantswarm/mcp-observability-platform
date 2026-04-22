@@ -11,10 +11,11 @@ func TestValidateTransport(t *testing.T) {
 		wantOK bool
 	}{
 		{"streamable-http", true},
-		{"stdio", false},
-		{"sse", false},
+		{"stdio", true},
+		{"sse", true},
 		{"", false},
-		{"HTTP", false},
+		{"HTTP", false},            // case-sensitive; only lowercase is accepted
+		{"streamable_http", false}, // underscore, not hyphen
 	}
 	for _, c := range cases {
 		err := validateTransport(c.in)
@@ -24,8 +25,8 @@ func TestValidateTransport(t *testing.T) {
 		if !c.wantOK && err == nil {
 			t.Errorf("validateTransport(%q) = nil, want error", c.in)
 		}
-		if !c.wantOK && err != nil && !strings.Contains(err.Error(), "not yet supported") {
-			t.Errorf("validateTransport(%q) error = %v, want 'not yet supported'", c.in, err)
+		if !c.wantOK && err != nil && !strings.Contains(err.Error(), "is not supported") {
+			t.Errorf("validateTransport(%q) error = %v, want 'is not supported'", c.in, err)
 		}
 	}
 }
