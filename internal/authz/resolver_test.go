@@ -43,15 +43,15 @@ func registry(descs ...Organization) *fakeRegistry {
 	return &fakeRegistry{descs: descs}
 }
 
-// mustNewResolver constructs a Resolver with default TTLs and the given
+// mustNewAuthorizer constructs a Resolver with default TTLs and the given
 // cache size, and fails the test if construction errors. Pass cacheSize=-1
 // to disable caching (uncached read-through every call) — the most common
 // shape for tests that assert upstream-call counts.
-func mustNewResolver(t *testing.T, reg OrgRegistry, g OrgMembershipLookup, cacheSize int) *Resolver {
+func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g OrgMembershipLookup, cacheSize int) Authorizer {
 	t.Helper()
-	res, err := NewResolver(reg, g, nil, 0, 0, cacheSize)
+	res, err := NewAuthorizer(reg, g, nil, 0, 0, cacheSize)
 	if err != nil {
-		t.Fatalf("NewResolver: %v", err)
+		t.Fatalf("NewAuthorizer: %v", err)
 	}
 	return res
 }
@@ -75,7 +75,7 @@ func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]Membership, e
 	return f.orgs[userID], nil
 }
 
-func TestResolver_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
+func TestAuthorizer_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
 	beta := newOrg("beta", "Beta", 7, TenantTypeAlerting)
 	g := &fakeGrafana{
@@ -87,7 +87,7 @@ func TestResolver_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 			},
 		},
 	}
-	r := mustNewResolver(t, registry(alpha, beta), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha, beta), g, -1)
 
 	got, err := r.Resolve(context.Background(), Caller{Email: "u@example.com"})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestResolver_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 	}
 }
 
-func TestResolver_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
+func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	// Descriptor exists for orgID 42 but not 99. Role "None" also dropped.
 	alpha := newOrg("alpha", "Alpha", 42)
 	g := &fakeGrafana{
@@ -113,7 +113,7 @@ func TestResolver_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 			},
 		},
 	}
-	r := mustNewResolver(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
 	got, _ := r.Resolve(context.Background(), Caller{Email: "u@e.com"})
 	if len(got) != 0 {
@@ -121,11 +121,11 @@ func TestResolver_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	}
 }
 
-func TestResolver_Resolve_UserNeverLoggedIn(t *testing.T) {
+func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
 	// Grafana returns 404 on lookup → found=false → resolver returns empty
 	// without erroring, so the UX is "no access yet; log into Grafana first".
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
-	r := mustNewResolver(t, registry(), g, -1)
+	r := mustNewAuthorizer(t, registry(), g, -1)
 
 	got, err := r.Resolve(context.Background(), Caller{Email: "new@e.com"})
 	if err != nil {
@@ -136,13 +136,13 @@ func TestResolver_Resolve_UserNeverLoggedIn(t *testing.T) {
 	}
 }
 
-func TestResolver_Resolve_Cache(t *testing.T) {
+func TestAuthorizer_Resolve_Cache(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := mustNewResolver(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
 	_, _ = r.Resolve(context.Background(), Caller{Email: "u@e.com"})
 	_, _ = r.Resolve(context.Background(), Caller{Email: "u@e.com"})
@@ -152,13 +152,13 @@ func TestResolver_Resolve_Cache(t *testing.T) {
 	}
 }
 
-func TestResolver_Require_InsufficientRole(t *testing.T) {
+func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := mustNewResolver(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
 	_, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleAdmin)
 	if err == nil {
@@ -166,13 +166,13 @@ func TestResolver_Require_InsufficientRole(t *testing.T) {
 	}
 }
 
-func TestResolver_Require_NotAuthorised(t *testing.T) {
+func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {}}, // user exists but in no orgs
 	}
-	r := mustNewResolver(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
 	_, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleViewer)
 	if err == nil {
@@ -180,13 +180,13 @@ func TestResolver_Require_NotAuthorised(t *testing.T) {
 	}
 }
 
-func TestResolver_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
+func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha Team", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := mustNewResolver(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
 	org, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "ALPHA TEAM", RoleAdmin)
 	if err != nil {
@@ -303,18 +303,18 @@ func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]Membershi
 	return b.orgs[userID], nil
 }
 
-// TestResolver_Singleflight_CollapsesConcurrentCallers proves that N
+// TestAuthorizer_Singleflight_CollapsesConcurrentCallers proves that N
 // concurrent callers on the same cold cache key do exactly ONE upstream
 // round-trip, not N. Guards against the "stampede / thundering herd"
 // failure mode where a cache expiry under load fans out.
-func TestResolver_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
+func TestAuthorizer_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &blockingGrafana{
 		users:   map[string]int64{"u@e.com": 1},
 		orgs:    map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
 		release: make(chan struct{}),
 	}
-	r := mustNewResolver(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
 	const callers = 50
 	var started sync.WaitGroup
@@ -347,16 +347,16 @@ func TestResolver_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
 	}
 }
 
-// TestResolver_CacheKeyIsSubjectNotEmail proves the same Subject under two
+// TestAuthorizer_CacheKeyIsSubjectNotEmail proves the same Subject under two
 // different Email values shares a cache entry. Fixes the spoofability
 // concern: email can change or be unverified, subject cannot.
-func TestResolver_CacheKeyIsSubjectNotEmail(t *testing.T) {
+func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := mustNewResolver(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
 	// Same subject, different emails — second call should hit cache.
 	_, _ = r.Resolve(context.Background(), Caller{Email: "u@old.com", Subject: "sub-1"})
@@ -366,16 +366,16 @@ func TestResolver_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	}
 }
 
-// TestResolver_ReturnedSlicesAreCloned proves handler mutations of the
+// TestAuthorizer_ReturnedSlicesAreCloned proves handler mutations of the
 // returned Organization don't escape into the cache. Before the fix, appending
 // to oa.Datasources silently corrupted every future cache hit.
-func TestResolver_ReturnedSlicesAreCloned(t *testing.T) {
+func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := mustNewResolver(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
 	oa1, err := r.Require(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
 	if err != nil {
@@ -395,16 +395,16 @@ func TestResolver_ReturnedSlicesAreCloned(t *testing.T) {
 	}
 }
 
-// TestResolver_ReturnedTenantTypesAreCloned proves nested-slice mutations
+// TestAuthorizer_ReturnedTenantTypesAreCloned proves nested-slice mutations
 // (oa.Tenants[i].Types) don't escape into the cache either. cloneTenants
 // must deep-copy each Tenant's Types slice, not just slices.Clone the outer.
-func TestResolver_ReturnedTenantTypesAreCloned(t *testing.T) {
+func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1, TenantTypeData)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := mustNewResolver(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
 	oa1, err := r.Require(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
 	if err != nil {
@@ -421,17 +421,17 @@ func TestResolver_ReturnedTenantTypesAreCloned(t *testing.T) {
 	}
 }
 
-// TestResolver_Require_OrgNotFoundVsNotAuthorised proves that Require
+// TestAuthorizer_Require_OrgNotFoundVsNotAuthorised proves that Require
 // returns a distinct ErrOrgNotFound when the org simply doesn't exist,
 // vs ErrNotAuthorised when the org exists but the caller isn't a member.
 // Today both cases are indistinguishable from the caller's side.
-func TestResolver_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
+func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {}}, // user exists in Grafana but in no orgs
 	}
-	r := mustNewResolver(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
 	// alpha exists but the caller isn't a member → ErrNotAuthorised.
 	_, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleViewer)
@@ -449,9 +449,9 @@ func TestResolver_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	}
 }
 
-// TestResolver_Role_AtLeast guards the iota ordering — future reorders
+// TestAuthorizer_Role_AtLeast guards the iota ordering — future reorders
 // that would silently break privilege checks fail here.
-func TestResolver_Role_AtLeast(t *testing.T) {
+func TestAuthorizer_Role_AtLeast(t *testing.T) {
 	cases := []struct {
 		have, need Role
 		want       bool

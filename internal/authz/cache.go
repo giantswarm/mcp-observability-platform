@@ -32,7 +32,7 @@ type cacheEntry struct {
 // fresh. The returned entry aliases cache-owned slices; callers that hand
 // Organization values to external code must clone via cloneOrganization
 // or cloneOrganizations.
-func (r *Resolver) cacheLookup(key string) (cacheEntry, bool) {
+func (r *authorizer) cacheLookup(key string) (cacheEntry, bool) {
 	if r.cache == nil {
 		return cacheEntry{}, false
 	}
@@ -45,7 +45,7 @@ func (r *Resolver) cacheLookup(key string) (cacheEntry, bool) {
 
 // cacheStore writes an entry to the LRU. No-op when caching is disabled
 // (cacheSize < 0 at construction time).
-func (r *Resolver) cacheStore(key string, entry cacheEntry) {
+func (r *authorizer) cacheStore(key string, entry cacheEntry) {
 	if r.cache == nil {
 		return
 	}

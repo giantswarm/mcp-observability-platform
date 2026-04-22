@@ -32,11 +32,11 @@ func TestIsValidPromIdent(t *testing.T) {
 
 func TestBuildHistogramQuantile(t *testing.T) {
 	cases := []struct {
-		name                       string
-		q                          float64
-		metric, matchers           string
-		window, groupBy            string
-		want                       string
+		name             string
+		q                float64
+		metric, matchers string
+		window, groupBy  string
+		want             string
 	}{
 		{
 			"no matchers no groupBy",
@@ -70,15 +70,15 @@ func TestQualifyTempoTag(t *testing.T) {
 	}{
 		{"", "", ""},
 		{"span", "", ""},
-		{"", "service.name", "service.name"},            // intrinsic scope = bare
-		{"intrinsic", "duration", "duration"},            // intrinsic scope = bare
+		{"", "service.name", "service.name"},  // intrinsic scope = bare
+		{"intrinsic", "duration", "duration"}, // intrinsic scope = bare
 		{"span", "service.name", "span.service.name"},
 		{"resource", "cluster", "resource.cluster"},
 		{"event", "name", "event.name"},
 		{"link", "target", "link.target"},
-		{"RESOURCE", "case", "RESOURCE.case"},            // case-insensitive match, original case preserved on output
+		{"RESOURCE", "case", "RESOURCE.case"},                            // case-insensitive match, original case preserved on output
 		{"span", "intrinsic:already.scoped", "intrinsic:already.scoped"}, // `:` means already qualified → passthrough
-		{"weird", "x", "weird.x"},                        // unknown scope still qualifies (default arm)
+		{"weird", "x", "weird.x"},                                        // unknown scope still qualifies (default arm)
 	}
 	for _, c := range cases {
 		if got := qualifyTempoTag(c.scope, c.tag); got != c.want {

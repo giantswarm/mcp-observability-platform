@@ -167,7 +167,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// memberships) use a 5s TTL so a mid-SSO-outage failure doesn't lock
 	// anyone out for half a minute. LRU-bounded so long-running pods with
 	// many unique callers don't leak.
-	resolver, err := authz.NewResolver(k8sOrgRegistry{reader: ctrlCache}, grafanaAuthz{c: gfClient}, logger,
+	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, grafanaAuthz{c: gfClient}, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
@@ -278,11 +278,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	// --- MCP server + tools/resources ---
 	mcp, err := server.New(server.Config{
-		Logger:   logger,
-		Resolver: resolver,
-		Grafana:  gfClient,
-		Version:  version,
-		Audit:    auditLogger,
+		Logger:     logger,
+		Authorizer: authorizer,
+		Grafana:    gfClient,
+		Version:    version,
+		Audit:      auditLogger,
 	})
 	if err != nil {
 		return fmt.Errorf("mcp server: %w", err)
@@ -639,12 +639,12 @@ func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) 
 	return out, nil
 }
 
-// grafanaAuthz adapts *grafana.Client to authz.OrgMembershipLookup. Lives in
+// grafanaAuthz adapts grafana.Client to authz.OrgMembershipLookup. Lives in
 // cmd/ (the composition root) rather than in authz/ or grafana/ so that
 // neither domain package has to know about the other: authz declares the
 // port it needs, grafana exposes a generic API, and this adapter bridges
 // them at wire-up time.
-type grafanaAuthz struct{ c *grafana.Client }
+type grafanaAuthz struct{ c grafana.Client }
 
 func (g grafanaAuthz) LookupUserID(ctx context.Context, loginOrEmail string) (int64, bool, error) {
 	u, err := g.c.LookupUser(ctx, loginOrEmail)

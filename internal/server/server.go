@@ -21,10 +21,10 @@ import (
 
 // Config configures a new MCP HTTP server.
 type Config struct {
-	Logger   *slog.Logger
-	Resolver *authz.Resolver
-	Grafana  *grafana.Client
-	Version  string
+	Logger     *slog.Logger
+	Authorizer authz.Authorizer
+	Grafana    grafana.Client
+	Version    string
 	// Audit sinks one Record per tool call. Nil is allowed — the audit
 	// middleware then degrades to a pass-through.
 	Audit *audit.Logger
@@ -38,7 +38,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Logger == nil {
 		return nil, errors.New("server: Logger is required")
 	}
-	if cfg.Resolver == nil {
+	if cfg.Authorizer == nil {
 		return nil, errors.New("server: Resolver is required")
 	}
 	if cfg.Grafana == nil {
@@ -49,8 +49,8 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	}
 
 	deps := &tools.Deps{
-		Resolver: cfg.Resolver,
-		Grafana:  cfg.Grafana,
+		Authorizer: cfg.Authorizer,
+		Grafana:    cfg.Grafana,
 	}
 
 	// Only `WithToolCapabilities` is advertised. Resources and prompts are

@@ -93,9 +93,9 @@ func TestReadJSONPointer_HappyPath(t *testing.T) {
 	cases := []struct {
 		pointer, want string
 	}{
-		{"", string(doc)},       // empty → whole doc
-		{"/", string(doc)},      // root → whole doc
-		{"/panels/0/id", "1"},   // array index then key
+		{"", string(doc)},     // empty → whole doc
+		{"/", string(doc)},    // root → whole doc
+		{"/panels/0/id", "1"}, // array index then key
 		{"/panels/1/title", `"B"`},
 		{"/meta/tags", `["x","y"]`},
 		{"/meta/tags/1", `"y"`},
@@ -120,8 +120,8 @@ func TestReadJSONPointer_RFC6901Escapes(t *testing.T) {
 	cases := []struct {
 		pointer, want string
 	}{
-		{"/a~1b", `"slash"`},       // /a/b literal → escape / as ~1
-		{"/c~0d", `"tilde"`},       // /c~d literal → escape ~ as ~0
+		{"/a~1b", `"slash"`},            // /a/b literal → escape / as ~1
+		{"/c~0d", `"tilde"`},            // /c~d literal → escape ~ as ~0
 		{"/~01", `"literal-slash-key"`}, // /~1 key literal (tilde 0 = ~, then 1) ... actually this is tricky
 	}
 	for _, c := range cases {

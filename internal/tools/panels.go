@@ -55,7 +55,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

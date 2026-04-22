@@ -15,7 +15,7 @@ import (
 
 // newTestServer returns an httptest.Server whose handler records the
 // received request and replies with a caller-provided body/status.
-func newTestServer(handler http.HandlerFunc) (*httptest.Server, *Client) {
+func newTestServer(handler http.HandlerFunc) (*httptest.Server, Client) {
 	ts := httptest.NewServer(handler)
 	c, _ := New(Config{URL: ts.URL, Token: "test-token"})
 	return ts, c
@@ -329,8 +329,12 @@ func TestRedactedHeader_DoesNotLeakInPrints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	// Reach into the unexported concrete impl to exercise the redacted
+	// String()/GoString() methods. Tests live in the same package, so
+	// direct field access via assertion is fine.
+	impl := c.(*client)
 	for _, verb := range []string{"%v", "%s", "%+v", "%#v"} {
-		s := fmt.Sprintf(verb, c.authHeader)
+		s := fmt.Sprintf(verb, impl.authHeader)
 		if strings.Contains(s, "super-secret-token") {
 			t.Errorf("authHeader leaked via %s: %q", verb, s)
 		}

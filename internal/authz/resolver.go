@@ -38,7 +38,21 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Resolver answers "what can this caller do?" by asking Grafana for the
+// Resolver is the consumer-facing port. The concrete implementation (the
+// unexported `resolver` struct below) is built by NewAuthorizer; tests pass
+// a fake implementing this interface.
+type Authorizer interface {
+	// Require returns the caller's access to orgRef, or an error classifying
+	// why access was denied (ErrNoCallerIdentity, ErrOrgNotFound,
+	// ErrNotAuthorised, ErrInsufficientRole).
+	Require(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error)
+
+	// Resolve returns every org the caller has a non-None role on, keyed
+	// by registry Name.
+	Resolve(ctx context.Context, caller Caller) (map[string]Organization, error)
+}
+
+// resolver answers "what can this caller do?" by asking Grafana for the
 // caller's org memberships and joining them against the OrgRegistry.
 //
 // The cache is keyed on OIDC subject (stable, non-spoofable). Email can
@@ -48,7 +62,7 @@ import (
 // Concurrent callers on a cold key share one upstream round-trip via
 // singleflight; the LRU bounds long-running-process memory to
 // CacheSize entries. Positive and negative entries carry different TTLs.
-type Resolver struct {
+type authorizer struct {
 	registry OrgRegistry
 	grafana  OrgMembershipLookup
 	log      *slog.Logger
@@ -59,10 +73,10 @@ type Resolver struct {
 	negativeCacheTTL time.Duration
 }
 
-// NewResolver constructs a Resolver with the given cache settings. Passing
+// NewAuthorizer constructs a Resolver with the given cache settings. Passing
 // zero for any of the three cache parameters uses the DefaultCache*
 // constants. cacheSize of -1 disables caching entirely (useful for tests).
-func NewResolver(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (*Resolver, error) {
+func NewAuthorizer(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
 	if cacheTTL == 0 {
 		cacheTTL = DefaultCacheTTL
 	}
@@ -72,7 +86,7 @@ func NewResolver(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Lo
 	if cacheSize == 0 {
 		cacheSize = DefaultCacheSize
 	}
-	r := &Resolver{
+	r := &authorizer{
 		registry:         registry,
 		grafana:          grafana,
 		log:              log,
@@ -92,7 +106,7 @@ func NewResolver(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Lo
 // Resolve returns the caller's authorised orgs + role by asking Grafana and
 // enriching with registry metadata. The returned map is deep-cloned so
 // handler mutations cannot escape into the cache.
-func (r *Resolver) Resolve(ctx context.Context, caller Caller) (map[string]Organization, error) {
+func (r *authorizer) Resolve(ctx context.Context, caller Caller) (map[string]Organization, error) {
 	entry, err := r.resolveWithOrgs(ctx, caller)
 	if err != nil {
 		return nil, err
@@ -107,7 +121,7 @@ func (r *Resolver) Resolve(ctx context.Context, caller Caller) (map[string]Organ
 // orgRef may be either the registry name or the displayName
 // (case-insensitive). The returned Organization is deep-cloned so handler
 // mutations cannot escape into the cache.
-func (r *Resolver) Require(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error) {
+func (r *authorizer) Require(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error) {
 	entry, err := r.resolveWithOrgs(ctx, caller)
 	if err != nil {
 		return Organization{}, err
@@ -132,7 +146,7 @@ func (r *Resolver) Require(ctx context.Context, caller Caller, orgRef string, mi
 // resolveWithOrgs is the internal variant that returns the full cacheEntry
 // (both the caller's access and the registry-ref set for Require's
 // error-disambiguation). Callers outside this package should use Resolve.
-func (r *Resolver) resolveWithOrgs(ctx context.Context, caller Caller) (cacheEntry, error) {
+func (r *authorizer) resolveWithOrgs(ctx context.Context, caller Caller) (cacheEntry, error) {
 	if caller.Empty() {
 		return cacheEntry{}, ErrNoCallerIdentity
 	}
@@ -157,7 +171,7 @@ func (r *Resolver) resolveWithOrgs(ctx context.Context, caller Caller) (cacheEnt
 // Grafana user-orgs, registry list, and registry-to-access join (filling
 // in Role from the Grafana membership). Caches the result with the
 // appropriate positive-or-negative TTL.
-func (r *Resolver) load(ctx context.Context, caller Caller, key string) (cacheEntry, error) {
+func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cacheEntry, error) {
 	userID, found, err := r.grafana.LookupUserID(ctx, caller.Identity())
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana lookup: %w", err)
