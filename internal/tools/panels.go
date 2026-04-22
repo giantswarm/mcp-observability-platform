@@ -43,7 +43,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("tz", mcp.Description("IANA timezone for time axis, e.g. 'Europe/Paris'. Default: UTC.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -55,7 +55,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -97,9 +97,9 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 			if tz := req.GetString("tz", ""); tz != "" {
 				q.Set("tz", tz)
 			}
-			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
+			q.Set("orgId", strconv.FormatInt(org.OrgID, 10))
 
-			png, contentType, err := d.Grafana.RenderPanel(ctx, grafanaOpts(ctx, oa.OrgID), uid, panelID, q)
+			png, contentType, err := d.Grafana.RenderPanel(ctx, grafanaOpts(ctx, org.OrgID), uid, panelID, q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("render panel", err), nil
 			}

@@ -605,15 +605,15 @@ func envOr(k, def string) string {
 // k8sOrgRegistry adapts a controller-runtime cache to authz.OrgRegistry.
 // Lives in cmd/ so the authz package never imports observability-operator
 // or controller-runtime — the adapter is the translation boundary between
-// K8s CR shapes and the domain OrgDescriptor.
+// K8s CR shapes and the domain Organization.
 type k8sOrgRegistry struct{ reader ctrlclient.Reader }
 
-func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.OrgDescriptor, error) {
+func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) {
 	var list obsv1alpha2.GrafanaOrganizationList
 	if err := k.reader.List(ctx, &list); err != nil {
 		return nil, err
 	}
-	out := make([]authz.OrgDescriptor, len(list.Items))
+	out := make([]authz.Organization, len(list.Items))
 	for i := range list.Items {
 		cr := &list.Items[i]
 		tenants := make([]authz.Tenant, 0, len(cr.Spec.Tenants))
@@ -628,7 +628,7 @@ func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.OrgDescriptor, error)
 		for _, ds := range cr.Status.DataSources {
 			datasources = append(datasources, authz.Datasource{ID: ds.ID, Name: ds.Name})
 		}
-		out[i] = authz.OrgDescriptor{
+		out[i] = authz.Organization{
 			Name:        cr.Name,
 			DisplayName: cr.Spec.DisplayName,
 			OrgID:       cr.Status.OrgID,

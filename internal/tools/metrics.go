@@ -57,11 +57,11 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return runPromLabelValues(ctx, d, org, "__name__", req)
+			return runPromLabelValues(ctx, d, orgRef, "__name__", req)
 		},
 	)
 
@@ -75,18 +75,18 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix epoch seconds.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := promSelectorArgs(req)
-			names, err := fetchPromLabelList(ctx, d, oa.OrgID, dsID, "api/v1/labels", q)
+			names, err := fetchPromLabelList(ctx, d, org.OrgID, dsID, "api/v1/labels", q)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -112,7 +112,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -120,7 +120,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return runPromLabelValues(ctx, d, org, label, req)
+			return runPromLabelValues(ctx, d, orgRef, label, req)
 		},
 	)
 
@@ -133,11 +133,11 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Cap on the number of metric families returned (default 200).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -151,7 +151,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 				q.Set("limit", fmt.Sprintf("%d", lim))
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/metadata").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/metadata", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v1/metadata", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir metadata", err), nil
 			}
@@ -174,7 +174,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("step", mcp.Description("Step for query_range, e.g. '30s', '1m'.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -209,7 +209,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 				SupportsRange: true,
 				Timeout:       30 * time.Second,
 			}, datasourceInvocation{
-				Org:   org,
+				Org:   orgRef,
 				Query: expr,
 				Start: req.GetString("start", ""),
 				End:   req.GetString("end", ""),
@@ -230,11 +230,11 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 50, max 500.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -261,7 +261,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 				q.Set("type", ruleType)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/rules").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/rules", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v1/rules", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir rules", err), nil
 			}
@@ -344,7 +344,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("group", mcp.Description("Optional group name to disambiguate when several rules share a name.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -353,14 +353,14 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			group := req.GetString("group", "")
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			observability.GrafanaProxyTotal.WithLabelValues("api/v1/rules").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/rules", url.Values{})
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v1/rules", url.Values{})
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir rules", err), nil
 			}
@@ -383,7 +383,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 				out = append(out, r)
 			}
 			if len(out) == 0 {
-				return mcp.NewToolResultError(fmt.Sprintf("rule %q not found in org %q", name, org)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("rule %q not found in org %q", name, orgRef)), nil
 			}
 			return mcp.NewToolResultJSON(struct {
 				Rules []ruleItem `json:"rules"`
@@ -395,8 +395,8 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 // runPromLabelValues is the shared core of the metric-names and
 // label-values tools: call /api/v1/label/{label}/values with match[] +
 // time filters, then apply client-side prefix filter + pagination.
-func runPromLabelValues(ctx context.Context, d *Deps, org, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+func runPromLabelValues(ctx context.Context, d *Deps, orgRef, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -404,7 +404,7 @@ func runPromLabelValues(ctx context.Context, d *Deps, org, label string, req mcp
 	defer cancel()
 	q := promSelectorArgs(req)
 	path := "api/v1/label/" + url.PathEscape(label) + "/values"
-	names, err := fetchPromLabelList(ctx, d, oa.OrgID, dsID, path, q)
+	names, err := fetchPromLabelList(ctx, d, org.OrgID, dsID, path, q)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

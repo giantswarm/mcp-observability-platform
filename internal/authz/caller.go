@@ -28,9 +28,9 @@ func (c Caller) Empty() bool { return c.Email == "" && c.Subject == "" }
 // organisations". Implementations today wrap controller-runtime's informer
 // cache of GrafanaOrganization CRs; tests implement it directly in-memory.
 // Domain types only — the adapter is responsible for translating CR shapes
-// into OrgDescriptor, so tests need no CR imports.
+// into Organization, so tests need no CR imports.
 type OrgRegistry interface {
-	List(ctx context.Context) ([]OrgDescriptor, error)
+	List(ctx context.Context) ([]Organization, error)
 }
 
 // OrgMembershipLookup is the subset of grafana.Client the resolver needs.

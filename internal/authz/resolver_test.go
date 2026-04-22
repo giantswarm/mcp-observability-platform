@@ -8,15 +8,15 @@ import (
 	"testing"
 )
 
-// newDesc builds an OrgDescriptor fixture. tenantTypes populates the single
+// newOrg builds an Organization fixture. tenantTypes populates the single
 // tenant's Types; Datasources include Mimir/Loki entries named after the org
 // so FindDatasourceID tests have realistic matches.
-func newDesc(name, display string, orgID int64, tenantTypes ...TenantType) OrgDescriptor {
+func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organization {
 	var tenants []Tenant
 	if len(tenantTypes) > 0 {
 		tenants = []Tenant{{Name: name, Types: tenantTypes}}
 	}
-	return OrgDescriptor{
+	return Organization{
 		Name:        name,
 		DisplayName: display,
 		OrgID:       orgID,
@@ -32,14 +32,14 @@ func newDesc(name, display string, orgID int64, tenantTypes ...TenantType) OrgDe
 // controller-runtime fake client so tests don't need to know about K8s or
 // the CRD package.
 type fakeRegistry struct {
-	descs []OrgDescriptor
+	descs []Organization
 }
 
-func (f *fakeRegistry) List(context.Context) ([]OrgDescriptor, error) {
+func (f *fakeRegistry) List(context.Context) ([]Organization, error) {
 	return f.descs, nil
 }
 
-func registry(descs ...OrgDescriptor) *fakeRegistry {
+func registry(descs ...Organization) *fakeRegistry {
 	return &fakeRegistry{descs: descs}
 }
 
@@ -76,8 +76,8 @@ func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]Membership, e
 }
 
 func TestResolver_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 42, TenantTypeData)
-	beta := newDesc("beta", "Beta", 7, TenantTypeAlerting)
+	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
+	beta := newOrg("beta", "Beta", 7, TenantTypeAlerting)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@example.com": 1},
 		orgs: map[int64][]Membership{
@@ -103,7 +103,7 @@ func TestResolver_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 
 func TestResolver_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	// Descriptor exists for orgID 42 but not 99. Role "None" also dropped.
-	alpha := newDesc("alpha", "Alpha", 42)
+	alpha := newOrg("alpha", "Alpha", 42)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 5},
 		orgs: map[int64][]Membership{
@@ -137,7 +137,7 @@ func TestResolver_Resolve_UserNeverLoggedIn(t *testing.T) {
 }
 
 func TestResolver_Resolve_Cache(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
@@ -153,7 +153,7 @@ func TestResolver_Resolve_Cache(t *testing.T) {
 }
 
 func TestResolver_Require_InsufficientRole(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
@@ -167,7 +167,7 @@ func TestResolver_Require_InsufficientRole(t *testing.T) {
 }
 
 func TestResolver_Require_NotAuthorised(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {}}, // user exists but in no orgs
@@ -181,19 +181,19 @@ func TestResolver_Require_NotAuthorised(t *testing.T) {
 }
 
 func TestResolver_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha Team", 1)
+	alpha := newOrg("alpha", "Alpha Team", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
 	r := mustNewResolver(t, registry(alpha), g, -1)
 
-	oa, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "ALPHA TEAM", RoleAdmin)
+	org, err := r.Require(context.Background(), Caller{Email: "u@e.com"}, "ALPHA TEAM", RoleAdmin)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
-	if oa.Name != "alpha" {
-		t.Fatalf("want name=alpha, got %q", oa.Name)
+	if org.Name != "alpha" {
+		t.Fatalf("want name=alpha, got %q", org.Name)
 	}
 }
 
@@ -216,7 +216,7 @@ func TestRoleFromGrafana(t *testing.T) {
 }
 
 func TestOrgAccess_FindDatasourceID(t *testing.T) {
-	oa := OrgAccess{
+	org := Organization{
 		Datasources: []Datasource{
 			{ID: 1, Name: "mimir-prod"},
 			{ID: 2, Name: "Loki-Prod"},
@@ -235,7 +235,7 @@ func TestOrgAccess_FindDatasourceID(t *testing.T) {
 		{[]string{"mimir", "nope"}, 0, false},
 	}
 	for _, c := range cases {
-		gotID, gotOK := oa.FindDatasourceID(c.need...)
+		gotID, gotOK := org.FindDatasourceID(c.need...)
 		if gotID != c.wantID || gotOK != c.wantOK {
 			t.Errorf("FindDatasourceID(%v) = (%d,%v), want (%d,%v)", c.need, gotID, gotOK, c.wantID, c.wantOK)
 		}
@@ -243,19 +243,19 @@ func TestOrgAccess_FindDatasourceID(t *testing.T) {
 }
 
 func TestOrgAccess_HasTenantType(t *testing.T) {
-	oa := OrgAccess{
+	org := Organization{
 		Tenants: []Tenant{
 			{Name: "t1", Types: []TenantType{TenantTypeData}},
 			{Name: "t2", Types: []TenantType{TenantTypeAlerting}},
 		},
 	}
-	if !oa.HasTenantType(TenantTypeData) {
+	if !org.HasTenantType(TenantTypeData) {
 		t.Error("HasTenantType(data) = false")
 	}
-	if !oa.HasTenantType(TenantTypeAlerting) {
+	if !org.HasTenantType(TenantTypeAlerting) {
 		t.Error("HasTenantType(alerting) = false")
 	}
-	if oa.HasTenantType("nonexistent") {
+	if org.HasTenantType("nonexistent") {
 		t.Error("HasTenantType(nonexistent) = true")
 	}
 }
@@ -308,7 +308,7 @@ func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]Membershi
 // round-trip, not N. Guards against the "stampede / thundering herd"
 // failure mode where a cache expiry under load fans out.
 func TestResolver_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &blockingGrafana{
 		users:   map[string]int64{"u@e.com": 1},
 		orgs:    map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
@@ -351,7 +351,7 @@ func TestResolver_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
 // different Email values shares a cache entry. Fixes the spoofability
 // concern: email can change or be unverified, subject cannot.
 func TestResolver_CacheKeyIsSubjectNotEmail(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
@@ -367,10 +367,10 @@ func TestResolver_CacheKeyIsSubjectNotEmail(t *testing.T) {
 }
 
 // TestResolver_ReturnedSlicesAreCloned proves handler mutations of the
-// returned OrgAccess don't escape into the cache. Before the fix, appending
+// returned Organization don't escape into the cache. Before the fix, appending
 // to oa.Datasources silently corrupted every future cache hit.
 func TestResolver_ReturnedSlicesAreCloned(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
@@ -399,7 +399,7 @@ func TestResolver_ReturnedSlicesAreCloned(t *testing.T) {
 // (oa.Tenants[i].Types) don't escape into the cache either. cloneTenants
 // must deep-copy each Tenant's Types slice, not just slices.Clone the outer.
 func TestResolver_ReturnedTenantTypesAreCloned(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1, TenantTypeData)
+	alpha := newOrg("alpha", "Alpha", 1, TenantTypeData)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
@@ -426,7 +426,7 @@ func TestResolver_ReturnedTenantTypesAreCloned(t *testing.T) {
 // vs ErrNotAuthorised when the org exists but the caller isn't a member.
 // Today both cases are indistinguishable from the caller's side.
 func TestResolver_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
-	alpha := newDesc("alpha", "Alpha", 1)
+	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]Membership{1: {}}, // user exists in Grafana but in no orgs

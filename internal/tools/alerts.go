@@ -31,11 +31,11 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveAlertmanagerDS(ctx, d, org)
+			org, dsID, err := resolveAlertmanagerDS(ctx, d, orgRef)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -49,7 +49,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 
-			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
+			body, err := fetchAlerts(ctx, d, org.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
 			}
@@ -74,7 +74,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -82,13 +82,13 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveAlertmanagerDS(ctx, d, org)
+			org, dsID, err := resolveAlertmanagerDS(ctx, d, orgRef)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			body, err := fetchAlerts(ctx, d, oa.OrgID, dsID, filterAll, "")
+			body, err := fetchAlerts(ctx, d, org.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
 			}
@@ -97,7 +97,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
 			}
 			if alert == nil {
-				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found in org %q", fp, org)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found in org %q", fp, orgRef)), nil
 			}
 			return mcp.NewToolResultJSON(alert)
 		},
@@ -107,8 +107,8 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 // resolveAlertmanagerDS is the alertmanager-specific specialisation of
 // resolveDatasource, kept as its own name so call sites in resources.go read
 // at the same abstraction level as the tool handlers.
-func resolveAlertmanagerDS(ctx context.Context, d *Deps, org string) (authz.OrgAccess, int64, error) {
-	return resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+func resolveAlertmanagerDS(ctx context.Context, d *Deps, orgRef string) (authz.Organization, int64, error) {
+	return resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 }
 
 // fetchAlerts calls Alertmanager's /api/v2/alerts through the Grafana

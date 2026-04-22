@@ -15,37 +15,37 @@ const (
 	DefaultCacheSize        = 10000
 )
 
-// cachedAccess is one resolver-cache entry. It holds everything Require
-// needs so the authorised path never re-lists CRs: access gives the caller's
-// accessible orgs, and allOrgRefs is the name/displayname set used to pick
-// the right error when access misses.
+// cacheEntry is one resolver-cache entry. It holds everything Require
+// needs so the authorised path never re-lists the registry: access gives
+// the caller's accessible orgs, and allOrgRefs is the name/displayname set
+// used to pick the right error when access misses.
 //
 // expiresAt is per-entry rather than global so positive and negative hits
 // can age out at different rates.
-type cachedAccess struct {
+type cacheEntry struct {
 	expiresAt  time.Time
-	access     map[string]OrgAccess
-	allOrgRefs map[string]struct{} // lowercased CR Name + DisplayName
+	orgs       map[string]Organization
+	allOrgRefs map[string]struct{} // lowercased Name + DisplayName
 }
 
 // cacheLookup returns the cached entry for key if one exists and is still
 // fresh. The returned entry aliases cache-owned slices; callers that hand
-// OrgAccess values to external code must clone via cloneOrgAccess or
-// cloneAccessMap.
-func (r *Resolver) cacheLookup(key string) (cachedAccess, bool) {
+// Organization values to external code must clone via cloneOrganization
+// or cloneOrganizations.
+func (r *Resolver) cacheLookup(key string) (cacheEntry, bool) {
 	if r.cache == nil {
-		return cachedAccess{}, false
+		return cacheEntry{}, false
 	}
 	hit, ok := r.cache.Get(key)
 	if !ok || !time.Now().Before(hit.expiresAt) {
-		return cachedAccess{}, false
+		return cacheEntry{}, false
 	}
 	return hit, true
 }
 
 // cacheStore writes an entry to the LRU. No-op when caching is disabled
 // (cacheSize < 0 at construction time).
-func (r *Resolver) cacheStore(key string, entry cachedAccess) {
+func (r *Resolver) cacheStore(key string, entry cacheEntry) {
 	if r.cache == nil {
 		return
 	}
@@ -68,39 +68,39 @@ func cacheKey(c Caller) string {
 // buildOrgRefSet returns the set of lowercased Name + DisplayName values,
 // used by Require to disambiguate "org not found" vs "not authorised"
 // without a second upstream call.
-func buildOrgRefSet(descs []OrgDescriptor) map[string]struct{} {
-	out := make(map[string]struct{}, len(descs)*2)
-	for _, d := range descs {
-		out[strings.ToLower(d.Name)] = struct{}{}
-		if d.DisplayName != "" {
-			out[strings.ToLower(d.DisplayName)] = struct{}{}
+func buildOrgRefSet(orgs []Organization) map[string]struct{} {
+	out := make(map[string]struct{}, len(orgs)*2)
+	for _, o := range orgs {
+		out[strings.ToLower(o.Name)] = struct{}{}
+		if o.DisplayName != "" {
+			out[strings.ToLower(o.DisplayName)] = struct{}{}
 		}
 	}
 	return out
 }
 
-// cloneOrgAccess returns a deep copy suitable for handing to external
+// cloneOrganization returns a deep copy suitable for handing to external
 // callers. Tenants and Datasources are deep-copied so a handler that
-// appends to `oa.Tenants[i].Types` (or swaps a Datasource entry) cannot
+// appends to `org.Tenants[i].Types` (or swaps a Datasource entry) cannot
 // corrupt the cache. Strings and value-typed fields are copied by the
 // struct-copy idiom at the call site; only the slices need attention.
-func cloneOrgAccess(oa OrgAccess) OrgAccess {
-	oa.Tenants = cloneTenants(oa.Tenants)
-	oa.Datasources = cloneDatasources(oa.Datasources)
-	return oa
+func cloneOrganization(o Organization) Organization {
+	o.Tenants = cloneTenants(o.Tenants)
+	o.Datasources = cloneDatasources(o.Datasources)
+	return o
 }
 
-// cloneAccessMap deep-clones every OrgAccess value in the map. Used only
-// by Resolve which returns the full map to external callers. maps.Clone
-// (Go 1.21+) isn't a fit because it's shallow — we need cloneOrgAccess on
-// each value.
-func cloneAccessMap(in map[string]OrgAccess) map[string]OrgAccess {
+// cloneOrganizations deep-clones every Organization value in the map. Used
+// only by Resolve which returns the full map to external callers.
+// maps.Clone isn't a fit because it's shallow — we need cloneOrganization
+// on each value.
+func cloneOrganizations(in map[string]Organization) map[string]Organization {
 	if in == nil {
 		return nil
 	}
-	out := make(map[string]OrgAccess, len(in))
+	out := make(map[string]Organization, len(in))
 	for k, v := range in {
-		out[k] = cloneOrgAccess(v)
+		out[k] = cloneOrganization(v)
 	}
 	return out
 }

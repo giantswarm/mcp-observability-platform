@@ -34,11 +34,11 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max log entries per page (default 100, max 5000).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -71,7 +71,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			q.Set("direction", "backward")
 
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/query_range").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/query_range", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/query_range", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("loki query_range", err), nil
 			}
@@ -98,11 +98,11 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix ns; default now.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			names, err := fetchLokiLabels(ctx, d, org, "", req)
+			names, err := fetchLokiLabels(ctx, d, orgRef, "", req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -123,7 +123,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -131,7 +131,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			values, err := fetchLokiLabels(ctx, d, org, label, req)
+			values, err := fetchLokiLabels(ctx, d, orgRef, label, req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -151,7 +151,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Top-N patterns to return (default 50, max 500).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -159,7 +159,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -173,7 +173,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 				q.Set("step", step)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/patterns").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/patterns", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/patterns", q)
 			if err != nil {
 				// Loki versions without the pattern ingester return 404 on
 				// this path; surface a readable error instead of leaking the
@@ -206,7 +206,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix ns; default now.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -214,7 +214,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -225,7 +225,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
 			q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().UnixNano())))
 			observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/index/stats").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "loki/api/v1/index/stats", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/index/stats", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("loki stats", err), nil
 			}
@@ -237,8 +237,8 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 // fetchLokiLabels hits /loki/api/v1/labels (when label is "") or
 // /loki/api/v1/label/{label}/values. Defaults the time window to last 1h
 // so callers don't have to specify it for simple discovery.
-func fetchLokiLabels(ctx context.Context, d *Deps, org, label string, req mcp.CallToolRequest) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
+func fetchLokiLabels(ctx context.Context, d *Deps, orgRef, label string, req mcp.CallToolRequest) ([]string, error) {
+	org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func fetchLokiLabels(ctx context.Context, d *Deps, org, label string, req mcp.Ca
 		path = "loki/api/v1/label/" + url.PathEscape(label) + "/values"
 	}
 	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
-	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
+	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("loki %s: %w", path, err)
 	}
