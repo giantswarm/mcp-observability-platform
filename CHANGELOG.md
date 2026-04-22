@@ -7,11 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Pre-release work — everything here will roll up into the v0.1.0 release
-notes. For per-PR detail see the `git log`; `docs/roadmap.md` tracks what's
-landed vs what's still in the pre-release cleanup plan.
-
-### What v0.1.0 will ship
+### Added
 
 - **Go MCP server** over streamable-HTTP (default), SSE, or stdio. OAuth 2.1 via `mcp-oauth` with Dex as IdP. Authorization resolved from OIDC
   groups against `GrafanaOrganization.spec.rbac.{admins,editors,viewers} via Grafana's own SSO `org_mapping` evaluation — we don't re-implement
