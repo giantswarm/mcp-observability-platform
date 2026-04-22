@@ -65,13 +65,15 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	// notifications/tools/list_changed.
 	//
 	// Middleware stack (outermost first):
-	//   1. WithRecovery()         — mcp-go's built-in panic guard.
-	//   2. middleware.Tracing()   — OTEL span per tool call.
-	//   3. middleware.Metrics()   — Prometheus counter + histogram per tool call.
-	//   4. middleware.Audit()     — structured JSON record per tool call (if cfg.Audit).
-	// Ordered so a panic is caught before the span/metric/audit close, the
-	// span wraps the metric timing, and the audit middleware's Duration
-	// reflects handler time only — matching the Metrics histogram label.
+	//   1. WithRecovery()            — mcp-go's built-in panic guard.
+	//   2. middleware.Tracing()      — OTEL span per tool call.
+	//   3. middleware.Metrics()      — Prometheus counter + histogram per call.
+	//   4. middleware.Audit()        — structured JSON record per call.
+	//   5. middleware.ResponseCap()  — replace oversized text content with a
+	//                                  structured response_too_large payload.
+	// Ordered so a panic is caught first, the span/metric wrap everything
+	// else, audit sees the post-cap outcome, and ResponseCap runs closest
+	// to the handler so the cap applies to the handler's actual output.
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
@@ -80,6 +82,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.Tracing()),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Metrics()),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Audit(cfg.Audit)),
+		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),
 	)
 
 	tools.RegisterAll(mcp, deps)

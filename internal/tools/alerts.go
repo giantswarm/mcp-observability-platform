@@ -1,3 +1,4 @@
+// Package tools — alerts.go: firing alerts from Alertmanager (list + single-fingerprint detail).
 package tools
 
 import (
@@ -57,7 +58,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
 			}
-			return resultJSONWithCap(result)
+			return mcp.NewToolResultJSON(result)
 		},
 	)
 }
@@ -99,7 +100,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 			if alert == nil {
 				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found in org %q", fp, org)), nil
 			}
-			return resultJSONWithCap(alert)
+			return mcp.NewToolResultJSON(alert)
 		},
 	)
 }

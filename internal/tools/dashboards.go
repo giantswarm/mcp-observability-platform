@@ -1,3 +1,4 @@
+// Package tools — dashboards.go: Grafana dashboard tools (search, summary, panel queries, JSON Pointer, annotations, deeplinks, run-panel-query).
 package tools
 
 import (
@@ -47,7 +48,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboards", err), nil
 			}
-			return resultJSONWithCap(tree)
+			return mcp.NewToolResultJSON(tree)
 		},
 	)
 
@@ -74,9 +75,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
-			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},
@@ -110,7 +108,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
-			return resultJSONWithCap(summary)
+			return mcp.NewToolResultJSON(summary)
 		},
 	)
 
@@ -144,7 +142,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
-			return resultJSONWithCap(res)
+			return mcp.NewToolResultJSON(res)
 		},
 	)
 
@@ -178,9 +176,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("json pointer", err), nil
 			}
-			if capErr := enforceResponseCap(sub); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
-			}
 			return mcp.NewToolResultText(string(sub)), nil
 		},
 	)
@@ -205,9 +200,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			body, err := d.Grafana.SearchFolders(ctx, grafanaOpts(ctx, oa.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search folders", err), nil
-			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},
@@ -240,9 +232,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			body, err := d.Grafana.GetAnnotationTags(ctx, grafanaOpts(ctx, oa.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotation tags", err), nil
-			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},
@@ -296,9 +285,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			body, err := d.Grafana.GetAnnotations(ctx, grafanaOpts(ctx, oa.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotations", err), nil
-			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},
@@ -372,10 +358,21 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no LogQL expression", panel.ID)), nil
 				}
 				inv.Query = expanded(target.Expr)
+				// Loki's query_range requires start + end. The caller may or
+				// may not have supplied them; default to the last hour when
+				// absent. Doing this here instead of in runDatasourceProxy
+				// keeps the shared proxy path free of per-datasource
+				// defaulting logic.
+				if inv.Start == "" {
+					inv.Start = strconv.FormatInt(time.Now().Add(-time.Hour).UnixNano(), 10)
+				}
+				if inv.End == "" {
+					inv.End = strconv.FormatInt(time.Now().UnixNano(), 10)
+				}
 				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
-					QueryArg: "query", SupportsRange: true, ForceRange: true, DefaultRangeAgo: time.Hour, ExtraArg: "limit",
+					QueryArg: "query", SupportsRange: true, ExtraArg: "limit",
 				}, inv)
 			case dsKindTempo:
 				if target.Query == "" {
@@ -444,7 +441,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			link := base.JoinPath("/d/" + url.PathEscape(uid))
 			link.RawQuery = q.Encode()
-			return resultJSONWithCap(struct {
+			return mcp.NewToolResultJSON(struct {
 				URL string `json:"url"`
 			}{URL: link.String()})
 		},

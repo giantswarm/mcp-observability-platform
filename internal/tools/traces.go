@@ -1,3 +1,4 @@
+// Package tools — traces.go: Tempo trace tools (query_traces, tempo metrics, tag names/values).
 package tools
 
 import (
@@ -77,9 +78,6 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("tempo metrics", err), nil
 			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
-			}
 			return mcp.NewToolResultText(string(body)), nil
 		},
 	)
@@ -102,7 +100,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return resultJSONWithCap(paginateStrings(names, "", 0, len(names)))
+			return mcp.NewToolResultJSON(paginateStrings(names, "", 0, len(names)))
 		},
 	)
 
@@ -131,7 +129,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return resultJSONWithCap(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
+			return mcp.NewToolResultJSON(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 		},
 	)
 }

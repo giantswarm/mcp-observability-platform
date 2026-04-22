@@ -1,3 +1,4 @@
+// Package tools — pagination.go: shared pagination envelope for list_* tools that return flat string slices.
 package tools
 
 import (

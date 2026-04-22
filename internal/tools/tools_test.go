@@ -1,9 +1,6 @@
 package tools
 
-import (
-	"encoding/json"
-	"testing"
-)
+import "testing"
 
 func TestPaginateStrings(t *testing.T) {
 	all := []string{"zeta", "alpha", "beta", "gamma", "delta"}
@@ -72,27 +69,5 @@ func TestClampInt(t *testing.T) {
 	}
 }
 
-func TestEnforceResponseCap(t *testing.T) {
-	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "100")
-	small := []byte(`{"ok":true}`)
-	if enforceResponseCap(small) != nil {
-		t.Errorf("under-limit should be nil")
-	}
-	big := make([]byte, 101)
-	e := enforceResponseCap(big)
-	if e == nil || e.Error != "response_too_large" || e.Bytes != 101 || e.Limit != 100 {
-		t.Errorf("over-limit = %+v", e)
-	}
-	// And the structured error is JSON-serialisable for a tool result.
-	if _, err := json.Marshal(e); err != nil {
-		t.Errorf("json.Marshal: %v", err)
-	}
-}
-
-func TestEnforceResponseCap_DisabledWithZero(t *testing.T) {
-	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "0")
-	big := make([]byte, 1_000_000)
-	if enforceResponseCap(big) != nil {
-		t.Errorf("cap=0 should disable")
-	}
-}
+// Response-cap tests moved to internal/server/middleware/response_cap_test.go
+// after the cap became a middleware rather than a per-handler helper.

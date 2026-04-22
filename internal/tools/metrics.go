@@ -1,3 +1,4 @@
+// Package tools — metrics.go: Mimir PromQL tools (query_prometheus, labels, metadata, histograms, alert rules).
 package tools
 
 import (
@@ -91,7 +92,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			sort.Strings(names)
-			return resultJSONWithCap(struct {
+			return mcp.NewToolResultJSON(struct {
 				Total int      `json:"total"`
 				Items []string `json:"items"`
 			}{Total: len(names), Items: names})
@@ -154,9 +155,6 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v1/metadata", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("mimir metadata", err), nil
-			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},
@@ -274,7 +272,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			start := min(page*pageSize, len(rules))
 			end := min(start+pageSize, len(rules))
-			return resultJSONWithCap(struct {
+			return mcp.NewToolResultJSON(struct {
 				Total    int        `json:"total"`
 				Page     int        `json:"page"`
 				PageSize int        `json:"pageSize"`
@@ -388,7 +386,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 			if len(out) == 0 {
 				return mcp.NewToolResultError(fmt.Sprintf("rule %q not found in org %q", name, org)), nil
 			}
-			return resultJSONWithCap(struct {
+			return mcp.NewToolResultJSON(struct {
 				Rules []ruleItem `json:"rules"`
 			}{Rules: out})
 		},
@@ -411,7 +409,7 @@ func runPromLabelValues(ctx context.Context, d *Deps, org, label string, req mcp
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return resultJSONWithCap(paginateStrings(names, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
+	return mcp.NewToolResultJSON(paginateStrings(names, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 }
 
 // promSelectorArgs collects optional match[] / start / end args into a

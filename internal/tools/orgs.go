@@ -1,3 +1,4 @@
+// Package tools — orgs.go: org + datasource list/read tools (list_orgs, list_datasources, get_datasource).
 package tools
 
 import (
@@ -56,7 +57,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				})
 			}
 			sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName) })
-			return resultJSONWithCap(struct {
+			return mcp.NewToolResultJSON(struct {
 				Orgs []item `json:"orgs"`
 			}{Orgs: out})
 		},
@@ -114,7 +115,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 			})
-			return resultJSONWithCap(struct {
+			return mcp.NewToolResultJSON(struct {
 				Org         string `json:"org"`
 				Total       int    `json:"total"`
 				Datasources []item `json:"datasources"`
@@ -145,9 +146,6 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			body, err := d.Grafana.GetDatasource(ctx, grafanaOpts(ctx, oa.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana datasource", err), nil
-			}
-			if capErr := enforceResponseCap(body); capErr != nil {
-				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},

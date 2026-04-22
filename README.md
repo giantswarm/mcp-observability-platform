@@ -29,40 +29,48 @@ are intentionally out of scope for this MCP.
 
 | Tool               | Backend     | Notes                                                          |
 | ------------------ | ----------- | -------------------------------------------------------------- |
-| `list_orgs`        | (local CRs) | Minimal projection (name/displayName/orgID/role/tenantTypes)   |
-| `list_datasources` | Grafana API | `/api/datasources`; projected to id/uid/name/type              |
+| `list_orgs`        | (local CRs) | Minimal projection (name / displayName / orgID / role / tenantTypes) |
+| `list_datasources` | Grafana API | `/api/datasources`; projected to id / uid / name / type        |
+| `get_datasource`   | Grafana API | `/api/datasources/uid/{uid}` full detail                       |
 
-**Dashboards**
+**Dashboards & annotations**
 
 | Tool                           | Backend     | Notes                                                          |
 | ------------------------------ | ----------- | -------------------------------------------------------------- |
 | `search_dashboards`            | Grafana API | `/api/search`, grouped by folder, page/pageSize over folders   |
-| `search_folders`               | Grafana API | `/api/search?type=dash-folder`; matches upstream `grafana/mcp-grafana` |
-| `get_annotation_tags`          | Grafana API | `/api/annotations/tags`                                         |
-| `get_dashboard_summary`        | Grafana API | Dashboard JSON projected to title / tags / vars / row+panel tree (NO queries) |
-| `get_dashboard_panel_queries`  | Grafana API | Queries for a single panel (by id or titleContains) or all    |
+| `search_folders`               | Grafana API | `/api/search?type=dash-folder`                                 |
+| `get_dashboard_by_uid`         | Grafana API | Full dashboard JSON (usually 100s of KB — prefer the summary)  |
+| `get_dashboard_summary`        | Grafana API | Title / tags / vars / row+panel tree (NO queries)              |
+| `get_dashboard_panel_queries`  | Grafana API | Queries for one panel (by id or title substring) or all        |
+| `get_dashboard_property`       | Grafana API | Sub-tree of the dashboard JSON by RFC 6901 JSON Pointer        |
+| `get_annotations`              | Grafana API | `/api/annotations` filtered by time / dashboard / panel / tags |
+| `get_annotation_tags`          | Grafana API | `/api/annotations/tags` for annotation-tag discovery           |
 | `generate_deeplink`            | Grafana URL | Builds `/d/{uid}?orgId=…&from=…&to=…&viewPanel=…&var-…`        |
-| `get_panel_image`              | Grafana     | Renders a panel as PNG via `/render/d-solo/{uid}` (see below) |
+| `get_panel_image`              | Grafana     | Renders a panel as PNG via `/render/d-solo/{uid}` (see below)  |
+| `run_panel_query`              | Grafana API | Runs a panel's stored query directly (auto-routes Mimir/Loki/Tempo) |
 
 **Metrics (Mimir)**
 
-| Tool                                 | DS proxy path                            |
-| ------------------------------------ | ---------------------------------------- |
-| `query_prometheus`                   | `api/v1/query[_range]`                   |
-| `list_prometheus_metric_names`       | `api/v1/label/__name__/values`           |
-| `list_prometheus_label_names`        | `api/v1/labels`                          |
-| `list_prometheus_label_values`       | `api/v1/label/{label}/values`            |
-| `list_prometheus_metric_metadata`    | `api/v1/metadata`                        |
-| `list_alert_rules`                   | `api/v1/rules` — filter by type/state/name |
+| Tool                                 | DS proxy path                                   |
+| ------------------------------------ | ----------------------------------------------- |
+| `query_prometheus`                   | `api/v1/query[_range]`                          |
+| `query_prometheus_histogram`         | `histogram_quantile(...)` wrapper around `query_range` |
+| `list_prometheus_metric_names`       | `api/v1/label/__name__/values`                  |
+| `list_prometheus_label_names`        | `api/v1/labels`                                 |
+| `list_prometheus_label_values`       | `api/v1/label/{label}/values`                   |
+| `list_prometheus_metric_metadata`    | `api/v1/metadata`                               |
+| `list_alert_rules`                   | `api/v1/rules` — filter by type / state / name  |
+| `get_alert_rule`                     | `api/v1/rules` — single rule by name + group    |
 
 **Logs (Loki)**
 
-| Tool                       | DS proxy path                               |
-| -------------------------- | ------------------------------------------- |
-| `query_logs`               | `loki/api/v1/query_range` (returns `nextStart` cursor) |
-| `list_loki_label_names`    | `loki/api/v1/labels`                        |
-| `list_loki_label_values`   | `loki/api/v1/label/{label}/values`          |
-| `query_loki_stats`         | `loki/api/v1/index/stats`                   |
+| Tool                       | DS proxy path                                            |
+| -------------------------- | -------------------------------------------------------- |
+| `query_loki_logs`          | `loki/api/v1/query_range` (returns `nextStart` cursor)   |
+| `query_loki_patterns`      | `loki/api/v1/patterns` — log-pattern detection           |
+| `query_loki_stats`         | `loki/api/v1/index/stats`                                |
+| `list_loki_label_names`    | `loki/api/v1/labels`                                     |
+| `list_loki_label_values`   | `loki/api/v1/label/{label}/values`                       |
 
 **Traces (Tempo)**
 
@@ -73,11 +81,22 @@ are intentionally out of scope for this MCP.
 | `list_tempo_tag_names`  | `api/v2/search/tags`                |
 | `list_tempo_tag_values` | `api/v2/search/tag/{tag}/values`    |
 
-**Alerts (Alertmanager)**
+**Alerts & silences (Alertmanager)**
 
-| Tool         | DS proxy path                               |
-| ------------ | ------------------------------------------- |
-| `list_alerts` | `api/v2/alerts` — paged, severity-sorted   |
+| Tool           | DS proxy path                                              |
+| -------------- | ---------------------------------------------------------- |
+| `list_alerts`  | `api/v2/alerts` — paged, severity-sorted                   |
+| `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
+| `list_silences` | `api/v2/silences` — paged, end-time-sorted                |
+
+### Resources and prompts — deliberately not implemented
+
+LLMs handle tool calls far more reliably than resource URIs or prompts, so
+this MCP exposes only tools. A prior prototype had `observability://` /
+`grafana://` / `alertmanager://` resource URIs and an `investigate-alert`
+prompt; both were removed in favour of the equivalent tools (`get_alert`,
+`get_dashboard_by_uid`, `list_datasources`). See
+[`docs/roadmap.md`](./docs/roadmap.md#out-of-scope) for the rationale.
 
 Datasource selection is per-org: tools match datasources from
 `status.dataSources[]` by name substring (`mimir`, `loki`, `tempo`,
@@ -110,20 +129,6 @@ For endpoints where pagination is natural (logs, label-values, rule lists,
 tag values, dashboards-by-folder, alerts) tools expose `page`/`pageSize` or
 a `nextStart` cursor so callers can page forward without re-running the
 whole query.
-
-### Prompts
-
-| Prompt                | Arguments                              | Purpose                                                |
-| --------------------- | -------------------------------------- | ------------------------------------------------------ |
-| `investigate-alert`   | `org`, `fingerprint`, `lookback?`      | Triage playbook: pulls alert detail then correlates logs / metrics / traces and produces a short report. Only read operations. |
-
-### Resource templates
-
-| URI template                                     | Description                                          |
-| ------------------------------------------------ | ---------------------------------------------------- |
-| `observability://org/{name}`                     | Per-org metadata + your role + tenants + datasources |
-| `grafana://org/{name}/dashboard/{uid}`           | Full dashboard JSON                                  |
-| `alertmanager://org/{name}/alert/{fingerprint}`  | Full Alertmanager alert object                       |
 
 ### Metrics
 

@@ -1,3 +1,4 @@
+// Package tools — datasource.go: shared datasource-proxy dispatcher + spec for Mimir/Loki/Tempo/Alertmanager tools.
 package tools
 
 import (
@@ -46,27 +47,23 @@ func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role
 // datasource: which datasource to pick, which tenant type is required, and
 // which API path/args to use on the downstream.
 type datasourceSpec struct {
-	Role            authz.Role
-	NeedTenant      obsv1alpha2.TenantType
-	NameContains    []string
-	InstantPath     string
-	RangePath       string
-	SupportsRange   bool
-	ForceRange      bool          // always use RangePath; fill in defaults if start/end missing
-	DefaultRangeAgo time.Duration // default start = now - DefaultRangeAgo when ForceRange
-	QueryArg        string        // name of the arg on the downstream API that carries the query expression
-	ExtraArg        string        // optional pass-through arg (e.g. "limit")
-	Timeout         time.Duration // per-tool handler budget; 0 = default 30s
+	Role          authz.Role
+	NeedTenant    obsv1alpha2.TenantType
+	NameContains  []string
+	InstantPath   string
+	RangePath     string
+	SupportsRange bool
+	QueryArg      string        // arg on the downstream API that carries the query expression
+	ExtraArg      string        // optional pass-through arg (e.g. "limit")
+	Timeout       time.Duration // per-tool handler budget; 0 = default 30s
 }
 
 // datasourceInvocation bundles the per-call parameters runDatasourceProxy
-// needs. Handlers either fill it from req.Params via invocationFromRequest
-// (the datasourceProxyHandler default flow) or build one explicitly (the
-// dashboards.go run-panel-query and metrics.go histogram-quantile flows
-// re-dispatch internally with a synthesised query). Keeping the CallToolRequest
-// read-only means the audit middleware captures the actual caller args, not
-// a rewritten version — fixes a subtle bug where audit records diverged from
-// what the LLM actually sent.
+// needs. Handlers either read them from the request (the datasourceProxyHandler
+// default flow) or synthesise them (the dashboards.go run-panel-query and
+// metrics.go histogram-quantile flows, which re-dispatch internally with a
+// generated query). Keeping the CallToolRequest read-only means the audit
+// middleware records the caller's actual args, not a rewritten version.
 type datasourceInvocation struct {
 	Org      string
 	Query    string
@@ -76,33 +73,28 @@ type datasourceInvocation struct {
 	ExtraInt int // optional, used when spec.ExtraArg is set
 }
 
-// invocationFromRequest reads the standard datasource-tool args from req.
-func invocationFromRequest(req mcp.CallToolRequest, spec datasourceSpec) datasourceInvocation {
-	inv := datasourceInvocation{
-		Org:   req.GetString("org", ""),
-		Query: req.GetString("query", ""),
-		Start: req.GetString("start", ""),
-		End:   req.GetString("end", ""),
-		Step:  req.GetString("step", ""),
-	}
-	if spec.ExtraArg != "" {
-		inv.ExtraInt = req.GetInt(spec.ExtraArg, 0)
-	}
-	return inv
-}
-
 // datasourceProxyHandler returns a tool handler that: authorises the caller
 // on the given org, picks the correct datasource, validates tenant type, and
 // forwards the query through Grafana's datasource proxy. The standard flow
 // reads its invocation from the request; tools that synthesise an invocation
-// (e.g. run_panel_query re-dispatching into query_prometheus) should call
-// runDatasourceProxy directly instead of rewriting req.Params.Arguments.
+// (run_panel_query, query_prometheus_histogram) call runDatasourceProxy
+// directly with their own datasourceInvocation.
 func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if _, err := req.RequireString("org"); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return runDatasourceProxy(ctx, d, spec, invocationFromRequest(req, spec))
+		inv := datasourceInvocation{
+			Org:   req.GetString("org", ""),
+			Query: req.GetString("query", ""),
+			Start: req.GetString("start", ""),
+			End:   req.GetString("end", ""),
+			Step:  req.GetString("step", ""),
+		}
+		if spec.ExtraArg != "" {
+			inv.ExtraInt = req.GetInt(spec.ExtraArg, 0)
+		}
+		return runDatasourceProxy(ctx, d, spec, inv)
 	}
 }
 
@@ -111,6 +103,11 @@ func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, 
 // internally (run_panel_query, query_prometheus_histogram) build the
 // invocation themselves and call here; avoids the prior req.Params
 // mutation that silently corrupted audit args.
+//
+// Per-datasource defaulting (e.g. Loki needs start+end and the caller can
+// default to last-hour) is the caller's responsibility — see dashboards.go
+// run_panel_query Loki branch. Keeping defaulting out of here means this
+// function's only conditional is "instant vs range path".
 func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv datasourceInvocation) (*mcp.CallToolResult, error) {
 	if inv.Org == "" {
 		return mcp.NewToolResultError("missing required argument \"org\""), nil
@@ -131,32 +128,24 @@ func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv d
 	if spec.QueryArg != "" && inv.Query != "" {
 		q.Set(spec.QueryArg, inv.Query)
 	}
-	start, end := inv.Start, inv.End
+	// Use the range path when the spec opts in and both start+end are
+	// supplied — callers that want "always use range" default their own
+	// start/end before calling.
 	path := spec.InstantPath
-	useRange := spec.SupportsRange && (spec.ForceRange || (start != "" && end != ""))
+	useRange := spec.SupportsRange && inv.Start != "" && inv.End != ""
 	if useRange {
 		path = spec.RangePath
-		// Backfill both start + end whenever the spec declares a default
-		// range, not only when ForceRange is set. Grafana rejects range
-		// queries with a missing end; anchoring both ends here keeps the
-		// shape stable regardless of which flag opted the tool in.
-		if start == "" && spec.DefaultRangeAgo > 0 {
-			start = strconv.FormatInt(time.Now().Add(-spec.DefaultRangeAgo).UnixNano(), 10)
-		}
-		if end == "" && (spec.ForceRange || spec.DefaultRangeAgo > 0) {
-			end = strconv.FormatInt(time.Now().UnixNano(), 10)
-		}
-		q.Set("start", start)
-		q.Set("end", end)
+		q.Set("start", inv.Start)
+		q.Set("end", inv.End)
 		if inv.Step != "" {
 			q.Set("step", inv.Step)
 		}
 	} else {
-		if start != "" {
-			q.Set("start", start)
+		if inv.Start != "" {
+			q.Set("start", inv.Start)
 		}
-		if end != "" {
-			q.Set("end", end)
+		if inv.End != "" {
+			q.Set("end", inv.End)
 		}
 	}
 	if spec.ExtraArg != "" && inv.ExtraInt > 0 {
@@ -179,9 +168,6 @@ func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv d
 	if err != nil {
 		proxyErr = err
 		return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil
-	}
-	if capErr := enforceResponseCap(body); capErr != nil {
-		return mcp.NewToolResultJSON(capErr)
 	}
 	return mcp.NewToolResultText(string(body)), nil
 }
