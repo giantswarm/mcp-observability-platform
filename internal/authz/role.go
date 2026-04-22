@@ -32,7 +32,7 @@ func (r Role) String() string {
 }
 
 // MarshalJSON serialises a Role as its lowercase string form so callers can
-// embed OrgAccess values directly into tool/resource payloads.
+// embed Organization values directly into tool/resource payloads.
 func (r Role) MarshalJSON() ([]byte, error) { return json.Marshal(r.String()) }
 
 // AtLeast reports whether r is at least as privileged as other. Prefer this

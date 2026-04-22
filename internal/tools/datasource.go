@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -28,19 +27,19 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 // required tenant type (empty = skip), and a datasource whose name contains
 // all nameContains substrings (case-insensitive) must exist. Errors are
 // caller-ready strings so handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role, tenantType obsv1alpha2.TenantType, nameContains ...string) (authz.OrgAccess, int64, error) {
-	oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, role)
+func resolveDatasource(ctx context.Context, d *Deps, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
+	org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, role)
 	if err != nil {
-		return authz.OrgAccess{}, 0, err
+		return authz.Organization{}, 0, err
 	}
-	if tenantType != "" && !oa.HasTenantType(tenantType) {
-		return authz.OrgAccess{}, 0, fmt.Errorf("org %q has no tenant of type %q — tool unavailable", org, tenantType)
+	if tenantType != "" && !org.HasTenantType(tenantType) {
+		return authz.Organization{}, 0, fmt.Errorf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType)
 	}
-	dsID, ok := oa.FindDatasourceID(nameContains...)
+	dsID, ok := org.FindDatasourceID(nameContains...)
 	if !ok {
-		return authz.OrgAccess{}, 0, fmt.Errorf("no datasource matching %v in org %q", nameContains, org)
+		return authz.Organization{}, 0, fmt.Errorf("no datasource matching %v in org %q", nameContains, orgRef)
 	}
-	return oa, dsID, nil
+	return org, dsID, nil
 }
 
 // datasourceSpec declaratively describes a tool that proxies to a Grafana
@@ -48,7 +47,7 @@ func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role
 // which API path/args to use on the downstream.
 type datasourceSpec struct {
 	Role          authz.Role
-	NeedTenant    obsv1alpha2.TenantType
+	NeedTenant    authz.TenantType
 	NameContains  []string
 	InstantPath   string
 	RangePath     string
@@ -112,7 +111,7 @@ func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv d
 	if inv.Org == "" {
 		return mcp.NewToolResultError("missing required argument \"org\""), nil
 	}
-	oa, dsID, err := resolveDatasource(ctx, d, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
+	org, dsID, err := resolveDatasource(ctx, d, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -164,7 +163,7 @@ func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv d
 		}
 		observability.GrafanaProxyDuration.WithLabelValues(spec.InstantPath, status).Observe(time.Since(dsStart).Seconds())
 	}()
-	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
+	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		proxyErr = err
 		return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil

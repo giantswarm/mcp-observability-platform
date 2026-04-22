@@ -70,15 +70,15 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			raw, err := d.Grafana.ListDatasources(ctx, grafanaOpts(ctx, oa.OrgID))
+			raw, err := d.Grafana.ListDatasources(ctx, grafanaOpts(ctx, org.OrgID))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana /api/datasources failed", err), nil
 			}
@@ -119,7 +119,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				Org         string `json:"org"`
 				Total       int    `json:"total"`
 				Datasources []item `json:"datasources"`
-			}{Org: org, Total: len(out), Datasources: out})
+			}{Org: orgRef, Total: len(out), Datasources: out})
 		},
 	)
 
@@ -131,7 +131,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Datasource UID. See list_datasources.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -139,11 +139,11 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDatasource(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDatasource(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana datasource", err), nil
 			}

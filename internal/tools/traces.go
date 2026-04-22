@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -32,7 +31,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 		),
 		datasourceProxyHandler(d, datasourceSpec{
 			Role:         authz.RoleViewer,
-			NeedTenant:   obsv1alpha2.TenantTypeData,
+			NeedTenant:   authz.TenantTypeData,
 			NameContains: []string{dsKindTempo},
 			InstantPath:  "api/search",
 			QueryArg:     "q",
@@ -52,7 +51,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("step", mcp.Description("Step, e.g. 30s, 1m.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -60,7 +59,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindTempo)
+			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -74,7 +73,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 				q.Set("step", step)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/metrics/query_range").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/metrics/query_range", q)
+			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/metrics/query_range", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("tempo metrics", err), nil
 			}
@@ -92,11 +91,11 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("end", mcp.Description("Unix seconds; default now.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			names, err := fetchTempoTags(ctx, d, org, "", req)
+			names, err := fetchTempoTags(ctx, d, orgRef, "", req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -117,7 +116,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -125,7 +124,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			values, err := fetchTempoTags(ctx, d, org, tag, req)
+			values, err := fetchTempoTags(ctx, d, orgRef, tag, req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -162,8 +161,8 @@ func qualifyTempoTag(scope, tag string) string {
 // /api/v2/search/tag/{tag}/values. Tempo's v2 API returns a single-level
 // {scopes:[{name, tags:[...]}]} structure for tag names and
 // {tagValues:[{type, value}]} for values; we flatten both to a []string.
-func fetchTempoTags(ctx context.Context, d *Deps, org, tag string, req mcp.CallToolRequest) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindTempo)
+func fetchTempoTags(ctx context.Context, d *Deps, orgRef, tag string, req mcp.CallToolRequest) ([]string, error) {
+	org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +177,7 @@ func fetchTempoTags(ctx context.Context, d *Deps, org, tag string, req mcp.CallT
 
 	if tag == "" {
 		observability.GrafanaProxyTotal.WithLabelValues("api/v2/search/tags").Inc()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, "api/v2/search/tags", q)
+		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v2/search/tags", q)
 		if err != nil {
 			return nil, fmt.Errorf("tempo tags: %w", err)
 		}
@@ -217,7 +216,7 @@ func fetchTempoTags(ctx context.Context, d *Deps, org, tag string, req mcp.CallT
 
 	path := "api/v2/search/tag/" + url.PathEscape(tag) + "/values"
 	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
-	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
+	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("tempo tag values: %w", err)
 	}

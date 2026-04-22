@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -32,15 +31,15 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("pageSize", mcp.Description("Folder-page size (default 20, max 200). Optional.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.SearchDashboards(ctx, grafanaOpts(ctx, oa.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
+			body, err := d.Grafana.SearchDashboards(ctx, grafanaOpts(ctx, org.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search failed", err), nil
 			}
@@ -60,7 +59,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See search_dashboards.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -68,11 +67,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -88,7 +87,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See search_dashboards.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -96,11 +95,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -122,7 +121,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("titleContains", mcp.Description("Case-insensitive panel-title substring filter.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -130,11 +129,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -155,7 +154,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("path", mcp.Required(), mcp.Description("JSON Pointer, e.g. '/dashboard/title' or '/dashboard/panels/0'. Empty '' or '/' returns the whole document.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -164,11 +163,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			path := req.GetString("path", "")
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -189,15 +188,15 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max folders returned (default 100, max 5000).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.SearchFolders(ctx, grafanaOpts(ctx, oa.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
+			body, err := d.Grafana.SearchFolders(ctx, grafanaOpts(ctx, org.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search folders", err), nil
 			}
@@ -214,11 +213,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max tags returned (default 100).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -229,7 +228,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if limit := req.GetInt("limit", 0); limit > 0 {
 				q.Set("limit", strconv.Itoa(limit))
 			}
-			body, err := d.Grafana.GetAnnotationTags(ctx, grafanaOpts(ctx, oa.OrgID), q)
+			body, err := d.Grafana.GetAnnotationTags(ctx, grafanaOpts(ctx, org.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotation tags", err), nil
 			}
@@ -250,11 +249,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max annotations (default 100, max 1000).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -282,7 +281,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			limit = clampInt(limit, 1, 1000)
 			q.Set("limit", strconv.Itoa(limit))
-			body, err := d.Grafana.GetAnnotations(ctx, grafanaOpts(ctx, oa.OrgID), q)
+			body, err := d.Grafana.GetAnnotations(ctx, grafanaOpts(ctx, org.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotations", err), nil
 			}
@@ -304,7 +303,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max log entries / traces for Loki/Tempo panels.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -316,11 +315,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, oa.OrgID), uid)
+			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -337,7 +336,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				return expandGrafanaVars(expr, vars, req.GetString("start", ""), req.GetString("end", ""), step)
 			}
 			inv := datasourceInvocation{
-				Org:      org,
+				Org:      orgRef,
 				Start:    req.GetString("start", ""),
 				End:      req.GetString("end", ""),
 				Step:     step,
@@ -350,7 +349,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				inv.Query = expanded(target.Expr)
 				return runDatasourceProxy(ctx, d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindMimir},
+					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindMimir},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
 				}, inv)
 			case dsKindLoki:
@@ -370,7 +369,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 					inv.End = strconv.FormatInt(time.Now().UnixNano(), 10)
 				}
 				return runDatasourceProxy(ctx, d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindLoki},
+					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ExtraArg: "limit",
 				}, inv)
@@ -380,7 +379,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				inv.Query = expanded(target.Query)
 				return runDatasourceProxy(ctx, d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindTempo},
+					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindTempo},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
 				}, inv)
 			default:
@@ -401,7 +400,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithObject("vars", mcp.Description("Template-variable values as {var: value} (e.g. {\"cluster\":\"prod-eu-1\"}).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, err := req.RequireString("org")
+			orgRef, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -409,7 +408,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -426,7 +425,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				to = "now"
 			}
 			q := url.Values{}
-			q.Set("orgId", strconv.FormatInt(oa.OrgID, 10))
+			q.Set("orgId", strconv.FormatInt(org.OrgID, 10))
 			q.Set("from", from)
 			q.Set("to", to)
 			if pid := req.GetInt("panelId", 0); pid > 0 {

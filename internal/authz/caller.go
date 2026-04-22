@@ -24,9 +24,19 @@ func (c Caller) Identity() string {
 // Empty reports whether no identifying fields were set.
 func (c Caller) Empty() bool { return c.Email == "" && c.Subject == "" }
 
-// GrafanaOrgLookup is the subset of grafana.Client the resolver needs. Kept
-// as an interface so tests can stub it and so authz doesn't import grafana.
-type GrafanaOrgLookup interface {
+// OrgRegistry is the resolver's port onto "the set of known Grafana
+// organisations". Implementations today wrap controller-runtime's informer
+// cache of GrafanaOrganization CRs; tests implement it directly in-memory.
+// Domain types only — the adapter is responsible for translating CR shapes
+// into Organization, so tests need no CR imports.
+type OrgRegistry interface {
+	List(ctx context.Context) ([]Organization, error)
+}
+
+// OrgMembershipLookup is the subset of grafana.Client the resolver needs.
+// Named from the consumer's perspective — the name doesn't leak "this is
+// satisfied by a Grafana client" because the resolver shouldn't care.
+type OrgMembershipLookup interface {
 	// LookupUserID returns Grafana's internal user id for the given email or
 	// login, or (0, false, nil) if the user hasn't been provisioned yet.
 	LookupUserID(ctx context.Context, loginOrEmail string) (id int64, found bool, err error)
