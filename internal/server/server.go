@@ -1,6 +1,7 @@
 // Package server wires the MCP protocol layer: it registers tools and resource
-// templates against a mark3labs/mcp-go server and returns an http.Handler that
-// can be mounted behind mcp-oauth's ValidateToken middleware.
+// templates against a mark3labs/mcp-go server. Transport wrapping (streamable-
+// HTTP, SSE, stdio) is the caller's concern — this package returns the core
+// `*mcpsrv.MCPServer` plus convenience handlers for the HTTP transports.
 package server
 
 import (
@@ -29,10 +30,11 @@ type Config struct {
 	Audit *audit.Logger
 }
 
-// New builds the MCP server, registers tools + resource templates, and returns
-// an http.Handler serving the streamable-http transport on the /mcp path.
-// Callers are expected to wrap the returned handler with OAuth middleware.
-func New(cfg Config) (http.Handler, error) {
+// New builds the core MCP server and registers tools + resource templates +
+// prompts. Transport wrapping (streamable-HTTP, SSE, stdio) is the caller's
+// concern — use `StreamableHTTPHandler` / `SSEHandler` or drive stdio via
+// `mcpsrv.ServeStdio` directly.
+func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Logger == nil {
 		return nil, errors.New("server: Logger is required")
 	}
@@ -81,9 +83,30 @@ func New(cfg Config) (http.Handler, error) {
 	registerResources(mcp)
 	registerPrompts(mcp)
 
+	return mcp, nil
+}
+
+// StreamableHTTPHandler wraps an MCP server in mcp-go's streamable-HTTP
+// transport, mounted at `/mcp`. Caller is expected to gate the returned
+// handler behind mcp-oauth's ValidateToken middleware — the handler itself
+// trusts whatever identity the HTTP context carries.
+func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
 		mcpsrv.WithHTTPContextFunc(identity.PromoteOAuthCaller),
-	), nil
+	)
+}
+
+// SSEHandler wraps an MCP server in mcp-go's SSE transport. The SSE
+// protocol requires two endpoints (`/sse` for the event stream, `/message`
+// for client→server posts); both are served by the returned handler and
+// routed internally by mcp-go based on path. Caller gates with OAuth.
+func SSEHandler(mcp *mcpsrv.MCPServer) http.Handler {
+	return mcpsrv.NewSSEServer(
+		mcp,
+		mcpsrv.WithSSEEndpoint("/sse"),
+		mcpsrv.WithMessageEndpoint("/message"),
+		mcpsrv.WithSSEContextFunc(identity.PromoteOAuthCaller),
+	)
 }

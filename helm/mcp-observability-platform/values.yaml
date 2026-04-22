@@ -145,6 +145,18 @@ oauth:
   # recommended). existingSecret must contain: encryptionKey (32 bytes, hex or raw)
   encryption:
     existingSecret: ""
+  # Additional OAuth client IDs whose tokens are accepted — for SSO token
+  # forwarding from upstream aggregators (muster) or sibling MCPs. Tokens
+  # still must be signed by the Dex issuer configured above. Empty list
+  # means only tokens minted for our own client ID are accepted.
+  trustedAudiences: []
+  # Custom URI schemes accepted during public client registration (beyond
+  # the always-allowed loopback HTTPS). Example: ["cursor", "vscode",
+  # "vscode-insiders"] unblocks those CLI clients without opening
+  # registration fully. Each scheme is validated against RFC 3986 by
+  # mcp-oauth. Web schemes (http/https) and dangerous schemes
+  # (javascript/data/file/ftp) are blocked regardless of this list.
+  trustedRedirectSchemes: []
 
 grafana:
   # Admin/API URL used by the MCP to reach Grafana. Typically the in-cluster
