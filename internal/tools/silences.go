@@ -62,7 +62,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse silences", err), nil
 			}
-			return resultJSONWithCap(result)
+			return mcp.NewToolResultJSON(result)
 		},
 	)
 }

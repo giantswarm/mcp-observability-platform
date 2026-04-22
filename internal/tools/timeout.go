@@ -1,3 +1,4 @@
+// Package tools — timeout.go: shared per-handler context-timeout helper.
 package tools
 
 import (
