@@ -12,14 +12,13 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/identity"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
 // grafanaOpts packages orgID and caller-subject into a RequestOpts so every
 // downstream call attributes to the caller via X-Grafana-User.
 func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
-	return grafana.RequestOpts{OrgID: orgID, Caller: identity.CallerSubject(ctx)}
+	return grafana.RequestOpts{OrgID: orgID, Caller: authz.CallerSubject(ctx)}
 }
 
 // resolveDatasource runs the three checks every datasource-facing tool needs
@@ -28,7 +27,7 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 // all nameContains substrings (case-insensitive) must exist. Errors are
 // caller-ready strings so handlers can surface them unchanged.
 func resolveDatasource(ctx context.Context, d *Deps, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
-	org, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), orgRef, role)
+	org, err := d.Resolver.Require(ctx, authz.CallerFromContext(ctx), orgRef, role)
 	if err != nil {
 		return authz.Organization{}, 0, err
 	}
