@@ -232,7 +232,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	oauthHandler := oauth.NewHandler(oauthSrv, logger)
 
-	// Best-effort OTEL init. No-op when no OTEL_EXPORTER_OTLP_ENDPOINT is set.
+	// Best-effort OTEL tracing. No-op when no OTEL_EXPORTER_OTLP_ENDPOINT is set.
 	shutdownOTEL, err := observability.InitTracing(shutdownCtx, "mcp-observability-platform", version)
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
@@ -244,10 +244,36 @@ func runServe(_ *cobra.Command, _ []string) error {
 		}()
 	}
 
+	// Best-effort OTLP logs via the otelslog bridge. When an endpoint is
+	// wired every slog record gets trace_id + span_id attached from ctx,
+	// so operators can jump from a tool-call trace span to the surrounding
+	// log lines in Loki/Grafana without a correlation-ID scheme. nil
+	// handler = disabled; both the operator logger and audit stream keep
+	// their local sinks unchanged.
+	shutdownOTELLogs, otelLogHandler, err := observability.InitLogging(shutdownCtx, "mcp-observability-platform", version)
+	if err != nil {
+		logger.Warn("otel log init failed; continuing without OTLP logs", "error", err)
+	} else {
+		defer func() {
+			sc, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = shutdownOTELLogs(sc)
+		}()
+	}
+	if otelLogHandler != nil {
+		logger = slog.New(observability.FanoutHandler(logger.Handler(), otelLogHandler))
+	}
+
 	// Structured audit trail: one JSON record per tool call on stderr,
 	// separate from the debug diagnostic log. Always-on, stable schema,
 	// redirect to a dedicated sink at the pod spec when a SIEM ingests it.
-	auditLogger := audit.NewJSON(os.Stderr)
+	// When OTLP logs are wired the audit stream fans out to both the local
+	// JSON sink and OTLP so audit + span + metric signals correlate.
+	auditHandler := slog.Handler(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if otelLogHandler != nil {
+		auditHandler = observability.FanoutHandler(auditHandler, otelLogHandler)
+	}
+	auditLogger := audit.New(auditHandler)
 
 	// --- MCP server + tools/resources ---
 	mcp, err := server.New(server.Config{
