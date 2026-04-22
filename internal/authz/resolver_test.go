@@ -59,8 +59,8 @@ func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g OrgMembershipLookup, cac
 // fakeGrafana is a deterministic in-memory stub of the OrgMembershipLookup
 // interface. Tests configure which user IDs exist and what their orgs are.
 type fakeGrafana struct {
-	users map[string]int64       // email/login -> id
-	orgs  map[int64][]Membership // id -> memberships
+	users map[string]int64          // email/login -> id
+	orgs  map[int64][]OrgMembership // id -> memberships
 	calls struct{ lookup, userOrgs int }
 }
 
@@ -70,7 +70,7 @@ func (f *fakeGrafana) LookupUserID(_ context.Context, loginOrEmail string) (int6
 	return id, ok, nil
 }
 
-func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]Membership, error) {
+func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]OrgMembership, error) {
 	f.calls.userOrgs++
 	return f.orgs[userID], nil
 }
@@ -80,7 +80,7 @@ func TestAuthorizer_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 	beta := newOrg("beta", "Beta", 7, TenantTypeAlerting)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@example.com": 1},
-		orgs: map[int64][]Membership{
+		orgs: map[int64][]OrgMembership{
 			1: {
 				{OrgID: 42, Role: "Admin"},
 				{OrgID: 7, Role: "Viewer"},
@@ -106,7 +106,7 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 42)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 5},
-		orgs: map[int64][]Membership{
+		orgs: map[int64][]OrgMembership{
 			5: {
 				{OrgID: 42, Role: "None"},  // dropped: no role
 				{OrgID: 99, Role: "Admin"}, // dropped: no matching descriptor
@@ -140,7 +140,7 @@ func TestAuthorizer_Resolve_Cache(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
+		orgs:  map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
@@ -156,7 +156,7 @@ func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
+		orgs:  map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
@@ -170,7 +170,7 @@ func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {}}, // user exists but in no orgs
+		orgs:  map[int64][]OrgMembership{1: {}}, // user exists but in no orgs
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
@@ -184,7 +184,7 @@ func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha Team", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
+		orgs:  map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
@@ -283,7 +283,7 @@ func TestRole_MarshalJSON(t *testing.T) {
 // LookupUserID and UserOrgs calls atomically under -race.
 type blockingGrafana struct {
 	users       map[string]int64
-	orgs        map[int64][]Membership
+	orgs        map[int64][]OrgMembership
 	lookupCalls atomic.Int32
 	userOrgs    atomic.Int32
 	release     chan struct{}
@@ -298,7 +298,7 @@ func (b *blockingGrafana) LookupUserID(_ context.Context, loginOrEmail string) (
 	return id, ok, nil
 }
 
-func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]Membership, error) {
+func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]OrgMembership, error) {
 	b.userOrgs.Add(1)
 	return b.orgs[userID], nil
 }
@@ -311,7 +311,7 @@ func TestAuthorizer_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &blockingGrafana{
 		users:   map[string]int64{"u@e.com": 1},
-		orgs:    map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
+		orgs:    map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 		release: make(chan struct{}),
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
@@ -354,7 +354,7 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
-		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Viewer"}}},
+		orgs:  map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
@@ -373,7 +373,7 @@ func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
+		orgs:  map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
@@ -402,7 +402,7 @@ func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1, TenantTypeData)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {{OrgID: 1, Role: "Admin"}}},
+		orgs:  map[int64][]OrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
@@ -429,7 +429,7 @@ func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]Membership{1: {}}, // user exists in Grafana but in no orgs
+		orgs:  map[int64][]OrgMembership{1: {}}, // user exists in Grafana but in no orgs
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 

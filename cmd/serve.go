@@ -657,14 +657,14 @@ func (g grafanaAuthz) LookupUserID(ctx context.Context, loginOrEmail string) (in
 	return u.ID, true, nil
 }
 
-func (g grafanaAuthz) UserOrgs(ctx context.Context, userID int64) ([]authz.Membership, error) {
+func (g grafanaAuthz) UserOrgs(ctx context.Context, userID int64) ([]authz.OrgMembership, error) {
 	ms, err := g.c.UserOrgs(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]authz.Membership, 0, len(ms))
+	out := make([]authz.OrgMembership, 0, len(ms))
 	for _, m := range ms {
-		out = append(out, authz.Membership{OrgID: m.OrgID, Role: m.Role})
+		out = append(out, authz.OrgMembership{OrgID: m.OrgID, Role: m.Role})
 	}
 	return out, nil
 }

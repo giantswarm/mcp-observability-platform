@@ -50,11 +50,11 @@ type OrgMembershipLookup interface {
 	// UserOrgs returns the (orgID, roleString) pairs Grafana has computed
 	// for the given user. roleString is one of "Admin" | "Editor" | "Viewer"
 	// | "None" (Grafana's own strings).
-	UserOrgs(ctx context.Context, userID int64) ([]Membership, error)
+	UserOrgs(ctx context.Context, userID int64) ([]OrgMembership, error)
 }
 
-// Membership is the authz-internal projection of a Grafana org membership.
-type Membership struct {
+// OrgMembership is the authz-internal projection of a Grafana org membership.
+type OrgMembership struct {
 	OrgID int64
 	Role  string // Grafana's role string
 }
@@ -96,11 +96,10 @@ func CallerSubject(ctx context.Context) string {
 }
 
 // CallerTokenSource returns the OAuth flavour that produced the caller's
-// identity — "oauth" for tokens minted by our own /oauth/token endpoint,
-// "sso" for ID tokens forwarded via TrustedAudiences, and "" when no
-// identity is attached. Audit consumers use this to distinguish direct MCP
-// sessions from SSO-forwarded ones when compliance reviews ask "was this
-// action taken via our MCP console or a forwarded token?"
+// identity: "oauth" for tokens minted by our own /oauth/token endpoint,
+// "sso" for ID tokens forwarded via TrustedAudiences, "" when no identity
+// is attached. Recorded on audit entries so direct and SSO-forwarded
+// sessions are distinguishable.
 func CallerTokenSource(ctx context.Context) string {
 	ui, ok := userInfoFromContext(ctx)
 	if !ok || ui == nil {
