@@ -171,6 +171,21 @@ this setup. Two deployment options:
 Either way, no changes are required on this MCP once the renderer is
 reachable from Grafana.
 
+### Transports
+
+Three MCP transports are wired, selected via `MCP_TRANSPORT`:
+
+| Transport | When to use | OAuth | Listens on |
+| --- | --- | --- | --- |
+| `streamable-http` (default) | Remote deployment gated by OAuth, the shipping Helm-chart deployment. Works with `claude mcp add --transport http …`, mcp-inspector, browser clients. | Required (mcp-oauth + Dex) | `$MCP_ADDR` (default `:8080`), `POST /mcp` |
+| `sse` | Remote deployment for MCP clients that still prefer SSE (`text/event-stream`). Identical auth and tool surface as streamable-http. | Required | `$MCP_ADDR`, `GET /sse` + `POST /messages` |
+| `stdio` | Local-dev and desktop-client integrations (Claude Desktop's `command` server entry, IDE plugins). No HTTP listener, no OAuth — the client is whoever spawned the process, so authz relies on the caller already having the right Grafana / Kubernetes context. | None | stdin/stdout |
+
+OAuth is only meaningful for the network transports; `stdio` treats the
+spawning process as fully trusted (same model as `kubectl` delegating to the
+user's kubeconfig). Configuration env vars are shared across transports —
+the Grafana / Dex / OAuth / observability settings apply identically.
+
 ## Configuration
 
 Env-var driven. Flags override env. See `cmd/serve.go`.
@@ -191,8 +206,8 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `MCP_OAUTH_ENCRYPTION_KEY`                  | no             | AES-256 key for token encryption at rest; 64-char hex or 32 raw bytes |
 | `OAUTH_STORAGE`                             | no             | `memory` (default) or `valkey`                           |
 | `VALKEY_ADDR` / `_PASSWORD` / `_TLS`        | no             | Required when `OAUTH_STORAGE=valkey`                     |
-| `MCP_TRANSPORT`                             | no             | `streamable-http` only (default). `sse` / `stdio` reserved for a later PR and currently rejected at startup. |
-| `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`)   |
+| `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`.          |
+| `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
 | `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`) |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |
