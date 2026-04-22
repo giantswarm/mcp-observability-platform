@@ -1,460 +1,291 @@
-# Productionize mcp-observability-platform — PR Plan
+# Roadmap
 
-## Repo starting state (2026-04-20)
+Forward-looking work plan for production-hardening the MCP on top of what's
+landed. For what's already shipped:
 
-This repo is currently a **chart-only `devctl-app-template` scaffold** — a
-stub Helm chart (`helm/mcp-observability-platform/`, staged in
-working tree), CircleCI `architect` orb for app-catalog chart publishing,
-two `zz_generated` GitHub workflows (team labels, project board), and
-standard GS repo hygiene files (CHANGELOG, CODEOWNERS, DCO, LICENSE,
-SECURITY, renovate). No Go code.
+- [`README.md`](../README.md) — architecture layout, MCP surface, configuration, metrics.
+- [`CHANGELOG.md`](../CHANGELOG.md) — per-release feature list.
+- `git log` — authoritative for when and how each change landed.
+- [`docs/upstream-contributions.md`](./upstream-contributions.md) — parallel contribution lane to `grafana/mcp-grafana`.
 
-A **working Go prototype** lives at `~/mcp-observability-platform` (outside
-this repo): 32 MCP tools, ~6k LOC, Grafana + Mimir/Loki/Tempo/Alertmanager
-coverage, OIDC→`GrafanaOrganization` CR resolver, in-process OAuth
-provider, working Helm chart with Prometheus metrics + OTel tracing.
+## What's landed
 
-Goal of this roadmap: **port the prototype into this repo and productionize
-it** — matching the `giantswarm/mcp-kubernetes` shape (Go service + Helm
-chart in one repo, CircleCI for chart publishing, GitHub Actions
-`ci.yaml` / `auto-release.yaml` for code, devctl-generated workflows for
-scanning/release hygiene).
-
-## Decisions (resolved 2026-04-20)
-
-1. **CI split**: follow the GS paved road — CircleCI + GitHub Actions
-   together, matching `mcp-kubernetes`. CircleCI (via the `architect`
-   orb) handles the GS-native parts: multi-arch container image push to
-   `gsoci` + all registries, chart publish to `giantswarm-catalog`, ATS
-   chart tests, Go binary build as input to the image. GitHub Actions
-   handles Go code lint/test + the devctl-generated release/scanning
-   hygiene workflows. PR 3 **expands** the existing
-   `.circleci/config.yml` to the full 4-job mcp-kubernetes shape
-   (`go-build`, `push-to-registries-multiarch`, `push-to-app-catalog`,
-   `run-tests-with-ats`).
-2. **Release flow**: explicit `release#vX.Y.Z` branches only. Push a
-   release branch → `create_release_pr.yaml` opens a promotion PR that
-   rewrites `## [Unreleased]` → `## [vX.Y.Z] - YYYY-MM-DD` in CHANGELOG
-   → merge → `create_release.yaml` tags → CircleCI `architect` jobs pick
-   up the tag and publish image + chart. No auto-release for v1. No
-   goreleaser → GitHub Releases (in-cluster deployment is the primary
-   distribution; standalone binaries for local stdio deferred). Both
-   can be added later without rework.
-3. **Prototype port**: single big PR 0 — pure import from
-   `~/mcp-observability-platform`. Clean review boundary; subsequent PRs
-   refactor a stable baseline.
-4. **Go module path**: `github.com/giantswarm/mcp-observability-platform`.
-
-## Strategy
-
-Productionize what the prototype provides — don't expand tool surface
-beyond small gaps (Loki recording rules, `get_silence`). Bootstrap
-`mcp-kubernetes`-style CI, add one middleware seam for RBAC/audit/errors,
-wire MCP protocol fundamentals (annotations, progress, cancellation,
-prompts), harden ops. Upstream feature parity (Pyroscope/OnCall/Incident/
-Sift) is explicitly out of scope. Contributions back to
-`grafana/mcp-grafana` run in parallel for GS-native work worth sharing.
-
-Target: **1 port PR + 10 productionization PRs in 3 waves**, each <500
-LOC (except PR 0), independently reviewable. Tests live in the PR that
-adds the feature. Helm chart work is consolidated into one PR; feature
-PRs only read values seeded there.
-
-## PR 0 — Port the Go prototype (code import only) — LANDED as PR #3 (scaffold) + PR #10 (tools)
-
-Ported as two stacked PRs: #3 brought the scaffold (no tools / no chart)
-and #10 brought the full MCP tool surface on top. Both merged to main.
-
-- *Copy from prototype*: `main.go`, `cmd/`, `internal/` (authz, grafana,
-  observability, server, tracing), `go.mod`, `go.sum`, `Dockerfile`,
-  `Makefile`, prototype `README.md` content merged into this repo's
-  README.
-- *Adjust module path*: `go.mod` → `github.com/giantswarm/mcp-observability-platform`,
-  update all imports.
-- *Preserve the existing chart scaffold* (already staged in this repo) —
-  PR 2 restructures it to match the prototype's chart, not a fresh write.
-- *Carry over existing unit tests*.
-- Verify: `go build ./...`, `go test ./...`, `helm lint helm/mcp-observability-platform`
-  all green; repo runs via `go run . serve` with env vars matching
-  prototype's config.
-
-## MCP-spec alignment (narrow — deliberate)
-
-Folded into PR 1-10 below. Kept narrow — MCP's spec is small and we don't
-need to over-engineer error payloads, resources, or completions:
-
-| Spec feature | Status today | Addressed in |
+| Scope | Detail | PR |
 | --- | --- | --- |
-| Tool annotations (`readOnlyHint`, `idempotentHint`, `openWorldHint`) | Likely absent after PR 0 — verify | PR 1 |
-| `isError: true` with clear, LLM-actionable text | Ad hoc `NewToolResultError` | PR 5 (thin `mcperr`) |
-| Progress notifications for long-running tools | None | PR 6 |
-| Cancellation (`notifications/cancelled`) | None | PR 6 |
-| Prompts (reusable templates) | None | PR 10 |
-| Token-efficient responses (projections + response caps) | Already in prototype | existing + PR 1 |
-| Paginated list tools | Already solid via `paginateStrings` | existing — no change |
-| OAuth 2.1 + PKCE | Via `mcp-oauth` lib | existing, hardened in PR 9 |
+| Go scaffold | Cobra CLI, `GrafanaOrganization` CR-backed authz resolver, Grafana admin client, Prometheus metrics, OTEL tracing, mcp-go wiring | #3 |
+| Tool surface | 32 MCP tools across orgs / datasources / dashboards / metrics / logs / traces / alerts / silences / panels | #10 |
+| Tool middleware + MCP annotations + package restructure | mcp-go `ToolHandlerMiddleware`: `Tracing()` + `Metrics()`, `mcpsrv.WithRecovery()`, `ReadOnlyAnnotation()`, 3-bucket outcome label, `internal/{identity,observability,server/middleware,tools}/` layout | #4 |
+| Helm chart | `checksum/config` rollout, runtime ConfigMap via `envFrom`, NetworkPolicy + HPA + VPA + PDB opt-ins, 19 helm-unittest tests, 4 overlays (memory / valkey / rbac-minimal / autoscaling) | #5 |
+| CI | CircleCI multi-arch image push + chart publish matching `mcp-kubernetes` shape; hand-written `ci.yaml` (go test, yamllint, helm lint, helm-unittest, govulncheck); `Makefile.custom.mk`; devctl-generated release / scanning workflows; `renovate.json5` Go preset | #6 |
+| Deep readiness + two-phase shutdown | `/healthz` (liveness) vs `/readyz` (probes: Grafana, Dex, K8s cache) split, JSON `/healthz/detailed`, graceful drain ordered MCP → observability so kubelet doesn't SIGKILL mid-drain | #7 |
+| Audit middleware | Structured JSON per tool call on stderr: `{timestamp, caller, tool, args, outcome, duration_ms, error}`. Shared `Classify()` function feeds audit + metrics + span attributes → cross-signal labels never drift. Pluggable `Redactor` for future tools that take secrets | #8 |
+| Transports | All three MCP transports wired: `streamable-http` (default, OAuth-gated, remote), `sse` (OAuth-gated, remote; for SSE-only clients), `stdio` (local-dev / desktop-client integrations, no HTTP listener, trust follows the spawning process). `MCP_TRANSPORT` picks. `cmd/serve.go` split into per-transport entrypoints | #TBD |
 
-**Not addressing** (deliberate): MCP logging (`logging/setLevel`) — slog
-level at startup is enough; resources — duplicative of `list_orgs`;
-completions — clients don't rely on them; sampling, elicitation — niche.
+## Tier 1 — ship next (biggest leverage)
 
-## Target architecture (after all PRs)
+### Tool-name alignment with upstream `grafana/mcp-grafana`
 
-```
-cmd/
-  serve.go, serve_config.go, serve_stdio.go, serve_sse.go, serve_http.go   # split in PR 7
-internal/
-  authz/                # stays: OAuth, Dex, GrafanaOrganization resolver
-  audit/                # NEW (PR 5): structured audit trail
-  identity/             # LANDED (PR 1): caller identity plumbing
-  mcperr/               # NEW (PR 5): thin helper — classification internal only, wire payload is plain isError+text
-  mcpprogress/          # NEW (PR 6): progress + cancellation plumbing
-  observability/        # LANDED (PR 1): Prometheus metrics + OTEL tracing (+ otelslog bridge planned)
-  ratelimit/            # NEW (PR 9)
-  server/
-    server.go           # mcp-go + HTTP wiring
-    health.go           # NEW (PR 4): /healthz + /readyz + /healthz/detailed
-    middleware/         # LANDED (PR 1): Tracing + Metrics (tool-handler middleware)
-    httpmiddleware/     # NEW (PR 9): security headers, CORS, HTTP metrics, rate limit
-  tools/                # LANDED (PR 1): 32 tool handlers + shared helpers + annotations
-helm/
-  mcp-observability-platform/  # restructured + expanded in PR 2
-```
+Breaking rename to converge on upstream conventions before adoption widens.
+LLMs trained on upstream docs reach for upstream names first, so the more
+our dialect matches, the higher the first-try success rate. Three renames:
 
-Cross-cutting tool-call concerns live in `internal/server/middleware/` and
-are registered once via `mcpsrv.WithToolHandlerMiddleware`. Adding Audit,
-Progress, RateLimit means one more middleware + one more `Use()` call —
-tool registrations stay untouched.
+| Current | Rename to | Rationale |
+| --- | --- | --- |
+| `query_metrics` | `query_prometheus` | Matches upstream; signals "PromQL", not generic metric-query |
+| `query_logs` | `query_loki_logs` | Matches upstream; disambiguates vs. other log backends |
+| `list_dashboards` | `search_dashboards` | Matches upstream; "search" conveys the `query` arg better |
 
-## Deferred follow-up (out of scope for the PRs above)
+All other tool names either already match upstream (`get_dashboard_*`,
+`list_prometheus_*`, `list_loki_*`, `query_prometheus_histogram`,
+`query_loki_*`, `get_panel_image`, `generate_deeplink`, `get_annotations`,
+`run_panel_query`) or are Giant-Swarm-only (`list_orgs`, `list_alerts`,
+`get_alert`, `list_silences`, `list_alert_rules`, `get_alert_rule`,
+all Tempo tools) and keep their names.
 
-**OTLP logs via `otelslog`** — today logs emit to stderr via `slog`. Wiring
-`go.opentelemetry.io/contrib/bridges/otelslog` + `otlploghttp` onto the
-same `OTEL_EXPORTER_OTLP_ENDPOINT` as traces would give free
-`trace_id`/`span_id` correlation on every log record and unify all three
-signals onto one pipeline. Lives in `internal/observability/logging.go`
-alongside `metrics.go` + `tracing.go`.
+No backwards-compatible aliases — project adoption is still small, and
+aliases rot unless actively maintained. Clean break.
 
-**Test-coverage gaps** (low-risk, ship when convenient):
-- `internal/tools/dashboards.go#expandGrafanaVars` — substring-replacement
-  logic for Grafana template macros (`$__rate_interval`, dashboard vars).
-  Previous bug was fixed by sorting vars length-DESC to avoid `$cluster`
-  corrupting `$cluster_id`; guard with a table test.
-- `internal/tools/dashboards.go#readJSONPointer` — our RFC 6901
-  implementation. Edge cases (escape sequences `~0`/`~1`, array indexing,
-  non-container traversal) deserve coverage.
+Files: edit `internal/tools/{metrics,logs,dashboards}.go` (the
+`mcp.NewTool(...)` call sites). Verify: `tools/list` returns the new names;
+no references to the old names remain anywhere in-repo.
 
-**`ARCHITECTURE.md`** — onboarding doc with the hex-arch dependency
-diagram, "where to add X" cheat sheet, and threat model. Extract from the
-review in PR #4 when the dust settles.
+### MCP prompts — runbook templates
 
-**Helm PDB smart default** — gate
-`helm/mcp-observability-platform/templates/poddisruptionbudget.yaml` on
-`replicas > 1` and enable it by default. Safe on single-replica deploys
-(template renders nothing) + automatic protection once operators scale
-out. Small addition to PR #2's values.yaml.
+Pure differentiator vs upstream (which has **zero** prompts). Four
+high-value prompts:
 
-**Propagate pre-commit Go tools upstream** — `giantswarm/github` PR #5098
-adds the Go toolchain install to the central
-`zz_generated.pre-commit.yaml`. Once merged, this repo's local copy can
-be regenerated.
+- `investigate-alert(org, fingerprint)` — pulls the alert, correlates logs /
+  metrics / traces, produces a short triage report. The one that was in the
+  original prototype.
+- `cardinality-audit(org, metric?)` — which labels are blowing up the TSDB?
+  Uses `list_prometheus_label_values` + selector series counts.
+- `incident-summary(org, time_window)` — firing alerts + annotations + top-N
+  error logs in one pass. Answers "what happened overnight?".
+- `query-builder(org, backend, intent)` — guided PromQL / LogQL / TraceQL
+  construction with worked examples per backend. Replaces upstream's
+  `get_query_examples` tool — a prompt is the natural shape for "give me
+  an example query that does X" since the output is a conversation turn,
+  not structured data.
 
-**`mcp-oauth` session lifecycle adoption** — mcp-oauth v0.2.102 added
-`SessionIDFromContext`, `SetTokenRefreshHandler`,
-`SetSessionCreationHandler`, `SetSessionRevocationHandler`. These unlock:
-- Per-session state cleanup on logout (PR 9 rate-limit state, PR 8 audit
-  session correlation).
-- Active OAuth token refresh with a callback for downstream cache
-  invalidation (PR 9).
-- Session-scoped identity in `internal/identity/` — expose
-  `CallerSessionID(ctx)` once audit / progress PRs need it.
+Files: `internal/server/prompts.go`. Verify: `prompts/list` returns expected
+names; one prompt renders deterministically in a test.
 
-## The 10 productionization PRs
+### HTTP middleware chain + rate limit + OAuth token refresh
 
-Each: branch, <500 LOC diff, single concern, green in CI.
+Go code only — reads ConfigMap fields seeded in #5.
 
-### Wave 0 — Foundation
+- HTTP middleware chain: `SecurityHeaders` → `CORS` → `HTTPMetrics` → existing
+  `oauthHandler.ValidateToken` → MCP server.
+- Rate limiting: per-caller + per-org + global token bucket; thresholds from
+  ConfigMap; rejections render `isError: true` with rate-limit text.
+- OAuth token refresh: active refresh before expiry via mcp-oauth
+  `SetTokenRefreshHandler`; refresh failure → auth error prompting re-auth.
 
-**PR 1 · Tool middleware + MCP annotations + package restructure — LANDED in `pr-1-wrap-middleware` (#4)**
+Files: new `internal/server/httpmiddleware/{security,cors,metrics,ratelimit}.go`;
+new `internal/ratelimit/ratelimit.go`.
 
-Replaced the in-package `instrument()` wrapper with mcp-go's built-in
-`server.ToolHandlerMiddleware` mechanism. Two runtime middlewares applied
-globally via `WithToolHandlerMiddleware`: `middleware.Tracing()` (OTEL span
-per call) and `middleware.Metrics()` (counter + histogram). mcp-go's
-`WithRecovery()` is wired too — panic safety we never had before.
+Verify: OWASP headers present; load test caps enforced; token-expiry table
+test with clock fake; CORS preflight works from a browser origin.
 
-MCP tool annotations surface on every tool via `tools.ReadOnlyAnnotation()`:
-`readOnlyHint: true`, `openWorldHint: true`, `destructiveHint: false`.
-`idempotentHint` deliberately omitted — many tools (`query_metrics`,
-`query_logs`, `list_alerts`) return live data that changes between calls.
+### Co-pilot tools — raise first-try LLM success rate
 
-Metric label `outcome` is 3-bucket (`ok` / `user_error` / `system_error`)
-so operators distinguish real incidents from expected user-visible failures
-(missing args, authz denials). Span `tool.outcome` attribute mirrors this.
+The current 32 tools are thin API wrappers; LLMs still need to write
+PromQL / LogQL / TraceQL. Composite higher-level tools dramatically improve
+success on vague user questions.
 
-Package restructure landed alongside:
-- `internal/tracing/` merged into `internal/observability/`.
-- `internal/server/tools_*.go` (8 files) → `internal/tools/*.go` (package `tools`).
-- Caller identity plumbing → `internal/identity/`.
-- Tool middlewares → `internal/server/middleware/`.
-- MCP resources / prompts stubs stay in `internal/server/` (they're peer
-  MCP surfaces, not tools).
+Names align with upstream `grafana/mcp-grafana`'s **Sift** tools where an
+equivalent exists so an LLM trained on upstream docs reaches for the same
+tool in both MCPs. Sift is Grafana Cloud proprietary (disabled by default
+upstream, unusable outside Grafana Cloud), so our OSS implementations are
+genuinely additive — not forks.
 
-Dependencies upgraded: `mark3labs/mcp-go` → v0.49.0 (the version that
-introduced `ToolHandlerMiddleware`, `WithRecovery`, `NewToolResultErrorf`),
-Go toolchain → 1.25.5.
+- `find_error_pattern_logs(org, service, lookback)` — auto-selects a LogQL
+  selector from service labels, applies an error-keyword filter, calls
+  `query_loki_stats` first to avoid `response_too_large`.
+  **Matches upstream Sift `find_error_pattern_logs`** (same name, same
+  intent; ours backs onto Loki directly instead of Sift's proprietary
+  pattern-detection service).
+- `find_slow_requests(org, service, lookback, min_duration?)` — wraps
+  `query_traces` with a service filter + duration threshold + TraceQL
+  `status=error` option. Returns the top-N slow spans with service, duration,
+  error status.
+  **Matches upstream Sift `find_slow_requests`** (same name; ours queries
+  Tempo directly, upstream's calls Sift).
+- `compare_metric_trends(org, metric, window, vs_window)` — "API latency now
+  vs yesterday"-class RCA questions. Returns percent change per label group.
+  **No upstream equivalent** (nor in Sift); pure Giant Swarm addition.
+- `explain_query(org, promql)` — series-count + selectivity estimate before
+  the LLM fires an expensive query. Prevents pathological queries.
+  **No upstream equivalent**; pure Giant Swarm addition. Upstream ships
+  `get_query_examples` (hardcoded per-datasource snippets) which is a
+  different thing — better modelled as a prompt in our `query-builder` slot.
 
-**PR 2 · Helm chart productionization (all-in-one) — LANDED in `pr-2-helm-hardening` (#5)**
-Single Helm PR — everything chart-related landed here. Scope shipped:
-- Templates: Chart.yaml (audience/managed/team annotations), `_helpers.tpl`,
-  Deployment (with `checksum/config` rollout on ConfigMap changes, envFrom
-  runtime ConfigMap), Service, ServiceAccount, ClusterRole+Binding,
-  ServiceMonitor, PodDisruptionBudget, NetworkPolicy (ingress + optional
-  egress with auto-included kube-dns allow), HorizontalPodAutoscaler,
-  VerticalPodAutoscaler, runtime ConfigMap, NOTES.txt.
-- Runtime ConfigMap exposes `MCP_TOOL_TIMEOUT`, `TOOL_MAX_RESPONSE_BYTES`
-  (0 disables the cap), `MCP_RESOLVER_CACHE_TTL`,
-  `MCP_RATE_LIMIT_{PER_CALLER,PER_ORG,GLOBAL}`, `MCP_OAUTH_REFRESH_AHEAD`.
-  Feature PRs (8, 9) read these without chart changes.
-- `values.schema.json` regenerated via `helm-values-schema-json` v2.3.1
-  (the binary the pre-commit workflow installs).
-- helm-unittest specs: `tests/{configmap,deployment,hpa,networkpolicy,pdb,
-  servicemonitor,vpa}_test.yaml` (19 tests, all green).
-- Example overlays: `values-memory.yaml` (dev), `values-valkey.yaml` (prod
-  OAuth store), `values-rbac-minimal.yaml` (external SA), and
-  `values-autoscaling.yaml` (HPA + VPA Initial + PDB + NetworkPolicy egress).
-- `README.md.gotmpl` for helm-docs generation.
+Each ~50 LOC, reuses existing tools (`query_loki_stats`, `query_traces`,
+`list_prometheus_metric_names`, etc.) internally.
 
-**Deferred**: `externalsecret.yaml` (Dex creds via ESO) — postponed to a
-follow-up because mixing ESO with the existing `existingSecret` pattern
-cleanly is its own design call. `values.schema.yaml` (human-readable
-source for the generator) — the JSON is hand-edited for now and regen is
-a one-liner.
+## Tier 2 — production maturity
 
-**PR 3 · CI — match `giantswarm/mcp-kubernetes` full shape**
-Expand CircleCI to full 4-job mcp-kubernetes shape + add GitHub Actions
-Go-code layer + devctl-generated release/scanning workflows.
+### Config validators (spun out of the transports split)
 
-- *Expand `.circleci/config.yml`*: upgrade `giantswarm/architect` orb to
-  the version used by mcp-kubernetes and add jobs beyond the current
-  single chart-publish: `architect/go-build` (binary name:
-  `mcp-observability-platform`), `architect/push-to-registries-multiarch`
-  (amd64 on branches, multi-arch on `/^v.*/` tags, publishing to
-  `gsoci.azurecr.io` + all registries including China mirrors),
-  `architect/run-tests-with-ats` (chart ATS tests). Keep existing
-  `architect/push-to-app-catalog` — it stays as-is.
-- *Hand-written GitHub workflows*:
-  - `.github/workflows/ci.yaml` — PR + push-main: `actions/checkout@v6`
-    → `actions/setup-go@v5` (Go 1.26, `cache: true`) →
-    `actions/setup-python@v6` (yamllint) → `azure/setup-helm@v5`
-    (Helm v3.19.4) → `helm plugin install helm-unittest` →
-    `make check helm-lint helm-test govulncheck`.
-  - **No `auto-release.yaml`** — deferred (see Future Work).
-- *Generated via `giantswarm/devctl gen workflows`* (expand beyond the
-  two existing ones): `zz_generated.{create_release, create_release_pr,
-  check_values_schema, pre-commit, gitleaks, run_ossf_scorecard,
-  fix_vulnerabilities, validate_changelog}.yaml`. All reference
-  `giantswarm/github-workflows/.github/workflows/*.yaml@main`.
-- *Repo-level config*: `.pre-commit-config.yaml`
-  (`detailyang/pre-commit-shell@v1.0.5`,
-  `pre-commit/pre-commit-hooks@v6.0.0`,
-  `dnephin/pre-commit-golang@v0.5.1`), extend existing `renovate.json5`
-  to include `:lang-go.json5`, `Makefile.custom.mk` (`check`, `test-vet`,
-  `helm-lint`, `helm-test`, `govulncheck`), review/confirm `Dockerfile`
-  (multi-stage `golang:1.26.x` → `scratch`, `giantswarm` user — needed
-  by `architect/push-to-registries-multiarch`). **No `.goreleaser.yaml`**
-  — binary distribution happens via the container image, standalone
-  binaries deferred (see Future Work).
-- *Explicitly NOT doing* (matches GS pattern): cosign, SBOM in-tree,
-  CodeQL, Dependabot, Codecov, chart-releaser, goreleaser, auto-release.
-- Release flow: push `release#vX.Y.Z` branch → `create_release_pr.yaml`
-  opens CHANGELOG-promotion PR → merge → `create_release.yaml` tags →
-  CircleCI `architect` jobs publish image + chart on the `v*` tag.
-- Verify: `ci.yaml` green on a no-op PR; `pre-commit run --all-files`
-  passes; `make helm-test` green; first `release#v0.1.0` branch opens a
-  promotion PR; merging it produces a tag that CircleCI picks up and
-  pushes both image and chart.
+Paired with the transport work above but small enough to land separately.
+Port from `mcp-kubernetes`:
 
-**PR 4 · Deep readiness + `/healthz/detailed` + two-phase shutdown — LANDED in `pr-4-readiness` (PR #7)**
+- `validateSecureURL` — Grafana / Dex / OAuth-issuer URLs must be HTTPS
+  unless `MCP_OAUTH_ALLOW_INSECURE_HTTP=true` is set.
+- `validateOAuthClientID` — reject empty / whitespace-only client IDs.
+- `validateTrustedSchemes` — constrain redirect URI schemes.
+- Entropy check on `MCP_OAUTH_ENCRYPTION_KEY` — reject keys with obvious low
+  entropy (repeats, ASCII sequences) before mcp-oauth burns a pod-start on
+  token-decrypt failures.
 
-Replaced the always-200 `/healthz` and `/readyz` stubs with proper
-liveness vs readiness semantics, added a JSON `/healthz/detailed`
-endpoint, and reordered graceful shutdown so in-flight tool calls aren't
-SIGKILLed mid-drain.
+Verify: table tests on each validator; `runServe` rejects bad values with a
+clear error before opening any sockets.
 
-`internal/server/health.go` introduces `HealthChecker` with
-`Register(name, CheckFn)` plus three handlers:
-- `/healthz` — liveness, always 200 unless the process itself is dead
-  (does NOT run readiness probes — a flaky downstream should not
-  restart the pod).
-- `/readyz` — 503 when any probe fails. Probes run concurrently under
-  a shared 2s deadline.
-- `/healthz/detailed` — JSON with per-check status, duration, overall
-  status, uptime, version, probe-specific extras.
+### Per-org Grafana SA tokens — phase-2 blast-radius fix
 
-Three probes wired in `cmd/serve.go`:
-- `grafana` — new lightweight `grafana.Client.Ping()` against
-  `/api/health` (auth-free; cheaper than `VerifyServerAdmin`, which
-  lists all orgs on every probe).
-- `dex` — `HTTPProbe` against the Dex OIDC discovery endpoint.
-- `k8s_cache` — `ctrlCache.List(GrafanaOrganizationList)`; reports
-  `{orgs: N}` under `extra`.
+**Biggest unresolved security concern in the current design.** Today one
+compromised MCP pod with server-admin SA exposes every Grafana org. Fix
+requires `observability-operator` coordination:
 
-**Two-phase shutdown**: drain MCP first (10s) while the observability
-server keeps answering liveness + Prometheus scrapes, then drain
-observability (5s). Prevents the kubelet from interpreting a slow
-tool-call drain as a dead pod and firing SIGKILL.
+- Operator provisions per-`GrafanaOrganization` SAs and writes each to a
+  namespaced Secret.
+- MCP resolver picks the right SA per-request based on `OrgAccess.OrgID`.
+- `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` server-admin fallback remains as
+  bootstrap path, documented as "dev/bootstrap only; never production".
 
-Helm chart probes at `/healthz` and `/readyz` (already in place from
-PR 2) now gate rollouts on real state — no chart changes needed.
+### Write tools gated on Editor / Admin
 
-### Wave 1 — Ship-ready + MCP fit
+The authz model (`authz.Role` with Editor/Admin, `GrafanaOrganization.spec.rbac.editors/admins`)
+already supports this; `middleware.Audit` already emits the records
+compliance will demand for writes.
 
-**PR 5 · `internal/audit` + `middleware.Audit()` — LANDED in `pr-5-audit` (PR #8)**
+Highest-value writes, matching upstream `grafana/mcp-grafana`'s surface:
 
-Structured audit trail: one JSON record per tool call on stderr with
-`{timestamp, caller, tool, args, outcome, duration_ms, error}`. Always
-on, stable schema, `msg: "tool_call"` so downstream collectors filter
-cleanly. Separate `*audit.Logger` instance — the debug diagnostic
-`slog` is gated by `DEBUG`, the audit stream is not.
+- `create_silence(org, matchers, duration, comment)` — most-asked feature
+  from SRE. "Silence this for 2 hours while I fix it." Gated on Editor.
+  Upstream handles this via its combined `alerting_manage_rules` verb —
+  we split it into discrete `create_silence` / (future) `delete_silence`
+  for clearer MCP annotations (`destructiveHint: true` on each).
+- `add_annotation(org, dashboardUid?, text, tags[])` — "mark this on the
+  dashboard." Good for bot-driven deploy annotations. Matches upstream's
+  `create_annotation`.
+- `update_annotation(org, id, ...)` — matches upstream's `update_annotation`.
+  Partial-update shape.
 
-Middleware uses mcp-go's native `server.ToolHandlerMiddleware` shape
-(not the pre-PR-1 custom `Middleware`/`Handler` types). Tool name is
-read from `req.Params.Name`; caller from `identity.CallerSubject(ctx)`.
-The outcome field reuses `middleware.Classify()` (exported from the
-package in this PR) so audit, metrics, and span attributes all carry
-the same `ok` / `user_error` / `system_error` label — cross-signal
-correlation never drifts.
+Every write carries `destructiveHint: true` in MCP annotations and rich
+audit records (the `args` field captures the full payload; operators can
+`jq` the audit stream for forensics).
 
-Wired as the innermost middleware in `server.New` (after Tracing and
-Metrics) so the recorded `duration_ms` reflects handler time only,
-matching the Metrics histogram label.
+Files: new `internal/tools/{writes,silences,annotations}.go`; handler
+edits add role-gating via `d.Resolver.Require(ctx, caller, org, RoleEditor)`
+before any write reaches Grafana / Alertmanager.
 
-**No dedicated `mcperr` package.** The roadmap originally paired
-audit with a `mcperr` helper for typed error classification; in
-practice `middleware.Classify` already does the only classification
-audit and metrics need, and handlers write actionable `isError` text
-inline with `mcp.NewToolResultErrorf`. A separate classification tree
-would be dead weight.
+### Small gap-fills
 
-**Redaction**: today's read-only surface does not take secrets. The
-package exposes a `WithRedactor(Redactor)` option for future tools
-that accept sensitive input (tokens, keys) — registration-time opt-in
-instead of a per-tool scrubbing step.
+Low-effort additions noted while comparing against upstream:
 
-**PR 6 · MCP progress + cancellation**
-Long-running tools (`query_metrics` range, `query_logs`, `get_panel_image`)
-emit `notifications/progress`. MCP `notifications/cancelled` propagates
-into Grafana HTTP calls via context cancellation.
-- Files: new `internal/mcpprogress/mcpprogress.go`; edit `internal/server/middleware/wrap.go`, handlers in `internal/tools/metrics.go`, `logs.go`, `panels.go`
-- Verify: component test issues a query then cancels mid-flight; progress events received
+- `get_annotation_tags` — `/api/annotations/tags`, list tags for
+  discovery. Matches upstream.
+- `get_silence(org, uuid)` — single-silence read companion to
+  `list_silences`, mirrors the `list_alerts` / `get_alert` pattern. No
+  upstream equivalent (they don't split alerting-read tools).
 
-**PR 7 · Refactor — `cmd/serve.go` split + implement `--transport` + config validators**
-- *Split `cmd/serve.go`* (440 LOC) into `cmd/{serve.go, serve_config.go,
-  serve_stdio.go, serve_sse.go, serve_http.go}` matching
-  `mcp-kubernetes`. OAuth wiring → `internal/authz/oauth_setup.go`,
-  K8s informer → `internal/authz/k8s_setup.go`, HTTP mux →
-  `internal/server/httpmux.go`.
-- *Implement `--transport`*: currently accepted but ignored (code always
-  serves streamable-http). Wire `stdio` and `sse` branches.
-- *Config validators*: port `validateSecureURL`, `validateOAuthClientID`,
-  `validateTrustedSchemes`, entropy check on `MCP_OAUTH_ENCRYPTION_KEY`
-  from mcp-kubernetes.
-- *Split hot spots* (code movement only): `tools_dashboards.go` (1011
-  LOC) → list/summary/queries/render; extract histogram cardinality from
-  `tools_metrics.go` (538 LOC).
-- Verify: `go test ./...` unchanged; `--transport=stdio` actually serves
-  stdio; validation fails on bad URL/entropy.
+### OTLP logs via `otelslog`
 
-### Wave 2 — GS differentiation + hardening
+Currently logs go to stderr via `slog`. Wiring
+`go.opentelemetry.io/contrib/bridges/otelslog` + `otlploghttp` onto the same
+`OTEL_EXPORTER_OTLP_ENDPOINT` as traces gives free `trace_id` / `span_id`
+correlation on every log record and unifies all three signals onto one
+pipeline. Lives in `internal/observability/logging.go`.
 
-**PR 8 · Mimir + Loki recording rules + `get_silence`**
-Three gaps closed together.
-- *Mimir recording rules* (matches prototype branch
-  `fix-cluster-recording-rules`): `list_mimir_recording_rules`,
-  `get_mimir_recording_rule`.
-- *Loki recording rules* (no existing tooling): `list_loki_recording_rules`,
-  `get_loki_recording_rule` via Loki ruler API (`/loki/api/v1/rules`).
-- *`get_silence` companion*: `list_silences` already exists in prototype;
-  add `get_silence(org, uuid)` matching the `list_alerts`/`get_alert`
-  pattern.
-- Candidates for upstream (US-2 in upstream-contributions.md).
-- Verify: unit tests with httptest Mimir + Loki ruler stubs.
+## Tier 3 — features beyond the original plan
 
-**PR 9 · HTTP middleware chain + rate limit + OAuth token refresh**
-Go code only — reads ConfigMap fields seeded in PR 2. No Helm changes.
-- *HTTP middleware chain*: `SecurityHeaders` → `CORS` → `HTTPMetrics` →
-  existing `oauthHandler.ValidateToken` → MCP server.
-- *Rate limiting*: per-caller + per-org + global token bucket, thresholds
-  from ConfigMap, rejections render `isError: true` with rate-limit text.
-- *OAuth token refresh*: active refresh before expiry; refresh failure →
-  auth error prompting re-auth.
-- Files: new `internal/server/middleware/{security,cors,metrics,ratelimit}.go`;
-  new `internal/ratelimit/ratelimit.go`; edit
-  `internal/authz/resolver.go`, `internal/authz/oauth_setup.go`,
-  `internal/server/httpmux.go`.
-- Verify: OWASP headers present; load test caps enforced; token-expiry
-  table test with clock fake; CORS preflight to `/mcp` works from a
-  browser origin.
+### Write tools gated on Editor / Admin
 
-**PR 10 · MCP prompts — runbook templates**
-Upstream `grafana/mcp-grafana` has none — pure differentiator.
-Parameterized templates chaining existing tools: investigate a firing
-alert, tenant cardinality audit, dashboard health check.
-- Files: new `internal/server/prompts.go`
-- Verify: `prompts/list` returns expected names; one prompt renders
-  deterministically in a test
+The authz model (`authz.Role` with Editor/Admin, `GrafanaOrganization.spec.rbac.editors/admins`)
+already supports this. Highest-value writes:
 
-## Upstream contribution lane (parallel, non-blocking)
+- `create_silence(org, matchers, duration, comment)` — most-asked feature.
+  "Silence this for 2 hours while I fix it." Gated on Editor.
+- `add_annotation(org, dashboardUid?, text, tags[])` — "mark this on the
+  dashboard." Good for bot-driven deploy annotations.
 
-See [`upstream-contributions.md`](./upstream-contributions.md) for
-US-1/2/3.
+Each write carries `destructiveHint: true` in MCP annotations and rich audit
+records for forensics.
 
-## Cross-repo contribution candidates (`mcp-kubernetes`)
+### MCP resource subscriptions for firing alerts
 
-Patterns worth proposing back: response-size cap helper; datasource
-proxy-handler dispatch-table pattern; `paginateStrings` helper; typed
-`Role` enum with `MarshalJSON`; CR-backed authorization via
-controller-runtime informer.
+Earlier we dropped resources in favour of tools (LLMs handle tools better).
+But subscriptions are a push model tools can't do: subscribe to "firing
+critical alerts in org X" → MCP pushes updates mid-conversation. Worth
+revisiting once MCP clients broadly support resource subscriptions.
 
-## Verification strategy
+## Test-coverage gaps (ship when convenient)
 
-- **Per PR**: in-package unit/component tests + `go test -race ./...`
-  green in CI (from PR 3 onward).
-- **PR 3 exit**: `ci.yaml`, `pre-commit`, `helm-unittest`,
-  `goreleaser --snapshot` all green; first tag auto-publishes Go
-  artifacts; CircleCI publishes chart.
-- **Wave 1 exit**: error classes observable in logs + metrics;
-  cancellation works end-to-end.
-- **Wave 2 exit**: `helm install` end-to-end in kind (probes green,
-  prompt renders, tool call succeeds); multi-org RBAC scenario test
-  green.
-- **Manual smoke (auth-path PRs)**: run Claude Desktop or `mcp-cli`
-  against a local deploy, exercise 2-3 tools across categories.
+- `internal/tools/dashboards.go#expandGrafanaVars` — substring-replacement for
+  Grafana template macros (`$__rate_interval`, dashboard vars). Bug was fixed
+  by sorting vars length-DESC so `$cluster` can't corrupt `$cluster_id`;
+  guard with a table test.
+- `internal/tools/dashboards.go#readJSONPointer` — our RFC 6901 implementation.
+  Edge cases (`~0` / `~1` escapes, array indexing, non-container traversal)
+  deserve coverage.
 
-## Sequencing
+## Deferred from landed PRs
 
-PR 0 (port) → Wave 0 (PRs 1-4) → Wave 1 (PRs 5-7) → Wave 2 (PRs 8-10).
-Waves sequential; within a wave, PRs parallelize across reviewers.
+- **Helm PDB smart default** (from #5) — gate
+  `templates/poddisruptionbudget.yaml` on `replicas > 1` and enable by
+  default. Safe on single-replica (no-op template), automatic protection
+  once scaled out.
+- **ExternalSecret template** (from #5) — Dex creds via ESO. Postponed;
+  mixing ESO with the existing `existingSecret` pattern cleanly is its own
+  design call.
+- **Auto-release on main merge** (from #6) — replace manual
+  `release#vX.Y.Z` flow with an `auto-release.yaml` that patch-bumps on
+  merge. Needs (a) skip-if-`[Unreleased]`-empty guard, (b) CHANGELOG
+  promotion back to main with a bot token, (c) concurrency-serialize.
+- **Standalone Go binaries via goreleaser** (from #6) — useful once local
+  stdio deployments become a supported use case. Today the container image
+  is the only distribution.
+- **`ARCHITECTURE.md`** (from #4) — onboarding doc with hex diagram,
+  "where to add X" cheat sheet, threat model. README's Layout section
+  covers most of this; a standalone doc would formalize.
 
-## Future work — out of scope
+## Out of scope (explicitly not doing)
 
-- **Write operations** (silences create/delete, annotations create/
-  update, dashboard patch, incident create). Architecture supports
-  extension: gate via existing `Role` enum (`RoleEditor`/`RoleAdmin` on
-  `OrgAccess`), wrap through `server/middleware` for audit, new
-  `tools_*_write.go` files, MCP `destructiveHint: true` on every write
-  tool.
-- **Upstream feature parity** (Pyroscope, OnCall, Incident, Sift,
-  Asserts) via adapter pattern. Deferred to keep v1 focused.
-- **Auto-release on main merge**: replace the manual `release#vX.Y.Z`
-  branch flow with an `auto-release.yaml` that bumps patch on every
-  main merge. Would need to (a) guard with "skip if `[Unreleased]` is
-  empty", (b) promote CHANGELOG + commit back to main with a bot token,
-  (c) concurrency-serialize to avoid racing pushes. Minor/major bumps
-  would stay on the explicit release-branch flow.
-- **Standalone Go binary releases** via goreleaser → GitHub Releases
-  (`.goreleaser.yaml` + `auto-release.yaml` / `release.yaml`). Useful
-  once local stdio MCP deployments become a supported use case —
-  matches what `mcp-kubernetes` does today. For v1, the container
-  image + Helm chart is the only supported distribution.
+- **Multi-cluster / federating MCP.** One MCP per Grafana is a design
+  constraint. A federator above it complicates auth, error propagation, and
+  observability for marginal benefit. Let the LLM pick the right MCP per
+  question.
+- **Generic (non-Grafana) Prometheus/Loki/Tempo clients.** The current model
+  leverages Grafana's tenant-header injection via its datasource proxy;
+  bypassing it re-implements multi-tenancy.
+- **Custom error-envelope format.** MCP's `isError: true` + plain text is
+  what LLMs are trained on. Inventing a new schema is dead weight.
+- **Result caching beyond the 30 s resolver cache.** Invalidation complexity
+  outweighs the savings.
+- **SBOM / cosign / CodeQL in-tree.** Handled at Giant Swarm org level, not
+  per-repo, per existing convention.
+- **Upstream feature parity** with Pyroscope / OnCall / Incident / Sift /
+  Asserts in `grafana/mcp-grafana`. Keep the surface focused on Giant Swarm's
+  stack.
+
+## Upstream contribution lane
+
+Parallel, non-blocking. Tracked in
+[`docs/upstream-contributions.md`](./upstream-contributions.md):
+
+- **US-1** — Per-request `X-Grafana-User` / `X-Grafana-Org-Id` pass-through.
+- **US-2** — Mimir + Loki recording-rule tools (unblocked by our recording-
+  rule PR above).
+- **US-3** — Dedicated Tempo toolset.
+
+### Candidates to propose back to `mcp-kubernetes`
+
+Shared patterns worth upstreaming to the sibling MCP:
+
+- Response-size cap helper + structured `response_too_large` payload.
+- `datasourceProxyHandler` + `datasourceSpec` dispatch-table pattern.
+- `paginateStrings` list-of-strings pagination helper.
+- Typed `Role` enum with `MarshalJSON`.
+- Controller-runtime-informer-backed authz resolver.
+- Three-bucket `outcome` metric label + shared `Classify()` across middlewares.
