@@ -134,13 +134,13 @@ whole query.
 
 Prometheus metrics served at `:9091/metrics`:
 
-| Metric                                                       | Type      | Labels             |
-| ------------------------------------------------------------ | --------- | ------------------ |
-| `mcp_observability_platform_tool_call_total`                 | counter   | `tool`, `outcome`  |
-| `mcp_observability_platform_tool_call_duration_seconds`      | histogram | `tool`, `outcome`  |
-| `mcp_observability_platform_grafana_proxy_total`             | counter   | `path`             |
-| `mcp_observability_platform_grafana_proxy_duration_seconds`  | histogram | `path`             |
-| `mcp_observability_platform_org_cache_size`                  | gauge     | —                  |
+| Metric                               | Type      | Labels            |
+| ------------------------------------ | --------- | ----------------- |
+| `mcp_tool_call_total`                | counter   | `tool`, `outcome` |
+| `mcp_tool_call_duration_seconds`     | histogram | `tool`, `outcome` |
+| `mcp_grafana_proxy_total`            | counter   | `path`            |
+| `mcp_grafana_proxy_duration_seconds` | histogram | `path`, `status`  |
+| `mcp_org_cache_size`                 | gauge     | —                 |
 
 Plus default Go and process collectors.
 

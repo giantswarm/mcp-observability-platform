@@ -41,7 +41,7 @@ func TestMetricsHandler_ServesCustomAndDefaultCollectors(t *testing.T) {
 	got := string(body)
 
 	for _, needle := range []string{
-		"mcp_observability_platform_tool_call_total", // custom counter
+		"mcp_tool_call_total",           // custom counter
 		"go_goroutines",                 // Go runtime collector
 		"process_resident_memory_bytes", // process collector
 	} {
