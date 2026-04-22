@@ -75,11 +75,15 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	//   3. middleware.ResponseCap()         — replace oversized text content
 	//                                         with a structured
 	//                                         response_too_large payload.
+	//   4. middleware.ToolTimeout()         — per-handler context deadline.
+	//                                         Runs innermost so Instrument
+	//                                         observes a timeout as
+	//                                         system_error, not as a raw
+	//                                         handler error downstream.
 	// Ordered so a panic is caught first, Instrument wraps the handler to
-	// see every exit path, and ResponseCap runs closest to the handler so
-	// the cap applies to the handler's actual output — and Instrument then
-	// sees the post-cap outcome (a capped response classifies as user_error
-	// via IsError).
+	// see every exit path, ResponseCap runs close to the handler so the cap
+	// applies to the handler's actual output, and ToolTimeout runs closest
+	// of all so handler code always observes a bounded ctx.
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
@@ -87,6 +91,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Audit)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),
+		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout()),
 	)
 
 	tools.RegisterAll(mcp, deps)
