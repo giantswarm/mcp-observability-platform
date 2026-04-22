@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const testOrg = "acme"
+
 func decodeOne(t *testing.T, buf *bytes.Buffer) map[string]any {
 	t.Helper()
 	var got map[string]any
@@ -95,7 +97,7 @@ func TestWithRedactor_MasksSensitiveKeys(t *testing.T) {
 		}
 		return args
 	}))
-	original := map[string]any{"org": "acme", "token": "supersecret"}
+	original := map[string]any{"org": testOrg, "token": "supersecret"}
 	l.Record(context.Background(), Record{Tool: "x", Args: original, Outcome: "ok"})
 
 	got := decodeOne(t, &buf)
@@ -103,7 +105,7 @@ func TestWithRedactor_MasksSensitiveKeys(t *testing.T) {
 	if args["token"] != "REDACTED" {
 		t.Errorf("redactor did not mask token: args = %+v", args)
 	}
-	if args["org"] != "acme" {
+	if args["org"] != testOrg {
 		t.Errorf("redactor dropped non-sensitive key: args = %+v", args)
 	}
 	// Redactor operates on a copy; caller's map must not be mutated.
@@ -150,11 +152,11 @@ func TestLogger_Record_PassesThroughSmallArgs(t *testing.T) {
 	l := NewJSON(&buf)
 	l.Record(context.Background(), Record{
 		Tool: "x",
-		Args: map[string]any{"org": "acme", "query": "up"},
+		Args: map[string]any{"org": testOrg, "query": "up"},
 	})
 	got := decodeOne(t, &buf)
 	args := got["args"].(map[string]any)
-	if args["org"] != "acme" || args["query"] != "up" {
+	if args["org"] != testOrg || args["query"] != "up" {
 		t.Errorf("small args mutated: %+v", args)
 	}
 }
@@ -168,11 +170,11 @@ func TestLogger_Record_TruncatesLargeStringValue(t *testing.T) {
 	bigQuery := strings.Repeat("A", maxArgStringBytes+500)
 	l.Record(context.Background(), Record{
 		Tool: "query",
-		Args: map[string]any{"org": "acme", "query": bigQuery},
+		Args: map[string]any{"org": testOrg, "query": bigQuery},
 	})
 	got := decodeOne(t, &buf)
 	args := got["args"].(map[string]any)
-	if args["org"] != "acme" {
+	if args["org"] != testOrg {
 		t.Errorf("sibling key dropped: %+v", args)
 	}
 	s, ok := args["query"].(string)
