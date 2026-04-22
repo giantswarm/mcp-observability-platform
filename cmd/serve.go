@@ -47,6 +47,15 @@ var serveCmd = &cobra.Command{
 	RunE:  runServe,
 }
 
+// Transport constants for MCP_TRANSPORT / --transport. mcp-go does not
+// export these (its own examples use string literals), so we define our
+// own and reference them everywhere — matching mcp-kubernetes.
+const (
+	transportStdio          = "stdio"
+	transportSSE            = "sse"
+	transportStreamableHTTP = "streamable-http"
+)
+
 var (
 	flagTransport   string
 	flagMCPAddr     string
@@ -55,7 +64,7 @@ var (
 )
 
 func init() {
-	serveCmd.Flags().StringVar(&flagTransport, "transport", envOr("MCP_TRANSPORT", "streamable-http"), "stdio | sse | streamable-http")
+	serveCmd.Flags().StringVar(&flagTransport, "transport", envOr("MCP_TRANSPORT", transportStreamableHTTP), transportStdio+" | "+transportSSE+" | "+transportStreamableHTTP)
 	serveCmd.Flags().StringVar(&flagMCPAddr, "mcp-addr", envOr("MCP_ADDR", ":8080"), "listen address for MCP HTTP transport")
 	serveCmd.Flags().StringVar(&flagMetricsAddr, "metrics-addr", envOr("METRICS_ADDR", ":9091"), "listen address for /metrics, /healthz, /readyz, /healthz/detailed")
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", envBool("DEBUG", false), "enable debug logging")
@@ -65,10 +74,10 @@ func init() {
 // gate is unit-testable without standing up the rest of runServe.
 func validateTransport(transport string) error {
 	switch transport {
-	case "stdio", "sse", "streamable-http":
+	case transportStdio, transportSSE, transportStreamableHTTP:
 		return nil
 	default:
-		return fmt.Errorf("transport %q is not supported (want one of: stdio, sse, streamable-http)", transport)
+		return fmt.Errorf("transport %q is not supported (want one of: %s, %s, %s)", transport, transportStdio, transportSSE, transportStreamableHTTP)
 	}
 }
 
@@ -244,8 +253,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// subprocess user; our authz resolver will reject tool calls that
 	// arrive without an OIDC identity in context, so stdio is primarily a
 	// developer-loop convenience. Production deploys use streamable-http.
-	if flagTransport == "stdio" {
-		logger.Info("MCP serving on stdio", "transport", "stdio")
+	if flagTransport == transportStdio {
+		logger.Info("MCP serving on stdio", "transport", transportStdio)
 		logger.Warn("stdio transport bypasses OAuth — tool calls will hit authz errors unless the session provides a caller identity")
 		return mcpsrv.ServeStdio(mcp)
 	}
@@ -263,7 +272,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// Discovery. Path under resource-metadata matches the MCP endpoint we
 	// mount below — different per transport (see the switch).
 	resourcePath := "/mcp"
-	if flagTransport == "sse" {
+	if flagTransport == transportSSE {
 		resourcePath = "/sse"
 	}
 	oauthHandler.RegisterProtectedResourceMetadataRoutes(mcpMux, resourcePath)
@@ -273,9 +282,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// (`/mcp`); SSE is two (`/sse` for event stream, `/message` for
 	// client→server posts). Both are gated behind OAuth's ValidateToken.
 	switch flagTransport {
-	case "streamable-http":
+	case transportStreamableHTTP:
 		mcpMux.Handle("/mcp", oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp)))
-	case "sse":
+	case transportSSE:
 		sseHandler := server.SSEHandler(mcp)
 		mcpMux.Handle("/sse", oauthHandler.ValidateToken(sseHandler))
 		mcpMux.Handle("/message", oauthHandler.ValidateToken(sseHandler))

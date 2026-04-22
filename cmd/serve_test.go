@@ -14,7 +14,7 @@ func TestValidateTransport(t *testing.T) {
 		{"stdio", true},
 		{"sse", true},
 		{"", false},
-		{"HTTP", false},          // case-sensitive; only lowercase is accepted
+		{"HTTP", false},            // case-sensitive; only lowercase is accepted
 		{"streamable_http", false}, // underscore, not hyphen
 	}
 	for _, c := range cases {
