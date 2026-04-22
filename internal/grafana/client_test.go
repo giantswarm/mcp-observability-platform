@@ -1,8 +1,11 @@
 package grafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -205,6 +208,134 @@ func TestNew_Validation(t *testing.T) {
 		_, err := New(c.cfg)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("New(%+v) = %v, want substring %q", c.cfg, err, c.want)
+		}
+	}
+}
+
+func TestValidateDatasourceProxyPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"happy prometheus", "api/v1/query_range", false},
+		{"happy loki", "loki/api/v1/query_range", false},
+		{"happy tempo", "api/v2/search/tags", false},
+		{"empty", "", true},
+		{"leading slash", "/api/v1/query", true},
+		{"contains ..", "api/../admin", true},
+		{"double dots mid-path", "api/v1/../../etc/passwd", true},
+		{"too long", strings.Repeat("a", 1025), true},
+		{"just under limit", strings.Repeat("a", 1024), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateDatasourceProxyPath(c.path)
+			if c.wantErr && err == nil {
+				t.Errorf("validateDatasourceProxyPath(%q) = nil, want error", c.path)
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("validateDatasourceProxyPath(%q) = %v, want nil", c.path, err)
+			}
+			if err != nil && !errors.Is(err, errInvalidDatasourceProxyPath) {
+				t.Errorf("validateDatasourceProxyPath(%q) error does not wrap errInvalidDatasourceProxyPath: %v", c.path, err)
+			}
+		})
+	}
+}
+
+func TestDatasourceProxy_RejectsInvalidPath(t *testing.T) {
+	// The server must NOT be reached when the path is invalid — this test
+	// gives the handler a hook to flip a bool if it fires and asserts false.
+	var hit bool
+	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		_, _ = w.Write([]byte("{}"))
+	})
+	defer ts.Close()
+
+	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 5, "api/../secret", nil)
+	if err == nil {
+		t.Fatalf("expected error on traversal path")
+	}
+	if !errors.Is(err, errInvalidDatasourceProxyPath) {
+		t.Errorf("err does not wrap errInvalidDatasourceProxyPath: %v", err)
+	}
+	if hit {
+		t.Errorf("upstream should not be hit on invalid path")
+	}
+}
+
+func TestDoGET_CapsResponseBody(t *testing.T) {
+	// Write more than maxResponseBytes; the client must refuse, not OOM.
+	huge := bytes.Repeat([]byte("A"), maxResponseBytes+1024)
+	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(huge)
+	})
+	defer ts.Close()
+
+	_, err := c.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "uid")
+	if err == nil {
+		t.Fatalf("expected size-cap error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("error should mention size cap, got: %v", err)
+	}
+}
+
+func TestSanitizeCallerHeader(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"alice@example.com", "alice@example.com"},
+		{"user\r\nInjected: evil", "userInjected: evil"},
+		{"\x00\x01\x02safe", "safe"},
+		{strings.Repeat("x", 300), strings.Repeat("x", 256)},
+		{"\t\n\r", ""},
+		{"ü-non-ascii", "-non-ascii"}, // non-ASCII stripped
+	}
+	for _, c := range cases {
+		got := sanitizeCallerHeader(c.in)
+		if got != c.want {
+			t.Errorf("sanitizeCallerHeader(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCallerHeader_SanitisedOnWire(t *testing.T) {
+	// End-to-end: caller contains CRLF; the value on the wire must be safe.
+	var got string
+	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Grafana-User")
+		_, _ = w.Write([]byte("{}"))
+	})
+	defer ts.Close()
+
+	_, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1, Caller: "alice\r\nInjected: evil"})
+	if err != nil {
+		t.Fatalf("ListDatasources: %v", err)
+	}
+	if strings.ContainsAny(got, "\r\n") {
+		t.Errorf("X-Grafana-User still contains CR/LF: %q", got)
+	}
+	if got != "aliceInjected: evil" {
+		t.Errorf("sanitised header = %q, want %q", got, "aliceInjected: evil")
+	}
+}
+
+func TestRedactedHeader_DoesNotLeakInPrints(t *testing.T) {
+	c, err := New(Config{URL: "http://example.invalid", Token: "super-secret-token"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, verb := range []string{"%v", "%s", "%+v", "%#v"} {
+		s := fmt.Sprintf(verb, c.authHeader)
+		if strings.Contains(s, "super-secret-token") {
+			t.Errorf("authHeader leaked via %s: %q", verb, s)
+		}
+		if !strings.Contains(s, "REDACTED") {
+			t.Errorf("authHeader %s did not contain REDACTED: %q", verb, s)
 		}
 	}
 }

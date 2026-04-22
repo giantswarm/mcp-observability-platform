@@ -29,6 +29,24 @@ import (
 
 var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/internal/grafana")
 
+// maxResponseBytes caps every upstream response read so a pathological body
+// (huge rendered panel, runaway JSON) cannot OOM the MCP pod. 16 MiB is well
+// above any realistic dashboard / query payload and still far below pod RSS.
+const maxResponseBytes = 16 << 20
+
+// redactedHeader wraps a secret header value (auth token) so that %v / %#v
+// prints of the Client never leak the credential. Use string(r) to get the
+// raw value when setting the HTTP header.
+type redactedHeader string
+
+func (r redactedHeader) String() string   { return "[REDACTED]" }
+func (r redactedHeader) GoString() string { return "[REDACTED]" }
+
+// errInvalidDatasourceProxyPath is returned by DatasourceProxy when the caller
+// supplies a path that could escape the /api/datasources/proxy/{id}/ prefix
+// (SSRF defence).
+var errInvalidDatasourceProxyPath = errors.New("grafana: invalid datasource proxy path")
+
 // Config holds the connection parameters for Grafana. Exactly one of Token or
 // BasicAuth must be set.
 type Config struct {
@@ -52,7 +70,7 @@ type Config struct {
 type Client struct {
 	base       *url.URL
 	publicBase *url.URL
-	authHeader string
+	authHeader redactedHeader
 	http       *http.Client
 
 	// In-process cache for HasImageRenderer; TTL 5 minutes. The plugin is
@@ -106,9 +124,9 @@ func New(cfg Config) (*Client, error) {
 			),
 		}
 	}
-	authHeader := "Bearer " + cfg.Token
+	authHeader := redactedHeader("Bearer " + cfg.Token)
 	if cfg.BasicAuth != "" {
-		authHeader = "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.BasicAuth))
+		authHeader = redactedHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.BasicAuth)))
 	}
 	return &Client{base: u, publicBase: publicBase, authHeader: authHeader, http: hc}, nil
 }
@@ -156,7 +174,10 @@ func (c *Client) VerifyServerAdmin(ctx context.Context) error {
 		return fmt.Errorf("grafana: SA is not server-admin (status %d)", resp.StatusCode)
 	}
 	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, rerr := readLimited(resp)
+		if rerr != nil {
+			return fmt.Errorf("grafana: GET /api/orgs: status %d: %w", resp.StatusCode, rerr)
+		}
 		return fmt.Errorf("grafana: GET /api/orgs: status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
@@ -255,7 +276,10 @@ func (c *Client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, err := readLimited(resp)
+	if err != nil {
+		return nil, fmt.Errorf("grafana: lookup %q: %w", loginOrEmail, err)
+	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("grafana: lookup %q: status %d: %s", loginOrEmail, resp.StatusCode, string(body))
 	}
@@ -342,7 +366,14 @@ func (c *Client) HasImageRenderer(ctx context.Context) (bool, error) {
 
 // DatasourceProxy forwards a GET to /api/datasources/proxy/{dsID}/{path} in the
 // given org. Grafana applies the datasource's provisioned tenant headers.
+//
+// path is caller-controlled (tool handlers build it from user input such as
+// "api/v1/query" or "loki/api/v1/query_range"). validateDatasourceProxyPath
+// rejects anything that could escape the proxy prefix.
 func (c *Client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error) {
+	if err := validateDatasourceProxyPath(path); err != nil {
+		return nil, err
+	}
 	return c.doGET(ctx, fmt.Sprintf("/api/datasources/proxy/%d/%s", dsID, path), query, opts)
 }
 
@@ -379,7 +410,11 @@ func (c *Client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID
 		return nil, "", fmt.Errorf("grafana: render: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := readLimited(resp)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, "", fmt.Errorf("grafana: render: %w", err)
+	}
 	ct := resp.Header.Get("Content-Type")
 	if resp.StatusCode >= 300 {
 		span.SetStatus(codes.Error, fmt.Sprintf("http %d", resp.StatusCode))
@@ -418,7 +453,11 @@ func (c *Client) do(ctx context.Context, req *http.Request, path string) (json.R
 		return nil, fmt.Errorf("grafana: %s %s: %w", req.Method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := readLimited(resp)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("grafana: %s %s: %w", req.Method, path, err)
+	}
 	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 	if resp.StatusCode >= 300 {
 		span.SetStatus(codes.Error, fmt.Sprintf("http %d", resp.StatusCode))
@@ -480,15 +519,78 @@ func (c *Client) newRequest(ctx context.Context, method, path string, query url.
 	if err != nil {
 		return nil, fmt.Errorf("grafana: new request: %w", err)
 	}
-	req.Header.Set("Authorization", c.authHeader)
+	req.Header.Set("Authorization", string(c.authHeader))
 	req.Header.Set("Accept", "application/json")
 	if opts.OrgID > 0 {
 		req.Header.Set("X-Grafana-Org-Id", strconv.FormatInt(opts.OrgID, 10))
 	}
-	if opts.Caller != "" {
-		// Forwarded to Grafana's audit log so server-admin SA calls are
-		// attributed back to the MCP caller's OIDC subject/email.
-		req.Header.Set("X-Grafana-User", opts.Caller)
+	// Forwarded to Grafana's audit log so server-admin SA calls are
+	// attributed back to the MCP caller's OIDC subject/email. Sanitise
+	// first (strip control chars, cap length) to block header injection.
+	if caller := sanitizeCallerHeader(opts.Caller); caller != "" {
+		req.Header.Set("X-Grafana-User", caller)
 	}
 	return req, nil
+}
+
+// validateDatasourceProxyPath is a minimal guard against future callers that
+// forget to url.PathEscape user input. Every current caller either passes a
+// string literal or an escaped value, so this is defence-in-depth, not a
+// live SSRF patch. Grafana's datasource proxy itself only reaches the
+// configured datasource URL — a traversal would at worst reach a different
+// read-only endpoint on that same datasource.
+func validateDatasourceProxyPath(p string) error {
+	if p == "" {
+		return fmt.Errorf("%w: empty", errInvalidDatasourceProxyPath)
+	}
+	if len(p) > 1024 {
+		return fmt.Errorf("%w: too long (%d bytes)", errInvalidDatasourceProxyPath, len(p))
+	}
+	if strings.HasPrefix(p, "/") {
+		return fmt.Errorf("%w: leading slash", errInvalidDatasourceProxyPath)
+	}
+	if strings.Contains(p, "..") {
+		return fmt.Errorf("%w: contains dot-dot traversal", errInvalidDatasourceProxyPath)
+	}
+	return nil
+}
+
+// readLimited caps per-response body reads at maxResponseBytes. Unbounded
+// io.ReadAll on the image-renderer endpoint (user-controlled width/height)
+// is the main OOM vector; the other call sites get the same treatment for
+// consistency.
+func readLimited(resp *http.Response) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("grafana: read body: %w", err)
+	}
+	if len(body) > maxResponseBytes {
+		return nil, fmt.Errorf("grafana: response exceeded %d bytes", maxResponseBytes)
+	}
+	return body, nil
+}
+
+// sanitizeCallerHeader strips control characters and non-printable-ASCII from
+// the caller identity before it hits X-Grafana-User. Prevents header
+// injection (CRLF smuggling) and caps length at 256 bytes. Returns "" when
+// the input is empty or has no printable bytes.
+func sanitizeCallerHeader(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		// Printable ASCII only. Drops CR, LF, TAB, NUL, DEL and everything
+		// non-ASCII. OIDC subjects / emails are ASCII in practice.
+		if c < 0x20 || c > 0x7e {
+			continue
+		}
+		b.WriteByte(c)
+		if b.Len() >= 256 {
+			break
+		}
+	}
+	return b.String()
 }
