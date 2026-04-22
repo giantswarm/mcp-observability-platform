@@ -18,26 +18,47 @@
 // args are emitted verbatim. When a future tool carries sensitive input,
 // install a Redactor on the Logger and drop/mask the relevant keys before
 // they reach the sink.
+//
+// # Size cap
+//
+// Large tool arguments (a pasted 1 MB LogQL query, a multi-MB JSON payload)
+// would otherwise emit audit lines far above Loki's 256 KiB default ingest
+// limit and blow up the audit stream. Every string value >4 KiB is
+// replaced with "<prefix>…[truncated N bytes]"; if the serialised args
+// still exceed 16 KiB total, the whole map is replaced with
+// {"truncated": true, "bytes": N}. Thresholds are constants, not
+// env-tunable — stable SIEM ingest beats per-deployment knobs.
 package audit
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"time"
 )
 
-// Record captures one tool invocation. Populated by the Audit middleware;
-// produce-your-own is only useful from tests.
+// Per-value and total size caps on serialised args. Kept as unexported
+// constants because SIEMs ingesting these records rely on a stable ceiling
+// and env-tuning invites inconsistency across deployments.
+const (
+	maxArgStringBytes = 4 * 1024
+	maxArgTotalBytes  = 16 * 1024
+)
+
+// Record captures one tool invocation. Populated by the Instrument
+// middleware; produce-your-own is only useful from tests.
 type Record struct {
-	Timestamp time.Time
-	Caller    string         // OIDC subject or email; empty for unauthenticated paths
-	Tool      string         // tool name as registered with mcp-go
-	Args      map[string]any // raw args as received from the client (see package doc on redaction)
-	Outcome   string         // "ok" | "user_error" | "system_error" (see middleware.Classify)
-	Duration  time.Duration
-	Error     string // empty when Outcome=ok; handler error text or IsError result text
+	Timestamp   time.Time
+	Caller      string         // OIDC subject or email; empty for unauthenticated paths
+	TokenSource string         // "oauth" | "sso" | "" (how the caller authenticated)
+	Tool        string         // tool name as registered with mcp-go
+	Args        map[string]any // raw args as received from the client (see package doc on redaction + size cap)
+	Outcome     string         // "ok" | "user_error" | "system_error" (see middleware.Classify)
+	Duration    time.Duration
+	Error       string // empty when Outcome=ok; handler error text or IsError result text
 }
 
 // Redactor optionally mutates args before they are emitted. Return a new map
@@ -94,13 +115,52 @@ func (l *Logger) Record(ctx context.Context, r Record) {
 		maps.Copy(cp, args)
 		args = l.redact(cp)
 	}
+	args = capArgs(args)
 	l.slog.LogAttrs(ctx, slog.LevelInfo, "tool_call",
 		slog.Time("timestamp", r.Timestamp),
 		slog.String("caller", r.Caller),
+		slog.String("caller_token_source", r.TokenSource),
 		slog.String("tool", r.Tool),
 		slog.Any("args", args),
 		slog.String("outcome", r.Outcome),
 		slog.Int64("duration_ms", r.Duration.Milliseconds()),
 		slog.String("error", r.Error),
 	)
+}
+
+// capArgs enforces the per-value and total size caps on serialised args.
+// Per-value cap runs first (truncate strings >4 KiB in place on a lazy
+// copy); total cap runs second (marshal + check — if the whole map still
+// exceeds the total cap, replace with a short "truncated" marker).
+//
+// Returns the input unchanged when nothing exceeded the cap. Makes a copy
+// only when a mutation is actually required, so the common small-args
+// path stays allocation-free beyond what slog itself does.
+func capArgs(args map[string]any) map[string]any {
+	if args == nil {
+		return nil
+	}
+	copied := false
+	for k, v := range args {
+		s, ok := v.(string)
+		if !ok || len(s) <= maxArgStringBytes {
+			continue
+		}
+		if !copied {
+			cp := make(map[string]any, len(args))
+			maps.Copy(cp, args)
+			args = cp
+			copied = true
+		}
+		args[k] = fmt.Sprintf("%s…[truncated %d bytes]", s[:maxArgStringBytes], len(s)-maxArgStringBytes)
+	}
+	// Total-size cap — marshaled length is the source of truth (matches
+	// what the JSON handler will serialise). Errors here can only happen
+	// for unsupported types; treat them as "don't cap" and let slog surface
+	// the real error downstream.
+	b, err := json.Marshal(args)
+	if err != nil || len(b) <= maxArgTotalBytes {
+		return args
+	}
+	return map[string]any{"truncated": true, "bytes": len(b)}
 }

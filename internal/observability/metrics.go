@@ -14,7 +14,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const namespace = "mcp_observability_platform"
+// namespace is the Prometheus metric prefix for everything this process
+// emits. Short so rule writers don't have to drag a 22-char prefix through
+// every alert; distinctive enough not to collide with other Giant Swarm
+// MCP servers in a shared scrape target (the `service.name` label
+// disambiguates).
+const namespace = "mcp"
 
 // registry is the package-local registry backing every metric in this
 // package. We own it (rather than using prometheus.DefaultRegisterer) so
@@ -46,14 +51,17 @@ var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	[]string{"tool", "outcome"},
 )
 
-// ToolCallDuration measures per-tool handler latency. Buckets chosen to cover
-// both fast (cached CR reads) and slow (broad LogQL) tool calls.
+// ToolCallDuration measures per-tool handler latency. Buckets cover the
+// real handler range: cached CR lookups (~50 ms) up to panel renders
+// (~60 s broad LogQL / slow datasource proxy). The previous
+// ExponentialBuckets(0.01, 2.5, 10) jumped from 38 s straight to +Inf,
+// so p99 above 38 s was unmeasurable.
 var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "tool_call_duration_seconds",
 		Help:      "Duration of MCP tool handlers, by tool name and outcome.",
-		Buckets:   prometheus.ExponentialBuckets(0.01, 2.5, 10), // 10ms → ~96s
+		Buckets:   []float64{0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 	},
 	[]string{"tool", "outcome"},
 )
@@ -79,7 +87,11 @@ var GrafanaProxyDuration = promauto.With(registry).NewHistogramVec(
 		Namespace: namespace,
 		Name:      "grafana_proxy_duration_seconds",
 		Help:      "Duration of Grafana datasource-proxy calls, by downstream path and status.",
-		Buckets:   prometheus.ExponentialBuckets(0.01, 2.5, 10),
+		// Proxy calls are typically sub-second (simple Mimir/Loki queries
+		// with label matchers); DefBuckets' top bucket of 10s is plenty
+		// and gives dense resolution in the 5 ms–1 s range where
+		// regressions are most visible.
+		Buckets: prometheus.DefBuckets,
 	},
 	[]string{"path", "status"},
 )

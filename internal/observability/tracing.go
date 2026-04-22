@@ -10,6 +10,7 @@
 package observability
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -40,7 +41,7 @@ func InitTracing(ctx context.Context, serviceName, serviceVersion string) (Shutd
 		propagation.TraceContext{}, propagation.Baggage{},
 	))
 
-	endpoint := firstNonEmpty(
+	endpoint := cmp.Or(
 		os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
 		os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 	)
@@ -68,7 +69,7 @@ func InitTracing(ctx context.Context, serviceName, serviceVersion string) (Shutd
 // buildExporter returns either an HTTP or gRPC OTLP trace exporter
 // depending on OTEL_EXPORTER_OTLP_PROTOCOL ("http/protobuf" default).
 func buildExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
-	proto := strings.ToLower(firstNonEmpty(
+	proto := strings.ToLower(cmp.Or(
 		os.Getenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
 		os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL"),
 		"http/protobuf",
@@ -111,13 +112,4 @@ func buildResource(ctx context.Context, serviceName, serviceVersion string) (*re
 		resource.WithContainer(), // best-effort container.id
 		resource.WithAttributes(attrs...),
 	)
-}
-
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if s != "" {
-			return s
-		}
-	}
-	return ""
 }

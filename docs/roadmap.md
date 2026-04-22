@@ -24,13 +24,14 @@ landed. For what's already shipped:
 | Tool layer cleanup + upstream alignment | Stop mutating `req.Params.Arguments` in re-dispatching handlers (audit records now show caller's actual args); uniform `response_too_large` payload; tool renames to match `grafana/mcp-grafana` (`query_prometheus`, `query_loki_logs`, `search_dashboards`); new `search_folders` + `get_annotation_tags`; deleted `DatasourceProxyPOST` + `doPOSTForm` + `prompts.go` + `resources.go` + `annotations.go` + `metricLabelValuesHandler`; `GrafanaProxyDuration` gained a `status` label and error-path observation | #22 |
 | Authz package split + deep-clone | `internal/authz/` split into `resolver.go` / `cache.go` / `role.go` / `access.go` / `caller.go` / `errors.go` (each file is now one concept). `cloneOrgAccess` uses CR-generated `DeepCopyInto` so handler mutations of `Tenants[i].Types` (or other nested slices) can't escape into the cache | #23 |
 | Response-cap as middleware + YAGNI sweep + doc fix | Response cap moved from ~22 per-handler call sites into `middleware.ResponseCap()`. `datasourceSpec.ForceRange` + `DefaultRangeAgo` (single caller each) removed, `invocationFromRequest` inlined. README "Prompts" + "Resource templates" sections deleted (they advertised things that don't register); all 34 registered tools listed under current names. Package-doc comments added to every `internal/tools/*.go` file | #24 |
+| Observability + audit hardening + OTLP logs | Tracing / Metrics / Audit collapsed into one composite `middleware.Instrument` so `Classify()` is computed once and span / metric / audit outcomes can't drift. Metric namespace `mcp_observability_platform_*` → `mcp_*` with realistic latency buckets (25 ms → 60 s for tool calls, `DefBuckets` for Grafana proxy). Audit records gain `caller_token_source` (oauth / sso) and a 4 KiB per-value / 16 KiB total args size cap. OTLP logs via `otelslog` bridge fan out slog records (operator + audit) with `trace_id` / `span_id` correlation when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set. `firstNonEmpty` → `cmp.Or` | #25 |
 
 ## Orientation — pre-release cleanup
 
 Nothing is deployed yet, so **backwards compatibility is not a constraint**.
-The Tier 1 block below is six PRs of cleanup + upstream-alignment work
-targeting v0.1.0. Tier 2 is optional follow-up that doesn't block the
-release. Glossary of jargon used in the Tier 1 descriptions:
+The Tier 1 block below is cleanup + upstream-alignment work targeting
+v0.1.0. Tier 2 is optional follow-up that doesn't block the release.
+Glossary of jargon used in the Tier 1 descriptions:
 
 - **Stampede / thundering herd** — N concurrent callers all miss a cold
   cache entry and each call upstream instead of sharing one round-trip.
@@ -39,52 +40,12 @@ release. Glossary of jargon used in the Tier 1 descriptions:
   infrastructure types. The domain declares a port (interface); the
   adapter (K8s client, HTTP, etc.) satisfies it. Keeps refactors local
   and tests cheap.
-- **Compute-once pattern** — derive a value in one middleware, stash on
-  `context.Context`, downstream sinks read back. Prevents drift between
-  metrics / spans / audit records.
 
 ## Tier 1 — ship next (before v0.1.0)
 
-Four PRs remaining. PRs 10 and 11 both touch `cmd/serve.go` so are
-serialised; PR 13 depends on PR 10's compute-once middleware. Total
-≈ 2000 LOC across the four.
-
-### PR 10 — Observability + audit + OTLP logs + metric namespace (~500 LOC)
-
-- **Compute outcome classification once**, fan out to Tracing / Metrics
-  / Audit via a context value. Today each middleware reclassifies
-  independently — a future middleware using a different `Classify` would
-  drift silently. Central computation makes the contract compile-checked.
-- **Pre-compute label-bound metric instruments per tool.** Curry
-  `WithLabelValues(name, …)` at wrap time; cache the three
-  label-specialised instruments per tool. Drops per-call map-lookup
-  allocations.
-- **Audit gets `caller_provider` field** to prevent SIEM collision when
-  two identities have the same email from different issuers.
-- **Audit `args` size cap** — truncate string values > 4 KiB, total
-  serialised length > 16 KiB. Loki default ingest is 256 KiB; stay
-  well under. Uses existing `Redactor` hook.
-- **Tracer provider stops being global.** `InitTracing` returns
-  `*sdktrace.TracerProvider` instead of calling
-  `otel.SetTracerProvider(tp)`. Fixes cross-package test contamination.
-- **Real histogram buckets.** Replace `ExponentialBuckets(0.01, 2.5, 10)`
-  (which gives nothing between 38s and ∞) with
-  `{.025, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, +Inf}` for tool calls and
-  `prometheus.DefBuckets` for the Grafana proxy.
-- **Metric namespace shortening** `mcp_observability_platform_*` → `mcp_*`.
-  All families rename: `mcp_tool_call_total`,
-  `mcp_tool_call_duration_seconds`, `mcp_grafana_proxy_total`,
-  `mcp_grafana_proxy_duration_seconds`, `mcp_org_cache_size`, plus new
-  `mcp_resolver_cache_entries` / `mcp_resolver_cache_upstream_calls_total`
-  from PR 8. No external dashboards to break.
-- **OTLP logs via `otelslog`.** New `internal/observability/logging.go`
-  wires `go.opentelemetry.io/contrib/bridges/otelslog` +
-  `otlploghttp` onto the same `OTEL_EXPORTER_OTLP_ENDPOINT` as traces.
-  Free `trace_id` / `span_id` correlation on every log record. No-op
-  when endpoint unset.
-
-Deletion: `firstNonEmpty` helper — use `cmp.Or` (already used
-throughout).
+Three PRs remaining (11, 12, 13). PR 10's composite `Instrument`
+middleware has landed, so PR 13's HTTP middleware chain can reuse the
+same compute-once shape. Total ≈ 1500 LOC across the three.
 
 ### PR 11 — Hexagonal boundaries + cmd/serve polish (~700 LOC)
 

@@ -134,13 +134,13 @@ whole query.
 
 Prometheus metrics served at `:9091/metrics`:
 
-| Metric                                                       | Type      | Labels             |
-| ------------------------------------------------------------ | --------- | ------------------ |
-| `mcp_observability_platform_tool_call_total`                 | counter   | `tool`, `outcome`  |
-| `mcp_observability_platform_tool_call_duration_seconds`      | histogram | `tool`, `outcome`  |
-| `mcp_observability_platform_grafana_proxy_total`             | counter   | `path`             |
-| `mcp_observability_platform_grafana_proxy_duration_seconds`  | histogram | `path`             |
-| `mcp_observability_platform_org_cache_size`                  | gauge     | —                  |
+| Metric                               | Type      | Labels            |
+| ------------------------------------ | --------- | ----------------- |
+| `mcp_tool_call_total`                | counter   | `tool`, `outcome` |
+| `mcp_tool_call_duration_seconds`     | histogram | `tool`, `outcome` |
+| `mcp_grafana_proxy_total`            | counter   | `path`            |
+| `mcp_grafana_proxy_duration_seconds` | histogram | `path`, `status`  |
+| `mcp_org_cache_size`                 | gauge     | —                 |
 
 Plus default Go and process collectors.
 
@@ -152,12 +152,19 @@ Plus default Go and process collectors.
 
 Spans mirror this on the `tool.outcome` attribute; the span is marked Error only on `system_error` (user errors are normal, same convention as HTTP servers not marking 4xx Error).
 
-### Tracing
+### Tracing and logs
 
 OpenTelemetry tracing is wired via the standard `OTEL_EXPORTER_OTLP_*`
 environment variables. When no endpoint is set, spans go to a no-op tracer
 and the W3C trace-context propagator is still installed so incoming headers
 are respected. Spans are emitted per tool call and per Grafana HTTP request.
+
+When `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or the shared
+`OTEL_EXPORTER_OTLP_ENDPOINT`) is set, slog records — operator logs and
+the audit stream — fan out through the `otelslog` bridge, so every record
+carries `trace_id` + `span_id` from ctx. Operators can click from a
+tool-call span straight to the surrounding log lines in Loki/Grafana
+without a correlation-ID scheme.
 
 ### Image renderer (for `get_panel_image`)
 

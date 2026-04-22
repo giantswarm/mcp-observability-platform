@@ -46,6 +46,25 @@ func CallerSubject(ctx context.Context) string {
 	return ui.Email
 }
 
+// CallerTokenSource returns the OAuth flavour that produced the caller's
+// identity — "oauth" for tokens minted by our own /oauth/token endpoint,
+// "sso" for ID tokens that were forwarded via TrustedAudiences, and ""
+// when no identity is attached.
+//
+// Audit consumers use this to distinguish direct MCP sessions from
+// SSO-forwarded ones: useful when a compliance review asks "was this
+// action taken by a user who logged in through our MCP console, or via
+// a forwarded token from another client?" With a single Dex issuer the
+// provider name is always the same, so the token flavour is the real
+// signal.
+func CallerTokenSource(ctx context.Context) string {
+	ui, ok := CallerFromContext(ctx)
+	if !ok || ui == nil {
+		return ""
+	}
+	return string(ui.TokenSource)
+}
+
 // CallerAuthz extracts the identifiers the authz resolver needs to ask
 // Grafana who this caller is. Returns an empty Caller if no identity is
 // attached; the resolver then errors downstream.
