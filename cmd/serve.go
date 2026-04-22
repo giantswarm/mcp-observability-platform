@@ -40,6 +40,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var serveCmd = &cobra.Command{
@@ -166,7 +167,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// memberships) use a 5s TTL so a mid-SSO-outage failure doesn't lock
 	// anyone out for half a minute. LRU-bounded so long-running pods with
 	// many unique callers don't leak.
-	resolver, err := authz.NewResolver(ctrlCache, grafanaAuthz{c: gfClient}, logger,
+	resolver, err := authz.NewResolver(k8sOrgRegistry{reader: ctrlCache}, grafanaAuthz{c: gfClient}, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
@@ -601,7 +602,44 @@ func envOr(k, def string) string {
 	return def
 }
 
-// grafanaAuthz adapts *grafana.Client to authz.GrafanaOrgLookup. Lives in
+// k8sOrgRegistry adapts a controller-runtime cache to authz.OrgRegistry.
+// Lives in cmd/ so the authz package never imports observability-operator
+// or controller-runtime — the adapter is the translation boundary between
+// K8s CR shapes and the domain OrgDescriptor.
+type k8sOrgRegistry struct{ reader ctrlclient.Reader }
+
+func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.OrgDescriptor, error) {
+	var list obsv1alpha2.GrafanaOrganizationList
+	if err := k.reader.List(ctx, &list); err != nil {
+		return nil, err
+	}
+	out := make([]authz.OrgDescriptor, len(list.Items))
+	for i := range list.Items {
+		cr := &list.Items[i]
+		tenants := make([]authz.Tenant, 0, len(cr.Spec.Tenants))
+		for _, t := range cr.Spec.Tenants {
+			types := make([]authz.TenantType, 0, len(t.Types))
+			for _, tt := range t.Types {
+				types = append(types, authz.TenantType(tt))
+			}
+			tenants = append(tenants, authz.Tenant{Name: string(t.Name), Types: types})
+		}
+		datasources := make([]authz.Datasource, 0, len(cr.Status.DataSources))
+		for _, ds := range cr.Status.DataSources {
+			datasources = append(datasources, authz.Datasource{ID: ds.ID, Name: ds.Name})
+		}
+		out[i] = authz.OrgDescriptor{
+			Name:        cr.Name,
+			DisplayName: cr.Spec.DisplayName,
+			OrgID:       cr.Status.OrgID,
+			Tenants:     tenants,
+			Datasources: datasources,
+		}
+	}
+	return out, nil
+}
+
+// grafanaAuthz adapts *grafana.Client to authz.OrgMembershipLookup. Lives in
 // cmd/ (the composition root) rather than in authz/ or grafana/ so that
 // neither domain package has to know about the other: authz declares the
 // port it needs, grafana exposes a generic API, and this adapter bridges

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -350,7 +349,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				inv.Query = expanded(target.Expr)
 				return runDatasourceProxy(ctx, d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindMimir},
+					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindMimir},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
 				}, inv)
 			case dsKindLoki:
@@ -370,7 +369,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 					inv.End = strconv.FormatInt(time.Now().UnixNano(), 10)
 				}
 				return runDatasourceProxy(ctx, d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindLoki},
+					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ExtraArg: "limit",
 				}, inv)
@@ -380,7 +379,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				inv.Query = expanded(target.Query)
 				return runDatasourceProxy(ctx, d, datasourceSpec{
-					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindTempo},
+					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindTempo},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
 				}, inv)
 			default:

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -35,7 +34,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 		),
 		datasourceProxyHandler(d, datasourceSpec{
 			Role:          authz.RoleViewer,
-			NeedTenant:    obsv1alpha2.TenantTypeData,
+			NeedTenant:    authz.TenantTypeData,
 			NameContains:  []string{dsKindMimir},
 			InstantPath:   "api/v1/query",
 			RangePath:     "api/v1/query_range",
@@ -80,7 +79,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -138,7 +137,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -202,7 +201,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			// internal PromQL we generated.
 			return runDatasourceProxy(ctx, d, datasourceSpec{
 				Role:          authz.RoleViewer,
-				NeedTenant:    obsv1alpha2.TenantTypeData,
+				NeedTenant:    authz.TenantTypeData,
 				NameContains:  []string{dsKindMimir},
 				InstantPath:   "api/v1/query",
 				RangePath:     "api/v1/query_range",
@@ -235,7 +234,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -354,7 +353,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			group := req.GetString("group", "")
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -397,7 +396,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 // label-values tools: call /api/v1/label/{label}/values with match[] +
 // time filters, then apply client-side prefix filter + pagination.
 func runPromLabelValues(ctx context.Context, d *Deps, org, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindMimir)
+	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -109,7 +108,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 // resolveDatasource, kept as its own name so call sites in resources.go read
 // at the same abstraction level as the tool handlers.
 func resolveAlertmanagerDS(ctx context.Context, d *Deps, org string) (authz.OrgAccess, int64, error) {
-	return resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeAlerting, "alertmanager")
+	return resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 }
 
 // fetchAlerts calls Alertmanager's /api/v2/alerts through the Grafana

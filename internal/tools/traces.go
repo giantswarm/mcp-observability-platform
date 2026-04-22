@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -32,7 +31,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 		),
 		datasourceProxyHandler(d, datasourceSpec{
 			Role:         authz.RoleViewer,
-			NeedTenant:   obsv1alpha2.TenantTypeData,
+			NeedTenant:   authz.TenantTypeData,
 			NameContains: []string{dsKindTempo},
 			InstantPath:  "api/search",
 			QueryArg:     "q",
@@ -60,7 +59,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindTempo)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -163,7 +162,7 @@ func qualifyTempoTag(scope, tag string) string {
 // {scopes:[{name, tags:[...]}]} structure for tag names and
 // {tagValues:[{type, value}]} for values; we flatten both to a []string.
 func fetchTempoTags(ctx context.Context, d *Deps, org, tag string, req mcp.CallToolRequest) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindTempo)
+	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -39,7 +38,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -160,7 +159,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -215,7 +214,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
+			oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -239,7 +238,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 // /loki/api/v1/label/{label}/values. Defaults the time window to last 1h
 // so callers don't have to specify it for simple discovery.
 func fetchLokiLabels(ctx context.Context, d *Deps, org, label string, req mcp.CallToolRequest) ([]string, error) {
-	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, obsv1alpha2.TenantTypeData, dsKindLoki)
+	oa, dsID, err := resolveDatasource(ctx, d, org, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 	if err != nil {
 		return nil, err
 	}

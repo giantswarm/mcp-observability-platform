@@ -3,8 +3,6 @@ package authz
 import (
 	"strings"
 	"time"
-
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 )
 
 // Cache defaults. Positive entries are cached `DefaultCacheTTL`; negative
@@ -67,45 +65,28 @@ func cacheKey(c Caller) string {
 	return "email:" + strings.ToLower(c.Email)
 }
 
-// buildOrgRefSet returns the set of lowercased CR Name + DisplayName
-// values, used by Require to disambiguate "org not found" vs "not
-// authorised" without a second List call.
-func buildOrgRefSet(list *obsv1alpha2.GrafanaOrganizationList) map[string]struct{} {
-	out := make(map[string]struct{}, len(list.Items)*2)
-	for i := range list.Items {
-		out[strings.ToLower(list.Items[i].Name)] = struct{}{}
-		if dn := list.Items[i].Spec.DisplayName; dn != "" {
-			out[strings.ToLower(dn)] = struct{}{}
+// buildOrgRefSet returns the set of lowercased Name + DisplayName values,
+// used by Require to disambiguate "org not found" vs "not authorised"
+// without a second upstream call.
+func buildOrgRefSet(descs []OrgDescriptor) map[string]struct{} {
+	out := make(map[string]struct{}, len(descs)*2)
+	for _, d := range descs {
+		out[strings.ToLower(d.Name)] = struct{}{}
+		if d.DisplayName != "" {
+			out[strings.ToLower(d.DisplayName)] = struct{}{}
 		}
 	}
 	return out
 }
 
 // cloneOrgAccess returns a deep copy suitable for handing to external
-// callers. Tenants + Datasources are deep-copied via the CR types'
-// generated DeepCopyInto so a handler that appends to `oa.Tenants[i].Types`
-// (or any nested slice inside a DataSource) cannot corrupt the cache.
-// Shallow slices.Clone would only protect the outer slice and would let
-// subslice mutations escape — defensive enough to be worth the O(n) cost
-// on the cache-hit path.
-//
-// Strings and value-typed fields (Name, OrgID, Role…) are copied by the
-// struct-copy idiom at the call site; only the two slices need attention.
+// callers. Tenants and Datasources are deep-copied so a handler that
+// appends to `oa.Tenants[i].Types` (or swaps a Datasource entry) cannot
+// corrupt the cache. Strings and value-typed fields are copied by the
+// struct-copy idiom at the call site; only the slices need attention.
 func cloneOrgAccess(oa OrgAccess) OrgAccess {
-	if len(oa.Tenants) > 0 {
-		tenants := make([]obsv1alpha2.TenantConfig, len(oa.Tenants))
-		for i := range oa.Tenants {
-			oa.Tenants[i].DeepCopyInto(&tenants[i])
-		}
-		oa.Tenants = tenants
-	}
-	if len(oa.Datasources) > 0 {
-		datasources := make([]obsv1alpha2.DataSource, len(oa.Datasources))
-		for i := range oa.Datasources {
-			oa.Datasources[i].DeepCopyInto(&datasources[i])
-		}
-		oa.Datasources = datasources
-	}
+	oa.Tenants = cloneTenants(oa.Tenants)
+	oa.Datasources = cloneDatasources(oa.Datasources)
 	return oa
 }
 

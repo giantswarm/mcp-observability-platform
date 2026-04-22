@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -28,7 +27,7 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 // required tenant type (empty = skip), and a datasource whose name contains
 // all nameContains substrings (case-insensitive) must exist. Errors are
 // caller-ready strings so handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role, tenantType obsv1alpha2.TenantType, nameContains ...string) (authz.OrgAccess, int64, error) {
+func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.OrgAccess, int64, error) {
 	oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, role)
 	if err != nil {
 		return authz.OrgAccess{}, 0, err
@@ -48,7 +47,7 @@ func resolveDatasource(ctx context.Context, d *Deps, org string, role authz.Role
 // which API path/args to use on the downstream.
 type datasourceSpec struct {
 	Role          authz.Role
-	NeedTenant    obsv1alpha2.TenantType
+	NeedTenant    authz.TenantType
 	NameContains  []string
 	InstantPath   string
 	RangePath     string

@@ -3,29 +3,30 @@ package authz
 import (
 	"slices"
 	"strings"
-
-	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 )
 
 // OrgAccess represents a caller's authorised access to one Grafana org.
-// Fields carry JSON tags so this struct can be marshaled directly into MCP
-// tool and resource responses.
+// Fields are plain Go types; JSON tags live on tool-handler-side DTOs (when
+// a handler marshals this, it translates to its own wire shape). Keeping
+// the domain type tag-free avoids re-exporting Kubernetes CRD types through
+// the package boundary.
 //
 // Returned values from Resolver are always cloned (Tenants + Datasources
-// are deep-copied via DeepCopyInto) so handler mutations cannot escape
-// into the cache — see cloneOrgAccess in cache.go.
+// are deep-copied) so handler mutations cannot escape into the cache — see
+// cloneOrgAccess in cache.go.
 type OrgAccess struct {
-	Name        string                     `json:"name"`
-	DisplayName string                     `json:"displayName"`
-	OrgID       int64                      `json:"orgID"`
-	Role        Role                       `json:"role"`
-	Tenants     []obsv1alpha2.TenantConfig `json:"tenants"`
-	Datasources []obsv1alpha2.DataSource   `json:"datasources"`
+	Name        string
+	DisplayName string
+	OrgID       int64
+	Role        Role
+	Tenants     []Tenant
+	Datasources []Datasource
 }
 
 // HasTenantType returns true if any tenant on this org supports the given type
-// (e.g. "alerting" or "data"). Used to guard alerting-only tools.
-func (o OrgAccess) HasTenantType(want obsv1alpha2.TenantType) bool {
+// (e.g. TenantTypeData or TenantTypeAlerting). Used to guard alerting-only
+// tools.
+func (o OrgAccess) HasTenantType(want TenantType) bool {
 	for _, t := range o.Tenants {
 		if slices.Contains(t.Types, want) {
 			return true
@@ -55,18 +56,16 @@ func (o OrgAccess) FindDatasourceID(mustContain ...string) (int64, bool) {
 	return 0, false
 }
 
-// toOrgAccess builds an OrgAccess from a CR + role. The returned value
-// *aliases* the CR's Tenants + Datasources slices; callers that hold on to
-// it long-term must clone (see cloneOrgAccess). Inside load() the alias is
-// fine because the CR list is only live for the function call and the
-// resulting OrgAccess is stored in the cache under aliased ownership.
-func toOrgAccess(cr *obsv1alpha2.GrafanaOrganization, role Role) OrgAccess {
+// descriptorToAccess builds an OrgAccess from an OrgDescriptor + role. The
+// returned value *aliases* the descriptor's Tenants + Datasources slices;
+// callers that hold on to it long-term must clone (see cloneOrgAccess).
+func descriptorToAccess(d OrgDescriptor, role Role) OrgAccess {
 	return OrgAccess{
-		Name:        cr.Name,
-		DisplayName: cr.Spec.DisplayName,
-		OrgID:       cr.Status.OrgID,
+		Name:        d.Name,
+		DisplayName: d.DisplayName,
+		OrgID:       d.OrgID,
 		Role:        role,
-		Tenants:     cr.Spec.Tenants,
-		Datasources: cr.Status.DataSources,
+		Tenants:     d.Tenants,
+		Datasources: d.Datasources,
 	}
 }
