@@ -47,7 +47,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboards", err), nil
 			}
-			return mcp.NewToolResultJSON(tree)
+			return resultJSONWithCap(tree)
 		},
 	)
 
@@ -110,7 +110,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
-			return mcp.NewToolResultJSON(summary)
+			return resultJSONWithCap(summary)
 		},
 	)
 
@@ -144,7 +144,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
-			return mcp.NewToolResultJSON(res)
+			return resultJSONWithCap(res)
 		},
 	)
 
@@ -444,7 +444,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			link := base.JoinPath("/d/" + url.PathEscape(uid))
 			link.RawQuery = q.Encode()
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				URL string `json:"url"`
 			}{URL: link.String()})
 		},

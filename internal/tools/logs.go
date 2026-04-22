@@ -80,7 +80,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			// Attach a cursor wrapper so LLM clients can page.
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				NextStart string          `json:"nextStart,omitempty"`
 				LimitHit  bool            `json:"limitHit"`
 				Data      json.RawMessage `json:"data"`
@@ -109,7 +109,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(names, "", 0, len(names)))
+			return resultJSONWithCap(paginateStrings(names, "", 0, len(names)))
 		},
 	)
 
@@ -138,7 +138,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
+			return resultJSONWithCap(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 		},
 	)
 
@@ -195,7 +195,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse patterns", err), nil
 			}
-			return mcp.NewToolResultJSON(projected)
+			return resultJSONWithCap(projected)
 		},
 	)
 

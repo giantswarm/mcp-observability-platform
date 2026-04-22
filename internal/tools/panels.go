@@ -66,7 +66,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 			// installed — without this, Grafana returns a PNG of its own
 			// error message and the tool appears to succeed.
 			if present, err := d.Grafana.HasImageRenderer(ctx); err == nil && !present {
-				return mcp.NewToolResultJSON(struct {
+				return resultJSONWithCap(struct {
 					Error string `json:"error"`
 					Hint  string `json:"hint"`
 					Docs  string `json:"docs"`
@@ -103,7 +103,7 @@ func registerPanelTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultErrorFromErr("render panel", err), nil
 			}
 			if len(png) > maxRenderedImageBytes {
-				return mcp.NewToolResultJSON(struct {
+				return resultJSONWithCap(struct {
 					Error string `json:"error"`
 					Bytes int    `json:"bytes"`
 					Limit int    `json:"limit"`

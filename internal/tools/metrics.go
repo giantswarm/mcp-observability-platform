@@ -91,7 +91,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			sort.Strings(names)
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Total int      `json:"total"`
 				Items []string `json:"items"`
 			}{Total: len(names), Items: names})
@@ -274,7 +274,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			start := min(page*pageSize, len(rules))
 			end := min(start+pageSize, len(rules))
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Total    int        `json:"total"`
 				Page     int        `json:"page"`
 				PageSize int        `json:"pageSize"`
@@ -388,7 +388,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, d *Deps) {
 			if len(out) == 0 {
 				return mcp.NewToolResultError(fmt.Sprintf("rule %q not found in org %q", name, org)), nil
 			}
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Rules []ruleItem `json:"rules"`
 			}{Rules: out})
 		},
@@ -411,7 +411,7 @@ func runPromLabelValues(ctx context.Context, d *Deps, org, label string, req mcp
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultJSON(paginateStrings(names, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
+	return resultJSONWithCap(paginateStrings(names, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 }
 
 // promSelectorArgs collects optional match[] / start / end args into a

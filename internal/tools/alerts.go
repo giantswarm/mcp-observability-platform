@@ -57,7 +57,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
 			}
-			return mcp.NewToolResultJSON(result)
+			return resultJSONWithCap(result)
 		},
 	)
 }
@@ -99,7 +99,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 			if alert == nil {
 				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found in org %q", fp, org)), nil
 			}
-			return mcp.NewToolResultJSON(alert)
+			return resultJSONWithCap(alert)
 		},
 	)
 }

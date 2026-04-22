@@ -56,7 +56,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				})
 			}
 			sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName) })
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Orgs []item `json:"orgs"`
 			}{Orgs: out})
 		},
@@ -114,7 +114,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 			})
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Org         string `json:"org"`
 				Total       int    `json:"total"`
 				Datasources []item `json:"datasources"`
