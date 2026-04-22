@@ -20,11 +20,11 @@ import (
 )
 
 func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
-	// query_logs — Loki range queries with cursor pagination. Loki does not
+	// query_loki_logs — Loki range queries with cursor pagination. Loki does not
 	// support instant queries for log streams, so we always call query_range
 	// and default to the last hour when start/end are missing.
 	s.AddTool(
-		mcp.NewTool("query_logs",
+		mcp.NewTool("query_loki_logs",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Run a LogQL query against Loki. Defaults to last 1h when start/end are omitted. Returns {data, nextStart} — when nextStart is set, the limit was hit; re-run with end=<nextStart> to page further back in time."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
@@ -80,7 +80,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			// Attach a cursor wrapper so LLM clients can page.
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				NextStart string          `json:"nextStart,omitempty"`
 				LimitHit  bool            `json:"limitHit"`
 				Data      json.RawMessage `json:"data"`
@@ -109,7 +109,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(names, "", 0, len(names)))
+			return resultJSONWithCap(paginateStrings(names, "", 0, len(names)))
 		},
 	)
 
@@ -138,7 +138,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultJSON(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
+			return resultJSONWithCap(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 		},
 	)
 
@@ -195,7 +195,7 @@ func registerLogTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse patterns", err), nil
 			}
-			return mcp.NewToolResultJSON(projected)
+			return resultJSONWithCap(projected)
 		},
 	)
 

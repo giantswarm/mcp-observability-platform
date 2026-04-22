@@ -1,9 +1,12 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // maxResponseBytes returns the configured cap on tool response body size.
@@ -47,4 +50,20 @@ func enforceResponseCap(body []byte) *responseCapError {
 		Message: fmt.Sprintf("response is %d bytes, exceeds %d byte limit", len(body), limit),
 		Hint:    "narrow the query: add label matchers, aggregate with sum/rate/topk, or shorten the time range",
 	}
+}
+
+// resultJSONWithCap marshals v to JSON, enforces the configured response
+// cap, and returns either the JSON result or a structured response_too_large
+// error the LLM can react to. Use this instead of mcp.NewToolResultJSON(v)
+// everywhere that returns structured data — it's the single place the cap
+// semantics live, so future changes to the cap apply uniformly.
+func resultJSONWithCap(v any) (*mcp.CallToolResult, error) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return mcp.NewToolResultErrorFromErr("marshal response", err), nil
+	}
+	if capErr := enforceResponseCap(body); capErr != nil {
+		return mcp.NewToolResultJSON(capErr)
+	}
+	return mcp.NewToolResultJSON(v)
 }

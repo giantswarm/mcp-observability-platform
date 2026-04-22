@@ -23,7 +23,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("list_alerts",
 			ReadOnlyAnnotation(),
-			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); read alertmanager://org/{name}/alert/{fingerprint} for full detail."),
+			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); call get_alert with the fingerprint for full detail."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'silenced' | 'inhibited' | 'all'")),
 			mcp.WithString("filter", mcp.Description("Alertmanager label matcher, e.g. 'alertname=~\"Kube.*\"' or 'severity=\"critical\"'")),
@@ -57,7 +57,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
 			}
-			return mcp.NewToolResultJSON(result)
+			return resultJSONWithCap(result)
 		},
 	)
 }
@@ -99,7 +99,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 			if alert == nil {
 				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found in org %q", fp, org)), nil
 			}
-			return mcp.NewToolResultJSON(alert)
+			return resultJSONWithCap(alert)
 		},
 	)
 }

@@ -59,78 +59,129 @@ type datasourceSpec struct {
 	Timeout         time.Duration // per-tool handler budget; 0 = default 30s
 }
 
+// datasourceInvocation bundles the per-call parameters runDatasourceProxy
+// needs. Handlers either fill it from req.Params via invocationFromRequest
+// (the datasourceProxyHandler default flow) or build one explicitly (the
+// dashboards.go run-panel-query and metrics.go histogram-quantile flows
+// re-dispatch internally with a synthesised query). Keeping the CallToolRequest
+// read-only means the audit middleware captures the actual caller args, not
+// a rewritten version — fixes a subtle bug where audit records diverged from
+// what the LLM actually sent.
+type datasourceInvocation struct {
+	Org      string
+	Query    string
+	Start    string
+	End      string
+	Step     string
+	ExtraInt int // optional, used when spec.ExtraArg is set
+}
+
+// invocationFromRequest reads the standard datasource-tool args from req.
+func invocationFromRequest(req mcp.CallToolRequest, spec datasourceSpec) datasourceInvocation {
+	inv := datasourceInvocation{
+		Org:   req.GetString("org", ""),
+		Query: req.GetString("query", ""),
+		Start: req.GetString("start", ""),
+		End:   req.GetString("end", ""),
+		Step:  req.GetString("step", ""),
+	}
+	if spec.ExtraArg != "" {
+		inv.ExtraInt = req.GetInt(spec.ExtraArg, 0)
+	}
+	return inv
+}
+
 // datasourceProxyHandler returns a tool handler that: authorises the caller
 // on the given org, picks the correct datasource, validates tenant type, and
-// forwards the query through Grafana's datasource proxy.
+// forwards the query through Grafana's datasource proxy. The standard flow
+// reads its invocation from the request; tools that synthesise an invocation
+// (e.g. run_panel_query re-dispatching into query_prometheus) should call
+// runDatasourceProxy directly instead of rewriting req.Params.Arguments.
 func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		org, err := req.RequireString("org")
-		if err != nil {
+		if _, err := req.RequireString("org"); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		oa, dsID, err := resolveDatasource(ctx, d, org, spec.Role, spec.NeedTenant, spec.NameContains...)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		budget := spec.Timeout
-		if budget == 0 {
-			budget = 30 * time.Second
-		}
-		ctx, cancel := withToolTimeout(ctx, budget)
-		defer cancel()
-
-		q := url.Values{}
-		if spec.QueryArg != "" {
-			if v := req.GetString("query", ""); v != "" {
-				q.Set(spec.QueryArg, v)
-			}
-		}
-		start := req.GetString("start", "")
-		end := req.GetString("end", "")
-		path := spec.InstantPath
-		useRange := spec.SupportsRange && (spec.ForceRange || (start != "" && end != ""))
-		if useRange {
-			path = spec.RangePath
-			// Backfill both start + end whenever the spec declares a default
-			// range, not only when ForceRange is set. Grafana rejects range
-			// queries with a missing end; anchoring both ends here keeps the
-			// shape stable regardless of which flag opted the tool in.
-			if start == "" && spec.DefaultRangeAgo > 0 {
-				start = strconv.FormatInt(time.Now().Add(-spec.DefaultRangeAgo).UnixNano(), 10)
-			}
-			if end == "" && (spec.ForceRange || spec.DefaultRangeAgo > 0) {
-				end = strconv.FormatInt(time.Now().UnixNano(), 10)
-			}
-			q.Set("start", start)
-			q.Set("end", end)
-			if step := req.GetString("step", ""); step != "" {
-				q.Set("step", step)
-			}
-		} else {
-			if start != "" {
-				q.Set("start", start)
-			}
-			if end != "" {
-				q.Set("end", end)
-			}
-		}
-		if spec.ExtraArg != "" {
-			if v := req.GetInt(spec.ExtraArg, 0); v > 0 {
-				q.Set(spec.ExtraArg, strconv.Itoa(v))
-			}
-		}
-
-		observability.GrafanaProxyTotal.WithLabelValues(spec.InstantPath).Inc()
-		dsStart := time.Now()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
-		observability.GrafanaProxyDuration.WithLabelValues(spec.InstantPath).Observe(time.Since(dsStart).Seconds())
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil
-		}
-		if capErr := enforceResponseCap(body); capErr != nil {
-			return mcp.NewToolResultJSON(capErr)
-		}
-		return mcp.NewToolResultText(string(body)), nil
+		return runDatasourceProxy(ctx, d, spec, invocationFromRequest(req, spec))
 	}
+}
+
+// runDatasourceProxy runs a datasource-proxy call from an explicit
+// invocation — no req.Params reads. Handler sites that re-dispatch
+// internally (run_panel_query, query_prometheus_histogram) build the
+// invocation themselves and call here; avoids the prior req.Params
+// mutation that silently corrupted audit args.
+func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv datasourceInvocation) (*mcp.CallToolResult, error) {
+	if inv.Org == "" {
+		return mcp.NewToolResultError("missing required argument \"org\""), nil
+	}
+	oa, dsID, err := resolveDatasource(ctx, d, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	budget := spec.Timeout
+	if budget == 0 {
+		budget = 30 * time.Second
+	}
+	ctx, cancel := withToolTimeout(ctx, budget)
+	defer cancel()
+
+	q := url.Values{}
+	if spec.QueryArg != "" && inv.Query != "" {
+		q.Set(spec.QueryArg, inv.Query)
+	}
+	start, end := inv.Start, inv.End
+	path := spec.InstantPath
+	useRange := spec.SupportsRange && (spec.ForceRange || (start != "" && end != ""))
+	if useRange {
+		path = spec.RangePath
+		// Backfill both start + end whenever the spec declares a default
+		// range, not only when ForceRange is set. Grafana rejects range
+		// queries with a missing end; anchoring both ends here keeps the
+		// shape stable regardless of which flag opted the tool in.
+		if start == "" && spec.DefaultRangeAgo > 0 {
+			start = strconv.FormatInt(time.Now().Add(-spec.DefaultRangeAgo).UnixNano(), 10)
+		}
+		if end == "" && (spec.ForceRange || spec.DefaultRangeAgo > 0) {
+			end = strconv.FormatInt(time.Now().UnixNano(), 10)
+		}
+		q.Set("start", start)
+		q.Set("end", end)
+		if inv.Step != "" {
+			q.Set("step", inv.Step)
+		}
+	} else {
+		if start != "" {
+			q.Set("start", start)
+		}
+		if end != "" {
+			q.Set("end", end)
+		}
+	}
+	if spec.ExtraArg != "" && inv.ExtraInt > 0 {
+		q.Set(spec.ExtraArg, strconv.Itoa(inv.ExtraInt))
+	}
+
+	observability.GrafanaProxyTotal.WithLabelValues(spec.InstantPath).Inc()
+	dsStart := time.Now()
+	// Defer the Observe so error paths still record latency — half the
+	// signal vanishes during incidents otherwise.
+	var proxyErr error
+	defer func() {
+		status := "ok"
+		if proxyErr != nil {
+			status = "error"
+		}
+		observability.GrafanaProxyDuration.WithLabelValues(spec.InstantPath, status).Observe(time.Since(dsStart).Seconds())
+	}()
+	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, oa.OrgID), dsID, path, q)
+	if err != nil {
+		proxyErr = err
+		return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil
+	}
+	if capErr := enforceResponseCap(body); capErr != nil {
+		return mcp.NewToolResultJSON(capErr)
+	}
+	return mcp.NewToolResultText(string(body)), nil
 }

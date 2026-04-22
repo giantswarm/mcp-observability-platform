@@ -25,8 +25,8 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
 			}
 			// Minimal projection keeps list_orgs well under the response cap
-			// even for callers with 50+ orgs. Full tenant/datasource info is
-			// still available per-org via observability://org/{name}.
+			// even for callers with 50+ orgs. Full datasource info is
+			// available per-org via list_datasources + get_datasource.
 			type item struct {
 				Name        string   `json:"name"`
 				DisplayName string   `json:"displayName"`
@@ -56,7 +56,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				})
 			}
 			sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName) })
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Orgs []item `json:"orgs"`
 			}{Orgs: out})
 		},
@@ -65,7 +65,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("list_datasources",
 			ReadOnlyAnnotation(),
-			mcp.WithDescription("List the Grafana datasources visible in an org, with name/type/uid. Tools like query_metrics pick a datasource by name substring; use this to see the full list if a selection fails."),
+			mcp.WithDescription("List the Grafana datasources visible in an org, with name/type/uid. Tools like query_prometheus pick a datasource by name substring; use this to see the full list if a selection fails."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -114,7 +114,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 				}
 				return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 			})
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				Org         string `json:"org"`
 				Total       int    `json:"total"`
 				Datasources []item `json:"datasources"`

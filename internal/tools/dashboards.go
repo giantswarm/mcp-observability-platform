@@ -20,7 +20,7 @@ import (
 
 func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
-		mcp.NewTool("list_dashboards",
+		mcp.NewTool("search_dashboards",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("List dashboards in a Grafana org, grouped by folder. Returns a compact tree {total, folders:[{title, dashboards:[{title,uid,url}]}]} so large orgs fit in the LLM context."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
@@ -47,7 +47,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboards", err), nil
 			}
-			return mcp.NewToolResultJSON(tree)
+			return resultJSONWithCap(tree)
 		},
 	)
 
@@ -56,7 +56,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Fetch a Grafana dashboard's full JSON. Prefer get_dashboard_summary or get_dashboard_property when you can — full dashboards are often 100s of KB and easily exceed the response cap. Use this only when you actually need the raw document."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
-			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
+			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See search_dashboards.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
@@ -87,7 +87,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Return a compact summary of a Grafana dashboard — title, tags, variables, row & panel layout — WITHOUT panel queries. Use this first to explore; then get_dashboard_panel_queries for the specific panel(s) you care about. Avoids pulling the full dashboard JSON (often 100s of KB)."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
-			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See list_dashboards.")),
+			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID. See search_dashboards.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, err := req.RequireString("org")
@@ -110,14 +110,14 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
-			return mcp.NewToolResultJSON(summary)
+			return resultJSONWithCap(summary)
 		},
 	)
 
 	s.AddTool(
 		mcp.NewTool("get_dashboard_panel_queries",
 			ReadOnlyAnnotation(),
-			mcp.WithDescription("Return the data queries (PromQL/LogQL/TraceQL) for one panel — or all panels, or a title-substring match. Use after get_dashboard_summary to pinpoint the exact panel. Returns the raw expressions so you can re-run them via query_metrics / query_logs / query_traces."),
+			mcp.WithDescription("Return the data queries (PromQL/LogQL/TraceQL) for one panel — or all panels, or a title-substring match. Use after get_dashboard_summary to pinpoint the exact panel. Returns the raw expressions so you can re-run them via query_prometheus / query_loki_logs / query_traces."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
 			mcp.WithNumber("panelId", mcp.Description("Return only the panel with this id.")),
@@ -144,7 +144,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse dashboard", err), nil
 			}
-			return mcp.NewToolResultJSON(res)
+			return resultJSONWithCap(res)
 		},
 	)
 
@@ -182,6 +182,69 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultJSON(capErr)
 			}
 			return mcp.NewToolResultText(string(sub)), nil
+		},
+	)
+
+	s.AddTool(
+		mcp.NewTool("search_folders",
+			ReadOnlyAnnotation(),
+			mcp.WithDescription("List folders visible in a Grafana org, optionally filtered by a title-substring query. Matches upstream grafana/mcp-grafana's search_folders; pair with search_dashboards to walk the dashboard tree by folder."),
+			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
+			mcp.WithString("query", mcp.Description("Optional title-substring filter applied server-side by Grafana.")),
+			mcp.WithNumber("limit", mcp.Description("Max folders returned (default 100, max 5000).")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			body, err := d.Grafana.SearchFolders(ctx, grafanaOpts(ctx, oa.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("grafana search folders", err), nil
+			}
+			if capErr := enforceResponseCap(body); capErr != nil {
+				return mcp.NewToolResultJSON(capErr)
+			}
+			return mcp.NewToolResultText(string(body)), nil
+		},
+	)
+
+	s.AddTool(
+		mcp.NewTool("get_annotation_tags",
+			ReadOnlyAnnotation(),
+			mcp.WithDescription("List the set of tags used across Grafana annotations in an org, optionally filtered by a name prefix. Handy for discovering what tags to pass to get_annotations. Matches upstream grafana/mcp-grafana's get_annotation_tags."),
+			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
+			mcp.WithString("tag", mcp.Description("Optional tag-name prefix filter.")),
+			mcp.WithNumber("limit", mcp.Description("Max tags returned (default 100).")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			q := url.Values{}
+			if tag := req.GetString("tag", ""); tag != "" {
+				q.Set("tag", tag)
+			}
+			if limit := req.GetInt("limit", 0); limit > 0 {
+				q.Set("limit", strconv.Itoa(limit))
+			}
+			body, err := d.Grafana.GetAnnotationTags(ctx, grafanaOpts(ctx, oa.OrgID), q)
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("grafana annotation tags", err), nil
+			}
+			if capErr := enforceResponseCap(body); capErr != nil {
+				return mcp.NewToolResultJSON(capErr)
+			}
+			return mcp.NewToolResultText(string(body)), nil
 		},
 	)
 
@@ -244,7 +307,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 	s.AddTool(
 		mcp.NewTool("run_panel_query",
 			ReadOnlyAnnotation(),
-			mcp.WithDescription("Run the stored query for a single dashboard panel directly — no need to extract+rebuild. Resolves the panel's datasource type (Mimir/Loki/Tempo) and routes through the appropriate proxy. Saves the get_dashboard_panel_queries → query_metrics two-step."),
+			mcp.WithDescription("Run the stored query for a single dashboard panel directly — no need to extract+rebuild. Resolves the panel's datasource type (Mimir/Loki/Tempo) and routes through the appropriate proxy. Saves the get_dashboard_panel_queries → query_prometheus two-step."),
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
 			mcp.WithNumber("panelId", mcp.Required(), mcp.Description("Panel id.")),
@@ -255,7 +318,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max log entries / traces for Loki/Tempo panels.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -280,50 +342,50 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			// Re-dispatch to the appropriate datasource handler by synthesising
-			// a tool call against the correct kind (mimir/loki/tempo).
-			newArgs := map[string]any{"org": org}
-			for _, k := range []string{"start", "end", "step", "limit"} {
-				if v, ok := args[k]; ok {
-					newArgs[k] = v
-				}
-			}
+			// Build an invocation directly from the dashboard target + vars,
+			// then dispatch via runDatasourceProxy. Leaves req.Params
+			// read-only so the audit record captures what the LLM actually
+			// sent, not the synthesised internal query.
 			step := req.GetString("step", "")
 			expanded := func(expr string) string {
 				return expandGrafanaVars(expr, vars, req.GetString("start", ""), req.GetString("end", ""), step)
+			}
+			inv := datasourceInvocation{
+				Org:      org,
+				Start:    req.GetString("start", ""),
+				End:      req.GetString("end", ""),
+				Step:     step,
+				ExtraInt: req.GetInt("limit", 0),
 			}
 			switch kind {
 			case dsKindMimir:
 				if target.Expr == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no PromQL expression", panel.ID)), nil
 				}
-				newArgs["query"] = expanded(target.Expr)
-				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				inv.Query = expanded(target.Expr)
+				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindMimir},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
-				})(ctx, req)
+				}, inv)
 			case dsKindLoki:
 				if target.Expr == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no LogQL expression", panel.ID)), nil
 				}
-				newArgs["query"] = expanded(target.Expr)
-				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				inv.Query = expanded(target.Expr)
+				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ForceRange: true, DefaultRangeAgo: time.Hour, ExtraArg: "limit",
-				})(ctx, req)
+				}, inv)
 			case dsKindTempo:
 				if target.Query == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no TraceQL query", panel.ID)), nil
 				}
-				newArgs["query"] = expanded(target.Query)
-				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				inv.Query = expanded(target.Query)
+				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindTempo},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
-				})(ctx, req)
+				}, inv)
 			default:
 				return mcp.NewToolResultError(fmt.Sprintf("panel %d uses unsupported datasource kind %q (only mimir/loki/tempo)", panel.ID, kind)), nil
 			}
@@ -382,7 +444,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			link := base.JoinPath("/d/" + url.PathEscape(uid))
 			link.RawQuery = q.Encode()
-			return mcp.NewToolResultJSON(struct {
+			return resultJSONWithCap(struct {
 				URL string `json:"url"`
 			}{URL: link.String()})
 		},
@@ -910,7 +972,9 @@ func summariseDashboard(raw json.RawMessage) (any, error) {
 }
 
 // refreshToString renders Grafana's polymorphic "refresh" field (string or
-// bool) as a single string: "30s" stays as "30s", false becomes "" (disabled).
+// bool) as a single string: "30s" stays as "30s", `false` (disabled) becomes
+// "". Returns "" for any other shape — the string-or-bool decode covers
+// every valid Grafana dashboard export.
 func refreshToString(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -919,11 +983,7 @@ func refreshToString(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &s); err == nil {
 		return s
 	}
-	var b bool
-	if err := json.Unmarshal(raw, &b); err == nil {
-		return ""
-	}
-	return strings.Trim(string(raw), `"`)
+	return ""
 }
 
 // rawPanel is the subset of the Grafana panel shape we decode. Targets are

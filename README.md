@@ -36,7 +36,9 @@ are intentionally out of scope for this MCP.
 
 | Tool                           | Backend     | Notes                                                          |
 | ------------------------------ | ----------- | -------------------------------------------------------------- |
-| `list_dashboards`              | Grafana API | `/api/search`, grouped by folder, page/pageSize over folders   |
+| `search_dashboards`            | Grafana API | `/api/search`, grouped by folder, page/pageSize over folders   |
+| `search_folders`               | Grafana API | `/api/search?type=dash-folder`; matches upstream `grafana/mcp-grafana` |
+| `get_annotation_tags`          | Grafana API | `/api/annotations/tags`                                         |
 | `get_dashboard_summary`        | Grafana API | Dashboard JSON projected to title / tags / vars / row+panel tree (NO queries) |
 | `get_dashboard_panel_queries`  | Grafana API | Queries for a single panel (by id or titleContains) or all    |
 | `generate_deeplink`            | Grafana URL | Builds `/d/{uid}?orgId=…&from=…&to=…&viewPanel=…&var-…`        |
@@ -46,7 +48,7 @@ are intentionally out of scope for this MCP.
 
 | Tool                                 | DS proxy path                            |
 | ------------------------------------ | ---------------------------------------- |
-| `query_metrics`                      | `api/v1/query[_range]`                   |
+| `query_prometheus`                   | `api/v1/query[_range]`                   |
 | `list_prometheus_metric_names`       | `api/v1/label/__name__/values`           |
 | `list_prometheus_label_names`        | `api/v1/labels`                          |
 | `list_prometheus_label_values`       | `api/v1/label/{label}/values`            |

@@ -71,15 +71,17 @@ var GrafanaProxyTotal = promauto.With(registry).NewCounterVec(
 
 // GrafanaProxyDuration measures per-path Grafana proxy latency. The path
 // label is the downstream API path (bounded cardinality: one label value per
-// registered tool), which makes this safe to aggregate by backend.
+// registered tool). The status label distinguishes success from error so
+// ops can see tail-latency changes during incidents — before this split,
+// the error path skipped Observe entirely and half the signal vanished.
 var GrafanaProxyDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "grafana_proxy_duration_seconds",
-		Help:      "Duration of Grafana datasource-proxy calls, by downstream path.",
+		Help:      "Duration of Grafana datasource-proxy calls, by downstream path and status.",
 		Buckets:   prometheus.ExponentialBuckets(0.01, 2.5, 10),
 	},
-	[]string{"path"},
+	[]string{"path", "status"},
 )
 
 // OrgCacheSize reports the number of GrafanaOrganization CRs currently cached.

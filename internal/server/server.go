@@ -53,11 +53,16 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		Grafana:  cfg.Grafana,
 	}
 
-	// Capabilities advertise static surfaces only. listChanged / subscribe are
-	// false because this MCP never emits notifications/{tools,resources,prompts}/
-	// list_changed or notifications/resources/updated — the tool / resource /
-	// prompt set is built once at startup. Flip to true when a feature PR wires
-	// real change notifications.
+	// Only `WithToolCapabilities` is advertised. Resources and prompts are
+	// not part of this MCP's surface — LLMs handle tools far more reliably
+	// than resources (we dropped the original alertmanager:// / grafana://
+	// templates for per-resource tools like get_alert / get_dashboard_by_uid).
+	// Prompts are deliberately out of scope per docs/roadmap.md's "Out of
+	// scope" list.
+	//
+	// listChanged is false because the tool set is built once at startup.
+	// Flip to true only when a feature PR actually emits
+	// notifications/tools/list_changed.
 	//
 	// Middleware stack (outermost first):
 	//   1. WithRecovery()         — mcp-go's built-in panic guard.
@@ -70,9 +75,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
-		mcpsrv.WithResourceCapabilities(false, false),
 		mcpsrv.WithToolCapabilities(false),
-		mcpsrv.WithPromptCapabilities(false),
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Tracing()),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Metrics()),
@@ -80,8 +83,6 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	)
 
 	tools.RegisterAll(mcp, deps)
-	registerResources(mcp)
-	registerPrompts(mcp)
 
 	return mcp, nil
 }
