@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -127,9 +128,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("get informer: %w", err)
 	}
 
+	// Track informer liveness so the readiness probe can flip to 503 when
+	// ctrlCache.Start exits on a non-canceled error (API server flap, scheme
+	// mismatch). Without this, List keeps returning the last-known snapshot
+	// and readyz lies.
+	var cacheAlive atomic.Bool
+	cacheAlive.Store(true)
 	go func() {
 		if err := ctrlCache.Start(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("controller-runtime cache stopped", "error", err)
+			cacheAlive.Store(false)
 		}
 	}()
 	if !ctrlCache.WaitForCacheSync(shutdownCtx) {
@@ -153,9 +161,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	logger.Info("Grafana server-admin credential verified")
 
-	// authz uses Grafana as the source of truth for org membership. 30s
-	// per-caller cache to avoid hitting /api/users/lookup on every MCP call.
-	resolver := authz.NewResolver(ctrlCache, grafanaAuthz{c: gfClient}, logger, 30*time.Second)
+	// authz uses Grafana as the source of truth for org membership. Positive
+	// entries are cached 30s; negative ones (user-not-found, empty
+	// memberships) use a 5s TTL so a mid-SSO-outage failure doesn't lock
+	// anyone out for half a minute. LRU-bounded so long-running pods with
+	// many unique callers don't leak.
+	resolver, err := authz.NewResolver(ctrlCache, grafanaAuthz{c: gfClient}, logger,
+		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
+	if err != nil {
+		return fmt.Errorf("resolver: %w", err)
+	}
 
 	// --- mcp-oauth ---
 	dexProvider, err := dex.NewProvider(&dex.Config{
@@ -301,6 +316,12 @@ func runServe(_ *cobra.Command, _ []string) error {
 	})
 	health.Register("dex", server.HTTPProbe(nil, strings.TrimRight(cfg.DexIssuerURL, "/")+"/.well-known/openid-configuration"))
 	health.Register("k8s_cache", func(ctx context.Context) (any, error) {
+		// If ctrlCache.Start has exited on a non-canceled error, List would
+		// still return the last-known snapshot — which lies. cacheAlive is
+		// flipped to false by the Start goroutine on real failure.
+		if !cacheAlive.Load() {
+			return nil, errors.New("controller-runtime cache stopped")
+		}
 		var list obsv1alpha2.GrafanaOrganizationList
 		if err := ctrlCache.List(ctx, &list); err != nil {
 			return nil, err
