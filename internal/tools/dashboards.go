@@ -186,6 +186,69 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 	)
 
 	s.AddTool(
+		mcp.NewTool("search_folders",
+			ReadOnlyAnnotation(),
+			mcp.WithDescription("List folders visible in a Grafana org, optionally filtered by a title-substring query. Matches upstream grafana/mcp-grafana's search_folders; pair with search_dashboards to walk the dashboard tree by folder."),
+			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
+			mcp.WithString("query", mcp.Description("Optional title-substring filter applied server-side by Grafana.")),
+			mcp.WithNumber("limit", mcp.Description("Max folders returned (default 100, max 5000).")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			body, err := d.Grafana.SearchFolders(ctx, grafanaOpts(ctx, oa.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("grafana search folders", err), nil
+			}
+			if capErr := enforceResponseCap(body); capErr != nil {
+				return mcp.NewToolResultJSON(capErr)
+			}
+			return mcp.NewToolResultText(string(body)), nil
+		},
+	)
+
+	s.AddTool(
+		mcp.NewTool("get_annotation_tags",
+			ReadOnlyAnnotation(),
+			mcp.WithDescription("List the set of tags used across Grafana annotations in an org, optionally filtered by a name prefix. Handy for discovering what tags to pass to get_annotations. Matches upstream grafana/mcp-grafana's get_annotation_tags."),
+			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
+			mcp.WithString("tag", mcp.Description("Optional tag-name prefix filter.")),
+			mcp.WithNumber("limit", mcp.Description("Max tags returned (default 100).")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			org, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			oa, err := d.Resolver.Require(ctx, identity.CallerAuthz(ctx), org, authz.RoleViewer)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			q := url.Values{}
+			if tag := req.GetString("tag", ""); tag != "" {
+				q.Set("tag", tag)
+			}
+			if limit := req.GetInt("limit", 0); limit > 0 {
+				q.Set("limit", strconv.Itoa(limit))
+			}
+			body, err := d.Grafana.GetAnnotationTags(ctx, grafanaOpts(ctx, oa.OrgID), q)
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("grafana annotation tags", err), nil
+			}
+			if capErr := enforceResponseCap(body); capErr != nil {
+				return mcp.NewToolResultJSON(capErr)
+			}
+			return mcp.NewToolResultText(string(body)), nil
+		},
+	)
+
+	s.AddTool(
 		mcp.NewTool("get_annotations",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Read Grafana annotations (deploys, releases, manual notes) for a time window. Useful in RCA: 'what changed near 11:30?'. Filter by dashboard, panel, tags."),
@@ -255,7 +318,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithNumber("limit", mcp.Description("Max log entries / traces for Loki/Tempo panels.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args := req.GetArguments()
 			org, err := req.RequireString("org")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -280,50 +342,50 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			// Re-dispatch to the appropriate datasource handler by synthesising
-			// a tool call against the correct kind (mimir/loki/tempo).
-			newArgs := map[string]any{"org": org}
-			for _, k := range []string{"start", "end", "step", "limit"} {
-				if v, ok := args[k]; ok {
-					newArgs[k] = v
-				}
-			}
+			// Build an invocation directly from the dashboard target + vars,
+			// then dispatch via runDatasourceProxy. Leaves req.Params
+			// read-only so the audit record captures what the LLM actually
+			// sent, not the synthesised internal query.
 			step := req.GetString("step", "")
 			expanded := func(expr string) string {
 				return expandGrafanaVars(expr, vars, req.GetString("start", ""), req.GetString("end", ""), step)
+			}
+			inv := datasourceInvocation{
+				Org:      org,
+				Start:    req.GetString("start", ""),
+				End:      req.GetString("end", ""),
+				Step:     step,
+				ExtraInt: req.GetInt("limit", 0),
 			}
 			switch kind {
 			case dsKindMimir:
 				if target.Expr == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no PromQL expression", panel.ID)), nil
 				}
-				newArgs["query"] = expanded(target.Expr)
-				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				inv.Query = expanded(target.Expr)
+				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindMimir},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
-				})(ctx, req)
+				}, inv)
 			case dsKindLoki:
 				if target.Expr == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no LogQL expression", panel.ID)), nil
 				}
-				newArgs["query"] = expanded(target.Expr)
-				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				inv.Query = expanded(target.Expr)
+				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ForceRange: true, DefaultRangeAgo: time.Hour, ExtraArg: "limit",
-				})(ctx, req)
+				}, inv)
 			case dsKindTempo:
 				if target.Query == "" {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no TraceQL query", panel.ID)), nil
 				}
-				newArgs["query"] = expanded(target.Query)
-				req.Params.Arguments = newArgs
-				return datasourceProxyHandler(d, datasourceSpec{
+				inv.Query = expanded(target.Query)
+				return runDatasourceProxy(ctx, d, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: obsv1alpha2.TenantTypeData, NameContains: []string{dsKindTempo},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
-				})(ctx, req)
+				}, inv)
 			default:
 				return mcp.NewToolResultError(fmt.Sprintf("panel %d uses unsupported datasource kind %q (only mimir/loki/tempo)", panel.ID, kind)), nil
 			}

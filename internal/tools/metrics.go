@@ -197,19 +197,12 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			groupBy := req.GetString("groupBy", "")
 
 			expr := buildHistogramQuantile(q, metric, matchers, window, groupBy)
-			// Forward to the same proxy path as query_prometheus.
-			newArgs := map[string]any{
-				"org":   org,
-				"query": expr,
-			}
-			for _, k := range []string{"start", "end", "step"} {
-				if v := req.GetString(k, ""); v != "" {
-					newArgs[k] = v
-				}
-			}
-			// Re-use datasourceProxyHandler by synthesising a tool request.
-			req.Params.Arguments = newArgs
-			return datasourceProxyHandler(d, datasourceSpec{
+			// Re-dispatch to the same proxy path as query_prometheus with the
+			// synthesised expression. Built as an explicit invocation rather
+			// than mutating req.Params.Arguments so the audit record captures
+			// the caller's actual args (metric/q/window/matchers), not the
+			// internal PromQL we generated.
+			return runDatasourceProxy(ctx, d, datasourceSpec{
 				Role:          authz.RoleViewer,
 				NeedTenant:    obsv1alpha2.TenantTypeData,
 				NameContains:  []string{dsKindMimir},
@@ -218,7 +211,13 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 				QueryArg:      "query",
 				SupportsRange: true,
 				Timeout:       30 * time.Second,
-			})(ctx, req)
+			}, datasourceInvocation{
+				Org:   org,
+				Query: expr,
+				Start: req.GetString("start", ""),
+				End:   req.GetString("end", ""),
+				Step:  req.GetString("step", ""),
+			})
 		},
 	)
 

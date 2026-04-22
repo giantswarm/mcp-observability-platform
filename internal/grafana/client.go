@@ -183,6 +183,19 @@ func (c *Client) SearchDashboards(ctx context.Context, opts RequestOpts, query s
 	return c.doGET(ctx, "/api/search", q, opts)
 }
 
+// SearchFolders returns folders visible in the given org. Same endpoint as
+// SearchDashboards but with type=dash-folder.
+func (c *Client) SearchFolders(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	q := url.Values{"type": []string{"dash-folder"}, "limit": []string{strconv.Itoa(limit)}}
+	if query != "" {
+		q.Set("query", query)
+	}
+	return c.doGET(ctx, "/api/search", q, opts)
+}
+
 // ListDatasources returns the datasources visible in the given org.
 func (c *Client) ListDatasources(ctx context.Context, opts RequestOpts) (json.RawMessage, error) {
 	return c.doGET(ctx, "/api/datasources", nil, opts)
@@ -199,6 +212,13 @@ func (c *Client) GetDatasource(ctx context.Context, opts RequestOpts, uid string
 // GetAnnotations forwards a query to /api/annotations. Caller assembles q.
 func (c *Client) GetAnnotations(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
 	return c.doGET(ctx, "/api/annotations", q, opts)
+}
+
+// GetAnnotationTags returns the set of tags used across annotations in the
+// given org, optionally filtered by a name prefix. Matches upstream
+// grafana/mcp-grafana's get_annotation_tags.
+func (c *Client) GetAnnotationTags(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
+	return c.doGET(ctx, "/api/annotations/tags", q, opts)
 }
 
 // UserOrgMembership is Grafana's projection of one org a user belongs to.
@@ -322,15 +342,8 @@ func (c *Client) HasImageRenderer(ctx context.Context) (bool, error) {
 
 // DatasourceProxy forwards a GET to /api/datasources/proxy/{dsID}/{path} in the
 // given org. Grafana applies the datasource's provisioned tenant headers.
-// For long query strings (large PromQL / LogQL), prefer DatasourceProxyPOST.
 func (c *Client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error) {
 	return c.doGET(ctx, fmt.Sprintf("/api/datasources/proxy/%d/%s", dsID, path), query, opts)
-}
-
-// DatasourceProxyPOST is the POST variant, used when the query string is long
-// enough to risk URL length limits (observed at ~8k across proxies).
-func (c *Client) DatasourceProxyPOST(ctx context.Context, opts RequestOpts, dsID int64, path string, form url.Values) (json.RawMessage, error) {
-	return c.doPOSTForm(ctx, fmt.Sprintf("/api/datasources/proxy/%d/%s", dsID, path), form, opts)
 }
 
 // RenderPanel fetches a rendered panel image from Grafana's render endpoint.
@@ -390,16 +403,6 @@ func (c *Client) doGET(ctx context.Context, path string, query url.Values, opts 
 	if err != nil {
 		return nil, err
 	}
-	return c.do(ctx, req, path)
-}
-
-func (c *Client) doPOSTForm(ctx context.Context, path string, form url.Values, opts RequestOpts) (json.RawMessage, error) {
-	body := strings.NewReader(form.Encode())
-	req, err := c.newRequest(ctx, http.MethodPost, path, nil, body, opts)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return c.do(ctx, req, path)
 }
 
