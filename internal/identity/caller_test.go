@@ -82,3 +82,27 @@ func TestCallerAuthz_EmptyOnMissingIdentity(t *testing.T) {
 		t.Errorf("CallerAuthz without identity = %+v, want empty Caller", got)
 	}
 }
+
+func TestCallerTokenSource(t *testing.T) {
+	cases := []struct {
+		name string
+		ui   *providers.UserInfo
+		want string
+	}{
+		{"no identity", nil, ""},
+		{"oauth flow", &providers.UserInfo{TokenSource: providers.TokenSourceOAuth}, "oauth"},
+		{"sso forwarded", &providers.UserInfo{TokenSource: providers.TokenSourceSSO}, "sso"},
+		{"unset TokenSource is empty string", &providers.UserInfo{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			if c.ui != nil {
+				ctx = WithCaller(ctx, c.ui)
+			}
+			if got := CallerTokenSource(ctx); got != c.want {
+				t.Errorf("CallerTokenSource = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

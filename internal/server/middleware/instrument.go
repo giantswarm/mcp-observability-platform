@@ -54,13 +54,14 @@ func Instrument(auditor *audit.Logger) server.ToolHandlerMiddleware {
 			// Audit: structured record on the audit sink. Logger.Record is
 			// nil-safe so a nil auditor short-circuits without a branch here.
 			auditor.Record(ctx, audit.Record{
-				Timestamp: start,
-				Caller:    identity.CallerSubject(ctx),
-				Tool:      name,
-				Args:      req.GetArguments(),
-				Outcome:   outcome,
-				Duration:  duration,
-				Error:     auditErrorMessage(err, res),
+				Timestamp:   start,
+				Caller:      identity.CallerSubject(ctx),
+				TokenSource: identity.CallerTokenSource(ctx),
+				Tool:        name,
+				Args:        req.GetArguments(),
+				Outcome:     outcome,
+				Duration:    duration,
+				Error:       auditErrorMessage(err, res),
 			})
 
 			return res, err
