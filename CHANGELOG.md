@@ -18,6 +18,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deep readiness (`/readyz` probes Grafana + Dex + K8s informer) and two-phase graceful shutdown.
 - Helm chart with runtime ConfigMap, NetworkPolicy, PDB, HPA/VPA, and four example overlays.
 
-See `git log` for the per-PR history.
-
 [Unreleased]: https://github.com/giantswarm/mcp-observability-platform/tree/main
