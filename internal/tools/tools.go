@@ -1,10 +1,3 @@
-// Package tools wires the MCP tool surface of this MCP.
-//
-// tools.go holds the package entry point — the exported Deps struct that the
-// server composition root hands in, the package-wide constants, the
-// RegisterAll dispatcher, and a couple of pervasive helpers (withToolTimeout).
-// Tool handlers live in per-category files (alerts.go, dashboards.go, …),
-// larger shared helpers in focused files (datasource.go, pagination.go).
 package tools
 
 import (
