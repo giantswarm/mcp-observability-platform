@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -46,48 +47,84 @@ type config struct {
 	GrafanaBasicAuth            string
 
 	// ToolTimeout is the per-tool-call context deadline. Zero disables the
-	// middleware entirely; a malformed TOOL_TIMEOUT env value falls back to
-	// middleware.DefaultToolTimeout.
+	// middleware entirely; a malformed TOOL_TIMEOUT env value fails startup.
 	ToolTimeout time.Duration
 	// MaxResponseBytes caps tool response TextContent size. Zero disables
-	// capping; a malformed TOOL_MAX_RESPONSE_BYTES env value falls back to
-	// middleware.DefaultMaxResponseBytes.
+	// capping; a malformed TOOL_MAX_RESPONSE_BYTES env value fails startup.
 	MaxResponseBytes int
+
+	// Debug enables debug-level logging. Env: DEBUG; --debug flag overrides.
+	Debug bool
+
+	// LogFormat selects the slog handler: "json" or "text". Defaults to "json"
+	// when KUBERNETES_SERVICE_HOST is set (log aggregators parse structured
+	// fields), else "text" for readable local output. LOG_FORMAT overrides.
+	LogFormat string
 }
 
 // loadConfig reads every env var the process needs, validates them, and
 // returns a populated *config. Fails fast on missing required vars,
 // unparseable URLs, weak encryption keys, or malformed audience lists.
 func loadConfig() (*config, error) {
+	allowInsecureHTTP, err := envBool("OAUTH_ALLOW_INSECURE_HTTP", false)
+	if err != nil {
+		return nil, err
+	}
+	// Public client registration is off by default: letting arbitrary
+	// callers register an OAuth client against a production MCP is a
+	// standing risk. Opt-in per env for local dev and cluster test
+	// deployments where ergonomics beat that risk.
+	allowPublicClientReg, err := envBool("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION", false)
+	if err != nil {
+		return nil, err
+	}
+	valkeyTLS, err := envBool("VALKEY_TLS", false)
+	if err != nil {
+		return nil, err
+	}
+	debug, err := envBool("DEBUG", false)
+	if err != nil {
+		return nil, err
+	}
+	logFormat, err := resolveLogFormat()
+	if err != nil {
+		return nil, err
+	}
+	toolTimeout, err := envDuration("TOOL_TIMEOUT", middleware.DefaultToolTimeout)
+	if err != nil {
+		return nil, err
+	}
+	maxResponseBytes, err := envInt("TOOL_MAX_RESPONSE_BYTES", middleware.DefaultMaxResponseBytes)
+	if err != nil {
+		return nil, err
+	}
 	c := &config{
-		DexIssuerURL:           os.Getenv("DEX_ISSUER_URL"),
-		DexClientID:            os.Getenv("DEX_CLIENT_ID"),
-		DexClientSecret:        os.Getenv("DEX_CLIENT_SECRET"),
-		OAuthIssuer:            os.Getenv("MCP_OAUTH_ISSUER"),
-		OAuthRedirectURL:       envOr("MCP_OAUTH_REDIRECT_URL", ""),
-		OAuthAllowInsecureHTTP: envBool("MCP_OAUTH_ALLOW_INSECURE_HTTP", false),
-		// Public client registration is off by default: letting arbitrary
-		// callers register an OAuth client against a production MCP is a
-		// standing risk. Opt-in per env for local dev and cluster test
-		// deployments where ergonomics beat that risk.
-		OAuthAllowPublicClientRegistration: envBool("MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION", false),
+		DexIssuerURL:                       os.Getenv("DEX_ISSUER_URL"),
+		DexClientID:                        os.Getenv("DEX_CLIENT_ID"),
+		DexClientSecret:                    os.Getenv("DEX_CLIENT_SECRET"),
+		OAuthIssuer:                        os.Getenv("OAUTH_ISSUER"),
+		OAuthRedirectURL:                   envOr("OAUTH_REDIRECT_URL", ""),
+		OAuthAllowInsecureHTTP:             allowInsecureHTTP,
+		OAuthAllowPublicClientRegistration: allowPublicClientReg,
 		OAuthStorage:                       strings.ToLower(envOr("OAUTH_STORAGE", "memory")),
 		ValkeyAddr:                         os.Getenv("VALKEY_ADDR"),
 		ValkeyPassword:                     os.Getenv("VALKEY_PASSWORD"),
-		ValkeyTLS:                          envBool("VALKEY_TLS", false),
+		ValkeyTLS:                          valkeyTLS,
 		GrafanaURL:                         os.Getenv("GRAFANA_URL"),
 		GrafanaPublicURL:                   os.Getenv("GRAFANA_PUBLIC_URL"),
 		GrafanaSAToken:                     os.Getenv("GRAFANA_SA_TOKEN"),
 		GrafanaBasicAuth:                   os.Getenv("GRAFANA_BASIC_AUTH"),
-		ToolTimeout:                        envDuration("TOOL_TIMEOUT", middleware.DefaultToolTimeout),
-		MaxResponseBytes:                   envInt("TOOL_MAX_RESPONSE_BYTES", middleware.DefaultMaxResponseBytes),
+		ToolTimeout:                        toolTimeout,
+		MaxResponseBytes:                   maxResponseBytes,
+		Debug:                              debug,
+		LogFormat:                          logFormat,
 	}
 	var missing []string
 	for k, v := range map[string]string{
 		"DEX_ISSUER_URL":    c.DexIssuerURL,
 		"DEX_CLIENT_ID":     c.DexClientID,
 		"DEX_CLIENT_SECRET": c.DexClientSecret,
-		"MCP_OAUTH_ISSUER":  c.OAuthIssuer,
+		"OAUTH_ISSUER":      c.OAuthIssuer,
 		"GRAFANA_URL":       c.GrafanaURL,
 	} {
 		if v == "" {
@@ -106,10 +143,10 @@ func loadConfig() (*config, error) {
 	if c.OAuthRedirectURL == "" {
 		c.OAuthRedirectURL = c.OAuthIssuer + "/oauth/callback"
 	}
-	if raw := os.Getenv("MCP_OAUTH_ENCRYPTION_KEY"); raw != "" {
+	if raw := os.Getenv("OAUTH_ENCRYPTION_KEY"); raw != "" {
 		key, err := decodeEncryptionKey(raw)
 		if err != nil {
-			return nil, fmt.Errorf("MCP_OAUTH_ENCRYPTION_KEY: %w", err)
+			return nil, fmt.Errorf("OAUTH_ENCRYPTION_KEY: %w", err)
 		}
 		if err := validateEncryptionKeyEntropy(key); err != nil {
 			return nil, err
@@ -121,21 +158,21 @@ func loadConfig() (*config, error) {
 	// `dex.ValidateAudiences` (same max-count + charset rules as muster /
 	// mcp-kubernetes use for SSO token forwarding). Schemes are passed
 	// through; mcp-oauth validates them at server-config time per RFC 3986.
-	c.OAuthTrustedAudiences = splitAndTrimCSV(os.Getenv("MCP_OAUTH_TRUSTED_AUDIENCES"))
+	c.OAuthTrustedAudiences = splitAndTrimCSV(os.Getenv("OAUTH_TRUSTED_AUDIENCES"))
 	if err := dex.ValidateAudiences(c.OAuthTrustedAudiences); err != nil {
-		return nil, fmt.Errorf("MCP_OAUTH_TRUSTED_AUDIENCES: %w", err)
+		return nil, fmt.Errorf("OAUTH_TRUSTED_AUDIENCES: %w", err)
 	}
-	c.OAuthTrustedRedirectSchemes = splitAndTrimCSV(os.Getenv("MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES"))
+	c.OAuthTrustedRedirectSchemes = splitAndTrimCSV(os.Getenv("OAUTH_TRUSTED_REDIRECT_SCHEMES"))
 
 	// URL + client ID hardening. HTTPS + charset checks are delegated to
 	// mcp-oauth's exports. Skipped entirely in dev mode
-	// (MCP_OAUTH_ALLOW_INSECURE_HTTP=true) so local http://localhost:5556
+	// (OAUTH_ALLOW_INSECURE_HTTP=true) so local http://localhost:5556
 	// Dex deployments still work.
 	if !c.OAuthAllowInsecureHTTP {
 		if err := oidc.ValidateHTTPSURL(c.DexIssuerURL, "DEX_ISSUER_URL"); err != nil {
 			return nil, err
 		}
-		if err := oidc.ValidateHTTPSURL(c.OAuthIssuer, "MCP_OAUTH_ISSUER"); err != nil {
+		if err := oidc.ValidateHTTPSURL(c.OAuthIssuer, "OAUTH_ISSUER"); err != nil {
 			return nil, err
 		}
 	}
@@ -146,18 +183,29 @@ func loadConfig() (*config, error) {
 	return c, nil
 }
 
-// decodeEncryptionKey accepts either a 64-char hex string or a raw 32-byte
-// value and returns the 32-byte key, or an error if neither form matches.
+// decodeEncryptionKey accepts a 64-char hex string or a 44-char standard
+// base64 string (with a single "=" pad), both decoding to 32 bytes. Raw
+// 32-byte input is no longer accepted — see README for `openssl rand -hex 32`.
 func decodeEncryptionKey(s string) ([]byte, error) {
-	if len(s) == 64 {
-		if b, err := hex.DecodeString(s); err == nil && len(b) == 32 {
-			return b, nil
+	switch len(s) {
+	case 64:
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("64-char value is not valid hex: %w", err)
 		}
+		return b, nil
+	case 44:
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("44-char value is not valid base64: %w", err)
+		}
+		if len(b) != 32 {
+			return nil, fmt.Errorf("base64 decoded to %d bytes, want 32", len(b))
+		}
+		return b, nil
+	default:
+		return nil, fmt.Errorf("must be 64 hex chars or 44 base64 chars, got %d chars", len(s))
 	}
-	if len(s) == 32 {
-		return []byte(s), nil
-	}
-	return nil, fmt.Errorf("must be 32 raw bytes or 64 hex chars, got %d chars", len(s))
 }
 
 func envOr(k, def string) string {
@@ -167,41 +215,78 @@ func envOr(k, def string) string {
 	return def
 }
 
-// envDuration reads a time.Duration env var. "0" / "0s" yields 0 (disable);
-// an unset or malformed value falls back to def.
-func envDuration(k string, def time.Duration) time.Duration {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	if v == "0" {
-		return 0
-	}
-	if d, err := time.ParseDuration(v); err == nil {
-		return d
-	}
-	return def
-}
+// LogFormat values accepted by newLogger.
+const (
+	logFormatJSON = "json"
+	logFormatText = "text"
+)
 
-// envInt reads an int env var. 0 is a valid value (typically "disable"); an
-// unset or malformed value falls back to def.
-func envInt(k string, def int) int {
-	if v := os.Getenv(k); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
+// resolveLogFormat picks the slog handler based on LOG_FORMAT, or infers one
+// from KUBERNETES_SERVICE_HOST when LOG_FORMAT is unset. An unknown
+// LOG_FORMAT value is a hard error so operators see the typo at startup
+// instead of silently falling back to text on a JSON-parsed log pipeline.
+func resolveLogFormat() (string, error) {
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		switch strings.ToLower(v) {
+		case logFormatJSON:
+			return logFormatJSON, nil
+		case logFormatText:
+			return logFormatText, nil
+		default:
+			return "", fmt.Errorf("LOG_FORMAT=%q: want %q or %q", v, logFormatJSON, logFormatText)
 		}
 	}
-	return def
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return logFormatJSON, nil
+	}
+	return logFormatText, nil
 }
 
-func envBool(k string, def bool) bool {
+// envDuration reads a time.Duration env var. "" returns def; "0"/"0s" returns
+// 0 (the conventional "disable this feature" marker); an unparseable value is
+// a hard error so loadConfig fails fast rather than silently running with the
+// default.
+func envDuration(k string, def time.Duration) (time.Duration, error) {
 	v := os.Getenv(k)
 	if v == "" {
-		return def
+		return def, nil
+	}
+	if v == "0" || v == "0s" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q: not a duration (%w)", k, v, err)
+	}
+	return d, nil
+}
+
+// envInt reads an int env var. "" returns def; 0 is a valid parsed value
+// (typically "disable"); an unparseable value is a hard error.
+func envInt(k string, def int) (int, error) {
+	v := os.Getenv(k)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q: not an integer (%w)", k, v, err)
+	}
+	return n, nil
+}
+
+// envBool reads a bool env var. Accepts strconv.ParseBool forms
+// (true/false/1/0/t/f/TRUE/FALSE/True/False). "" returns def; an unparseable
+// value is a hard error so a typo like `DEBUG=yes` fails startup instead of
+// silently becoming false.
+func envBool(k string, def bool) (bool, error) {
+	v := os.Getenv(k)
+	if v == "" {
+		return def, nil
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return def
+		return false, fmt.Errorf("%s=%q: not a bool (want true|false|1|0)", k, v)
 	}
-	return b
+	return b, nil
 }

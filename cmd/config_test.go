@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -15,13 +18,14 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		"DEX_ISSUER_URL", "DEX_CLIENT_ID", "DEX_CLIENT_SECRET",
-		"MCP_OAUTH_ISSUER", "MCP_OAUTH_REDIRECT_URL",
-		"MCP_OAUTH_ALLOW_INSECURE_HTTP", "MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION",
-		"MCP_OAUTH_ENCRYPTION_KEY", "MCP_OAUTH_TRUSTED_AUDIENCES",
-		"MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES",
+		"OAUTH_ISSUER", "OAUTH_REDIRECT_URL",
+		"OAUTH_ALLOW_INSECURE_HTTP", "OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION",
+		"OAUTH_ENCRYPTION_KEY", "OAUTH_TRUSTED_AUDIENCES",
+		"OAUTH_TRUSTED_REDIRECT_SCHEMES",
 		"OAUTH_STORAGE", "VALKEY_ADDR", "VALKEY_PASSWORD", "VALKEY_TLS",
 		"GRAFANA_URL", "GRAFANA_PUBLIC_URL", "GRAFANA_SA_TOKEN", "GRAFANA_BASIC_AUTH",
 		"TOOL_TIMEOUT", "TOOL_MAX_RESPONSE_BYTES",
+		"DEBUG", "LOG_FORMAT", "KUBERNETES_SERVICE_HOST",
 	} {
 		t.Setenv(k, "")
 	}
@@ -32,11 +36,11 @@ func clearEnv(t *testing.T) {
 func setMinimalValid(t *testing.T) {
 	t.Helper()
 	clearEnv(t)
-	t.Setenv("MCP_OAUTH_ALLOW_INSECURE_HTTP", "true") // skip HTTPS URL validation in tests
+	t.Setenv("OAUTH_ALLOW_INSECURE_HTTP", "true") // skip HTTPS URL validation in tests
 	t.Setenv("DEX_ISSUER_URL", "http://dex.local")
 	t.Setenv("DEX_CLIENT_ID", "mcp")
 	t.Setenv("DEX_CLIENT_SECRET", "secret")
-	t.Setenv("MCP_OAUTH_ISSUER", "http://mcp.local")
+	t.Setenv("OAUTH_ISSUER", "http://mcp.local")
 	t.Setenv("GRAFANA_URL", "http://grafana.local")
 	t.Setenv("GRAFANA_SA_TOKEN", "token")
 }
@@ -47,7 +51,7 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing required env vars")
 	}
-	for _, want := range []string{"DEX_ISSUER_URL", "DEX_CLIENT_ID", "DEX_CLIENT_SECRET", "MCP_OAUTH_ISSUER", "GRAFANA_URL", "GRAFANA_SA_TOKEN"} {
+	for _, want := range []string{"DEX_ISSUER_URL", "DEX_CLIENT_ID", "DEX_CLIENT_SECRET", "OAUTH_ISSUER", "GRAFANA_URL", "GRAFANA_SA_TOKEN"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing-var error should list %q: %v", want, err)
 		}
@@ -83,7 +87,7 @@ func TestLoadConfig_RedirectURLDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	// When MCP_OAUTH_REDIRECT_URL is unset, it defaults to issuer + /oauth/callback.
+	// When OAUTH_REDIRECT_URL is unset, it defaults to issuer + /oauth/callback.
 	want := "http://mcp.local/oauth/callback"
 	if cfg.OAuthRedirectURL != want {
 		t.Errorf("OAuthRedirectURL = %q, want %q", cfg.OAuthRedirectURL, want)
@@ -92,11 +96,85 @@ func TestLoadConfig_RedirectURLDefault(t *testing.T) {
 
 func TestLoadConfig_WeakEncryptionKeyRejected(t *testing.T) {
 	setMinimalValid(t)
-	// 32 bytes of a single repeated character — zero-entropy, catastrophic.
-	t.Setenv("MCP_OAUTH_ENCRYPTION_KEY", strings.Repeat("a", 32))
+	// 64 hex chars decoding to 32 zero bytes — catastrophic placeholder.
+	t.Setenv("OAUTH_ENCRYPTION_KEY", strings.Repeat("0", 64))
 	_, err := loadConfig()
 	if err == nil || !strings.Contains(err.Error(), "low entropy") {
 		t.Fatalf("expected low-entropy rejection, got: %v", err)
+	}
+}
+
+func TestDecodeEncryptionKey(t *testing.T) {
+	raw := bytes.Repeat([]byte{0xab, 0xcd, 0xef, 0x12}, 8) // 32 bytes
+	cases := []struct {
+		name    string
+		in      string
+		want    []byte
+		wantErr bool
+	}{
+		{"hex 64", hex.EncodeToString(raw), raw, false},
+		{"base64 std 44", base64.StdEncoding.EncodeToString(raw), raw, false},
+		{"raw 32 bytes rejected", strings.Repeat("a", 32), nil, true},
+		{"wrong length", "too-short", nil, true},
+		{"64 chars non-hex", strings.Repeat("z", 64), nil, true},
+		{"44 chars non-base64", strings.Repeat("!", 44), nil, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := decodeEncryptionKey(c.in)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got key=%x", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !bytes.Equal(got, c.want) {
+				t.Errorf("decoded = %x, want %x", got, c.want)
+			}
+		})
+	}
+}
+
+func TestResolveLogFormat(t *testing.T) {
+	cases := []struct {
+		name       string
+		logFormat  string
+		inCluster  bool
+		wantFormat string
+		wantErr    bool
+	}{
+		{"unset, out-of-cluster → text", "", false, logFormatText, false},
+		{"unset, in-cluster → json", "", true, logFormatJSON, false},
+		{"explicit json wins out-of-cluster", "json", false, logFormatJSON, false},
+		{"explicit text wins in-cluster", "text", true, logFormatText, false},
+		{"case-insensitive", "JSON", false, logFormatJSON, false},
+		{"unknown value is a hard error", "logfmt", true, "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("LOG_FORMAT", c.logFormat)
+			if c.inCluster {
+				t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+			} else {
+				t.Setenv("KUBERNETES_SERVICE_HOST", "")
+			}
+			got, err := resolveLogFormat()
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != c.wantFormat {
+				t.Errorf("got %q, want %q", got, c.wantFormat)
+			}
+		})
 	}
 }
 
@@ -104,16 +182,28 @@ func TestEnvDuration(t *testing.T) {
 	cases := []struct {
 		name, env string
 		def, want time.Duration
+		wantErr   bool
 	}{
-		{"unset", "", 30 * time.Second, 30 * time.Second},
-		{"zero disables", "0", 30 * time.Second, 0},
-		{"valid", "5m", 30 * time.Second, 5 * time.Minute},
-		{"malformed falls back", "not-a-duration", 30 * time.Second, 30 * time.Second},
+		{"unset", "", 30 * time.Second, 30 * time.Second, false},
+		{"zero disables", "0", 30 * time.Second, 0, false},
+		{"zero-seconds disables", "0s", 30 * time.Second, 0, false},
+		{"valid", "5m", 30 * time.Second, 5 * time.Minute, false},
+		{"malformed is a hard error", "not-a-duration", 30 * time.Second, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("X", c.env)
-			if got := envDuration("X", c.def); got != c.want {
+			got, err := envDuration("X", c.def)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("envDuration(%q): want error, got %s", c.env, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("envDuration(%q): unexpected error: %v", c.env, err)
+			}
+			if got != c.want {
 				t.Errorf("envDuration(%q, %s) = %s, want %s", c.env, c.def, got, c.want)
 			}
 		})
@@ -124,16 +214,27 @@ func TestEnvInt(t *testing.T) {
 	cases := []struct {
 		name, env string
 		def, want int
+		wantErr   bool
 	}{
-		{"unset", "", 128 * 1024, 128 * 1024},
-		{"zero valid", "0", 128 * 1024, 0},
-		{"valid", "1024", 128 * 1024, 1024},
-		{"malformed falls back", "not-a-number", 128 * 1024, 128 * 1024},
+		{"unset", "", 128 * 1024, 128 * 1024, false},
+		{"zero valid", "0", 128 * 1024, 0, false},
+		{"valid", "1024", 128 * 1024, 1024, false},
+		{"malformed is a hard error", "not-a-number", 128 * 1024, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("X", c.env)
-			if got := envInt("X", c.def); got != c.want {
+			got, err := envInt("X", c.def)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("envInt(%q): want error, got %d", c.env, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("envInt(%q): unexpected error: %v", c.env, err)
+			}
+			if got != c.want {
 				t.Errorf("envInt(%q, %d) = %d, want %d", c.env, c.def, got, c.want)
 			}
 		})
@@ -144,18 +245,30 @@ func TestEnvBool(t *testing.T) {
 	cases := []struct {
 		name, env string
 		def, want bool
+		wantErr   bool
 	}{
-		{"unset default false", "", false, false},
-		{"unset default true", "", true, true},
-		{"true", "true", false, true},
-		{"false", "false", true, false},
-		{"1", "1", false, true},
-		{"malformed falls back to default", "not-a-bool", true, true},
+		{"unset default false", "", false, false, false},
+		{"unset default true", "", true, true, false},
+		{"true", "true", false, true, false},
+		{"false", "false", true, false, false},
+		{"1", "1", false, true, false},
+		{"DEBUG=yes is a hard error", "yes", false, false, true},
+		{"malformed is a hard error", "not-a-bool", true, false, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("X", c.env)
-			if got := envBool("X", c.def); got != c.want {
+			got, err := envBool("X", c.def)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("envBool(%q): want error, got %v", c.env, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("envBool(%q): unexpected error: %v", c.env, err)
+			}
+			if got != c.want {
 				t.Errorf("envBool(%q, %v) = %v, want %v", c.env, c.def, got, c.want)
 			}
 		})

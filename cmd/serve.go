@@ -64,7 +64,9 @@ func init() {
 	serveCmd.Flags().StringVar(&flagTransport, "transport", envOr("MCP_TRANSPORT", transportStreamableHTTP), transportStdio+" | "+transportSSE+" | "+transportStreamableHTTP)
 	serveCmd.Flags().StringVar(&flagMCPAddr, "mcp-addr", envOr("MCP_ADDR", ":8080"), "listen address for MCP HTTP transport")
 	serveCmd.Flags().StringVar(&flagMetricsAddr, "metrics-addr", envOr("METRICS_ADDR", ":9091"), "listen address for /metrics, /healthz, /readyz, /healthz/detailed")
-	serveCmd.Flags().BoolVar(&flagDebug, "debug", envBool("DEBUG", false), "enable debug logging")
+	// DEBUG env is read inside runServe (via loadConfig) so a malformed value
+	// fails startup with a clear error rather than silently defaulting.
+	serveCmd.Flags().BoolVar(&flagDebug, "debug", false, "enable debug logging (overrides DEBUG env)")
 }
 
 // validateTransport rejects unknown MCP_TRANSPORT values. Extracted so the
@@ -79,8 +81,6 @@ func validateTransport(transport string) error {
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
-	logger := newLogger(flagDebug)
-
 	if err := validateTransport(flagTransport); err != nil {
 		return err
 	}
@@ -93,11 +93,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
+	logger := newLogger(cfg.Debug || flagDebug, cfg.LogFormat)
 	if cfg.OAuthAllowInsecureHTTP {
-		logger.Warn("MCP_OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
+		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
 	}
 	if cfg.OAuthAllowPublicClientRegistration {
-		logger.Warn("MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
+		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
 	// --- Kubernetes client + informer cache for GrafanaOrganization CRs ---
@@ -378,8 +380,23 @@ func runServe(_ *cobra.Command, _ []string) error {
 			return r.Method + " " + r.URL.Path
 		}),
 	)
-	mcpServer := &http.Server{Addr: flagMCPAddr, Handler: mcpHandler, ReadHeaderTimeout: 10 * time.Second}
-	obsServer := &http.Server{Addr: flagMetricsAddr, Handler: obsMux, ReadHeaderTimeout: 5 * time.Second}
+	// IdleTimeout closes keep-alive connections idle past 60s on both servers;
+	// WriteTimeout is set only on the obs server — MCP streaming-HTTP / SSE
+	// responses are intentionally long-lived and a write timeout there would
+	// cut sessions mid-flow.
+	mcpServer := &http.Server{
+		Addr:              flagMCPAddr,
+		Handler:           mcpHandler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	obsServer := &http.Server{
+		Addr:              flagMetricsAddr,
+		Handler:           obsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
 	go func() {
 		logger.Info("MCP listening", "addr", flagMCPAddr, "transport", flagTransport)
@@ -418,12 +435,19 @@ func runServe(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func newLogger(debug bool) *slog.Logger {
+func newLogger(debug bool, format string) *slog.Logger {
 	lvl := slog.LevelInfo
 	if debug {
 		lvl = slog.LevelDebug
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+	opts := &slog.HandlerOptions{Level: lvl}
+	var h slog.Handler
+	if format == logFormatJSON {
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stderr, opts)
+	}
+	return slog.New(h)
 }
 
 // k8sOrgRegistry adapts a controller-runtime cache to authz.OrgRegistry.

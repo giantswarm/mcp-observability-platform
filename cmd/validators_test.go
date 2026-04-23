@@ -63,7 +63,7 @@ func TestValidateEncryptionKeyEntropy(t *testing.T) {
 			}
 			if c.wantErr && err != nil {
 				// Check the message points at the right cause to help operators.
-				if !strings.Contains(err.Error(), "MCP_OAUTH_ENCRYPTION_KEY") {
+				if !strings.Contains(err.Error(), "OAUTH_ENCRYPTION_KEY") {
 					t.Errorf("error should mention the env var name: %v", err)
 				}
 			}
