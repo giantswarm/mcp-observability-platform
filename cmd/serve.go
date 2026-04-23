@@ -276,7 +276,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 	auditLogger := audit.New(auditHandler, audit.WithRedactor(redactSecretArgs))
 
 	// --- MCP server + tools/resources ---
-	// TOOL_TIMEOUT / TOOL_MAX_RESPONSE_BYTES are read once at startup and
 	// threaded through to the middleware constructors — avoids the per-
 	// invocation env parse that was only ever there for test convenience.
 	mcp, err := server.New(server.Config{
