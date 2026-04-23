@@ -3,6 +3,18 @@
 // It assumes the caller provides a Grafana server-admin service-account token
 // (an SA granted the "Grafana Admin" server role), so that X-Grafana-Org-Id
 // can switch org context per request. Regular org-scoped SAs will NOT work.
+//
+// # SSRF posture
+//
+// Every outbound request flows through [client.fetch], the package's single
+// HTTP entry point. fetch builds the URL from c.base.JoinPath locally and
+// never accepts a caller-constructed URL — so it is structurally impossible
+// to point an API call at a host other than the configured Grafana base. The
+// Authorization-bearing request cannot be sent off-origin from inside this
+// package. Reinforced at runtime by [sameOriginRedirectPolicy] (same-host
+// redirect budget; cross-origin redirects rejected) and, for the datasource
+// proxy specifically, [validateDatasourceProxyPath] (traversal / leading-
+// slash / length cap).
 package grafana
 
 import (
@@ -172,21 +184,102 @@ type RequestOpts struct {
 	Caller string // subject/email; forwarded as X-Grafana-User if non-empty
 }
 
+// UserOrgMembership is Grafana's projection of one org a user belongs to.
+// Role is Grafana's computed role ("Admin" | "Editor" | "Viewer" | "None")
+// evaluated against the SSO org_mapping setting.
+type UserOrgMembership struct {
+	OrgID   int64  `json:"orgId"`
+	OrgName string `json:"name"`
+	Role    string `json:"role"`
+}
+
+// fetch is the sole HTTP entry point in this package. URL is built from
+// c.base.JoinPath(path) locally — no caller can construct a *http.Request
+// and hand it in, so the SA-token-bearing request cannot be directed off-
+// origin from inside this package. err is non-nil only for transport or
+// body-read failures; HTTP status errors are the caller's responsibility
+// (use fetchJSON for the common "translate >= 300 to error" path).
+//
+// All outbound headers are set here: Authorization, Accept: application/json,
+// X-Grafana-Org-Id (when OrgID > 0), X-Grafana-User (sanitised — CRLF /
+// non-printable-ASCII stripped, length capped).
+func (c *client) fetch(ctx context.Context, method, path string, query url.Values, body io.Reader, opts RequestOpts) (status int, respBody []byte, contentType string, err error) {
+	u := c.base.JoinPath(path)
+	if len(query) > 0 {
+		u.RawQuery = query.Encode()
+	}
+
+	ctx, span := tracer.Start(ctx, "grafana."+strings.TrimPrefix(path, "/api/"),
+		trace.WithAttributes(
+			attribute.String("http.method", method),
+			attribute.String("grafana.path", path),
+		),
+	)
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return 0, nil, "", fmt.Errorf("grafana: new request: %w", err)
+	}
+	req.Header.Set("Authorization", string(c.authHeader))
+	req.Header.Set("Accept", "application/json")
+	if opts.OrgID > 0 {
+		req.Header.Set("X-Grafana-Org-Id", strconv.FormatInt(opts.OrgID, 10))
+	}
+	if caller := sanitizeCallerHeader(opts.Caller); caller != "" {
+		req.Header.Set("X-Grafana-User", caller)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return 0, nil, "", fmt.Errorf("grafana: %s %s: %w", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err = readLimited(resp)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return 0, nil, "", fmt.Errorf("grafana: %s %s: %w", method, path, err)
+	}
+
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+	if resp.StatusCode >= 300 {
+		span.SetStatus(codes.Error, fmt.Sprintf("http %d", resp.StatusCode))
+	}
+	return resp.StatusCode, respBody, resp.Header.Get("Content-Type"), nil
+}
+
+// fetchJSON is the JSON-shaped helper used by every Grafana API call that
+// returns application/json: HTTP >= 300 becomes a formatted error carrying
+// the upstream body, Prometheus-family `{"status":"error"}` in a 200 body is
+// translated into an error with the errorType/error message. Returns the
+// body as json.RawMessage for callers to unmarshal.
+func (c *client) fetchJSON(ctx context.Context, method, path string, query url.Values, body io.Reader, opts RequestOpts) (json.RawMessage, error) {
+	status, respBody, _, err := c.fetch(ctx, method, path, query, body, opts)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("grafana: %s %s: status %d: %s", method, path, status, string(respBody))
+	}
+	if err := detectPromError(respBody); err != nil {
+		return nil, fmt.Errorf("grafana: %s %s: %w", method, path, err)
+	}
+	return json.RawMessage(respBody), nil
+}
+
 // Ping calls GET /api/health, Grafana's auth-free reachability endpoint.
 // Used by readiness probes; cheaper than VerifyServerAdmin (which lists all
 // orgs). Returns nil on 2xx.
 func (c *client) Ping(ctx context.Context) error {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/health", nil, nil, RequestOpts{})
+	status, _, _, err := c.fetch(ctx, http.MethodGet, "/api/health", nil, nil, RequestOpts{})
 	if err != nil {
 		return err
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("grafana: GET /api/health: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("grafana: GET /api/health: status %d", resp.StatusCode)
+	if status >= 300 {
+		return fmt.Errorf("grafana: GET /api/health: status %d", status)
 	}
 	return nil
 }
@@ -194,24 +287,15 @@ func (c *client) Ping(ctx context.Context) error {
 // VerifyServerAdmin calls GET /api/orgs, which requires the server-admin role.
 // 401/403 means the SA is not server-admin and cannot switch org via X-Grafana-Org-Id.
 func (c *client) VerifyServerAdmin(ctx context.Context) error {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/orgs", nil, nil, RequestOpts{})
+	status, body, _, err := c.fetch(ctx, http.MethodGet, "/api/orgs", nil, nil, RequestOpts{})
 	if err != nil {
 		return err
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("grafana: GET /api/orgs: %w", err)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return fmt.Errorf("grafana: SA is not server-admin (status %d)", status)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("grafana: SA is not server-admin (status %d)", resp.StatusCode)
-	}
-	if resp.StatusCode >= 300 {
-		body, rerr := readLimited(resp)
-		if rerr != nil {
-			return fmt.Errorf("grafana: GET /api/orgs: status %d: %w", resp.StatusCode, rerr)
-		}
-		return fmt.Errorf("grafana: GET /api/orgs: status %d: %s", resp.StatusCode, string(body))
+	if status >= 300 {
+		return fmt.Errorf("grafana: GET /api/orgs: status %d: %s", status, string(body))
 	}
 	return nil
 }
@@ -221,7 +305,7 @@ func (c *client) GetDashboard(ctx context.Context, opts RequestOpts, uid string)
 	if uid == "" {
 		return nil, errors.New("grafana: dashboard uid is required")
 	}
-	return c.doGET(ctx, "/api/dashboards/uid/"+url.PathEscape(uid), nil, opts)
+	return c.fetchJSON(ctx, http.MethodGet, "/api/dashboards/uid/"+url.PathEscape(uid), nil, nil, opts)
 }
 
 // SearchDashboards returns dashboards visible in the given org. Results are
@@ -234,7 +318,7 @@ func (c *client) SearchDashboards(ctx context.Context, opts RequestOpts, query s
 	if query != "" {
 		q.Set("query", query)
 	}
-	return c.doGET(ctx, "/api/search", q, opts)
+	return c.fetchJSON(ctx, http.MethodGet, "/api/search", q, nil, opts)
 }
 
 // SearchFolders returns folders visible in the given org. Same endpoint as
@@ -247,12 +331,12 @@ func (c *client) SearchFolders(ctx context.Context, opts RequestOpts, query stri
 	if query != "" {
 		q.Set("query", query)
 	}
-	return c.doGET(ctx, "/api/search", q, opts)
+	return c.fetchJSON(ctx, http.MethodGet, "/api/search", q, nil, opts)
 }
 
 // ListDatasources returns the datasources visible in the given org.
 func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) (json.RawMessage, error) {
-	return c.doGET(ctx, "/api/datasources", nil, opts)
+	return c.fetchJSON(ctx, http.MethodGet, "/api/datasources", nil, nil, opts)
 }
 
 // GetDatasource returns full datasource details by UID.
@@ -260,28 +344,19 @@ func (c *client) GetDatasource(ctx context.Context, opts RequestOpts, uid string
 	if uid == "" {
 		return nil, errors.New("grafana: datasource uid is required")
 	}
-	return c.doGET(ctx, "/api/datasources/uid/"+url.PathEscape(uid), nil, opts)
+	return c.fetchJSON(ctx, http.MethodGet, "/api/datasources/uid/"+url.PathEscape(uid), nil, nil, opts)
 }
 
 // GetAnnotations forwards a query to /api/annotations. Caller assembles q.
 func (c *client) GetAnnotations(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
-	return c.doGET(ctx, "/api/annotations", q, opts)
+	return c.fetchJSON(ctx, http.MethodGet, "/api/annotations", q, nil, opts)
 }
 
 // GetAnnotationTags returns the set of tags used across annotations in the
 // given org, optionally filtered by a name prefix. Matches upstream
 // grafana/mcp-grafana's get_annotation_tags.
 func (c *client) GetAnnotationTags(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
-	return c.doGET(ctx, "/api/annotations/tags", q, opts)
-}
-
-// UserOrgMembership is Grafana's projection of one org a user belongs to.
-// Role is Grafana's computed role ("Admin" | "Editor" | "Viewer" | "None")
-// evaluated against the SSO org_mapping setting.
-type UserOrgMembership struct {
-	OrgID   int64  `json:"orgId"`
-	OrgName string `json:"name"`
-	Role    string `json:"role"`
+	return c.fetchJSON(ctx, http.MethodGet, "/api/annotations/tags", q, nil, opts)
 }
 
 // LookupUser resolves a caller identity (email or login) to a Grafana user.
@@ -297,24 +372,15 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 		return nil, errors.New("grafana: loginOrEmail is required")
 	}
 	q := url.Values{"loginOrEmail": []string{loginOrEmail}}
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/users/lookup", q, nil, RequestOpts{})
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.http.Do(req)
+	status, body, _, err := c.fetch(ctx, http.MethodGet, "/api/users/lookup", q, nil, RequestOpts{})
 	if err != nil {
 		return nil, fmt.Errorf("grafana: lookup %q: %w", loginOrEmail, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
+	if status == http.StatusNotFound {
 		return nil, nil
 	}
-	body, err := readLimited(resp)
-	if err != nil {
-		return nil, fmt.Errorf("grafana: lookup %q: %w", loginOrEmail, err)
-	}
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("grafana: lookup %q: status %d: %s", loginOrEmail, resp.StatusCode, string(body))
+	if status >= 300 {
+		return nil, fmt.Errorf("grafana: lookup %q: status %d: %s", loginOrEmail, status, string(body))
 	}
 	var out struct {
 		ID    int64  `json:"id"`
@@ -334,7 +400,7 @@ func (c *client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembershi
 	if userID <= 0 {
 		return nil, errors.New("grafana: userID is required")
 	}
-	body, err := c.doGET(ctx, fmt.Sprintf("/api/users/%d/orgs", userID), nil, RequestOpts{})
+	body, err := c.fetchJSON(ctx, http.MethodGet, fmt.Sprintf("/api/users/%d/orgs", userID), nil, nil, RequestOpts{})
 	if err != nil {
 		return nil, err
 	}
@@ -376,24 +442,16 @@ func (c *client) HasImageRenderer(ctx context.Context) (bool, error) {
 		return c.rendererPresent, c.rendererErr
 	}
 
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/plugins/grafana-image-renderer/settings", nil, nil, RequestOpts{})
+	status, _, _, err := c.fetch(ctx, http.MethodGet, "/api/plugins/grafana-image-renderer/settings", nil, nil, RequestOpts{})
+	c.rendererAt = time.Now()
 	if err != nil {
 		c.rendererErr = err
-		c.rendererAt = time.Now()
 		return false, err
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		c.rendererErr = err
-		c.rendererAt = time.Now()
-		return false, err
-	}
-	defer func() { _ = resp.Body.Close() }()
+	c.rendererErr = nil
 	// 200 -> plugin settings exist -> installed; 404 -> not installed.
 	// Anything else (403 etc.) treat as unknown; retry later.
-	c.rendererAt = time.Now()
-	c.rendererErr = nil
-	c.rendererPresent = resp.StatusCode == http.StatusOK
+	c.rendererPresent = status == http.StatusOK
 	return c.rendererPresent, nil
 }
 
@@ -407,7 +465,7 @@ func (c *client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int
 	if err := validateDatasourceProxyPath(path); err != nil {
 		return nil, err
 	}
-	return c.doGET(ctx, fmt.Sprintf("/api/datasources/proxy/%d/%s", dsID, path), query, opts)
+	return c.fetchJSON(ctx, http.MethodGet, fmt.Sprintf("/api/datasources/proxy/%d/%s", dsID, path), query, nil, opts)
 }
 
 // RenderPanel fetches a rendered panel image from Grafana's render endpoint.
@@ -427,36 +485,18 @@ func (c *client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID
 		q = url.Values{}
 	}
 	q.Set("panelId", strconv.Itoa(panelID))
-	req, err := c.newRequest(ctx, http.MethodGet, "/render/d-solo/"+url.PathEscape(dashboardUID), q, nil, opts)
+
+	status, body, ct, err := c.fetch(ctx, http.MethodGet, "/render/d-solo/"+url.PathEscape(dashboardUID), q, nil, opts)
 	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Accept", "image/png")
-	ctx, span := tracer.Start(ctx, "grafana.render_panel",
-		trace.WithAttributes(attribute.Int64("grafana.org_id", opts.OrgID), attribute.String("grafana.dashboard_uid", dashboardUID), attribute.Int("grafana.panel_id", panelID)),
-	)
-	defer span.End()
-	req = req.WithContext(ctx)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
 		return nil, "", fmt.Errorf("grafana: render: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := readLimited(resp)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, "", fmt.Errorf("grafana: render: %w", err)
-	}
-	ct := resp.Header.Get("Content-Type")
-	if resp.StatusCode >= 300 {
-		span.SetStatus(codes.Error, fmt.Sprintf("http %d", resp.StatusCode))
+	if status >= 300 {
 		if strings.Contains(ct, "text/html") || strings.Contains(string(body), "Rendering") {
 			return nil, "", fmt.Errorf(
 				"grafana: image renderer not available (status %d). Install the 'grafana-image-renderer' plugin in Grafana, or deploy the renderer as a sidecar/Deployment and set GF_RENDERING_SERVER_URL + GF_RENDERING_CALLBACK_URL on Grafana. See https://grafana.com/grafana/plugins/grafana-image-renderer/",
-				resp.StatusCode)
+				status)
 		}
-		return nil, "", fmt.Errorf("grafana: render: status %d: %s", resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("grafana: render: status %d: %s", status, string(body))
 	}
 	if !strings.HasPrefix(ct, "image/") {
 		return nil, "", fmt.Errorf(
@@ -464,47 +504,6 @@ func (c *client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID
 			ct)
 	}
 	return body, ct, nil
-}
-
-func (c *client) doGET(ctx context.Context, path string, query url.Values, opts RequestOpts) (json.RawMessage, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, path, query, nil, opts)
-	if err != nil {
-		return nil, err
-	}
-	return c.do(ctx, req, path)
-}
-
-func (c *client) do(ctx context.Context, req *http.Request, path string) (json.RawMessage, error) {
-	ctx, span := tracer.Start(ctx, "grafana."+strings.TrimPrefix(path, "/api/"),
-		trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("grafana.path", path)),
-	)
-	defer span.End()
-	req = req.WithContext(ctx)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("grafana: %s %s: %w", req.Method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := readLimited(resp)
-	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("grafana: %s %s: %w", req.Method, path, err)
-	}
-	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-	if resp.StatusCode >= 300 {
-		span.SetStatus(codes.Error, fmt.Sprintf("http %d", resp.StatusCode))
-		return nil, fmt.Errorf("grafana: %s %s: status %d: %s", req.Method, path, resp.StatusCode, string(body))
-	}
-	// Prometheus-family datasources (Mimir, Loki /labels, /series) return
-	// 200 with `{"status":"error", "error":"..."}` when the query is malformed.
-	// Detect that here so the MCP surface treats it as a real error rather
-	// than returning a success-shaped error payload.
-	if err := detectPromError(body); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("grafana: %s %s: %w", req.Method, path, err)
-	}
-	return json.RawMessage(body), nil
 }
 
 // detectPromError scans the first few hundred bytes for a JSON object with
@@ -537,33 +536,6 @@ func detectPromError(body []byte) error {
 		return fmt.Errorf("upstream error (%s): %s", peek.ErrorType, peek.Error)
 	}
 	return fmt.Errorf("upstream error: %s", peek.Error)
-}
-
-// newRequest constructs a request with Bearer auth and, when orgID > 0,
-// X-Grafana-Org-Id set so that Grafana scopes the call to that org.
-// orgID == 0 means "use Grafana's default org context" (only safe for
-// server-level endpoints such as /api/orgs).
-func (c *client) newRequest(ctx context.Context, method, path string, query url.Values, body io.Reader, opts RequestOpts) (*http.Request, error) {
-	u := c.base.JoinPath(path)
-	if len(query) > 0 {
-		u.RawQuery = query.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
-	if err != nil {
-		return nil, fmt.Errorf("grafana: new request: %w", err)
-	}
-	req.Header.Set("Authorization", string(c.authHeader))
-	req.Header.Set("Accept", "application/json")
-	if opts.OrgID > 0 {
-		req.Header.Set("X-Grafana-Org-Id", strconv.FormatInt(opts.OrgID, 10))
-	}
-	// Forwarded to Grafana's audit log so server-admin SA calls are
-	// attributed back to the MCP caller's OIDC subject/email. Sanitise
-	// first (strip control chars, cap length) to block header injection.
-	if caller := sanitizeCallerHeader(opts.Caller); caller != "" {
-		req.Header.Set("X-Grafana-User", caller)
-	}
-	return req, nil
 }
 
 // validateDatasourceProxyPath is a minimal guard against future callers that
