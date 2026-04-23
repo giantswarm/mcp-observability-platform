@@ -15,7 +15,7 @@ const (
 	DefaultCacheSize        = 10000
 )
 
-// cacheEntry is one resolver-cache entry. It holds everything Require
+// cacheEntry is one authorizer-cache entry. It holds everything Require
 // needs so the authorised path never re-lists the registry: access gives
 // the caller's accessible orgs, and allOrgRefs is the name/displayname set
 // used to pick the right error when access misses.
@@ -55,7 +55,7 @@ func (r *authorizer) cacheStore(key string, entry cacheEntry) {
 // cacheKey returns the key under which Caller's access is cached. OIDC
 // subject is the stable, non-spoofable identifier and is always preferred.
 // When no subject is present (unauthenticated test paths, legacy callers)
-// we fall back to lowercased email so the resolver still functions; these
+// we fall back to lowercased email so the authorizer still functions; these
 // paths shouldn't reach production because PromoteOAuthCaller populates
 // Subject for authenticated callers.
 func cacheKey(c Caller) string {

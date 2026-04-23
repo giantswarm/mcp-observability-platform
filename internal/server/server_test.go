@@ -84,7 +84,7 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 		wantErr string
 	}{
 		{"no logger", Config{Authorizer: resolver, Grafana: gf}, "Logger is required"},
-		{"no resolver", Config{Logger: log, Grafana: gf}, "Resolver is required"},
+		{"no authorizer", Config{Logger: log, Grafana: gf}, "Authorizer is required"},
 		{"no grafana", Config{Logger: log, Authorizer: resolver}, "Grafana is required"},
 	}
 	for _, c := range cases {

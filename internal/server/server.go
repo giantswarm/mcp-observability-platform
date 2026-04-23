@@ -38,7 +38,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		return nil, errors.New("server: Logger is required")
 	}
 	if cfg.Authorizer == nil {
-		return nil, errors.New("server: Resolver is required")
+		return nil, errors.New("server: Authorizer is required")
 	}
 	if cfg.Grafana == nil {
 		return nil, errors.New("server: Grafana is required")

@@ -1,5 +1,5 @@
-// Package authz resolves a caller's identity to the set of Grafana
-// organisations and role they may access.
+// Package authz decides which Grafana orgs a caller may act on, and with
+// what Role.
 //
 // Grafana is the source of truth. observability-operator writes an
 // org_mapping string to Grafana's SSO settings, and Grafana itself evaluates
@@ -17,7 +17,7 @@
 //
 // # Layout
 //
-//   - resolver.go — Resolver + Resolve/Require/load (this file).
+//   - authorizer.go — Authorizer + Resolve/Require/load (this file).
 //   - cache.go    — LRU + singleflight + TTL + clone discipline.
 //   - role.go     — Role enum.
 //   - caller.go   — Caller + OrgRegistry + OrgMembershipLookup ports.
@@ -38,21 +38,35 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Resolver is the consumer-facing port. The concrete implementation (the
-// unexported `resolver` struct below) is built by NewAuthorizer; tests pass
-// a fake implementing this interface.
+// Authorizer decides whether a caller may act on a given Grafana org, and at
+// what Role. It's the authz package's main consumer-facing surface: tool
+// handlers hold one and call Require() before touching any datasource.
+//
+// The production implementation asks Grafana (the source of truth for
+// role assignments, evaluated from SSO org_mapping at each login) who the
+// caller is, what orgs they have, and with what role — then joins that
+// with local Organization metadata so handlers receive a fully-populated
+// Organization (tenants, datasources, role) in one shot. Deferring to
+// Grafana avoids re-implementing its group-matching / precedence /
+// casing rules on our side.
+//
+// All returned Organizations are deep-cloned; handler mutations cannot
+// escape into any internal cache. An empty Caller (no Email, no Subject)
+// returns ErrNoCallerIdentity.
 type Authorizer interface {
-	// Require returns the caller's access to orgRef, or an error classifying
-	// why access was denied (ErrNoCallerIdentity, ErrOrgNotFound,
-	// ErrNotAuthorised, ErrInsufficientRole).
+	// Require returns the caller's Organization access to orgRef (the
+	// registry Name or its DisplayName, case-insensitive), or an error
+	// classifying why access was denied: ErrNoCallerIdentity,
+	// ErrOrgNotFound, ErrNotAuthorised, or ErrInsufficientRole.
 	Require(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error)
 
 	// Resolve returns every org the caller has a non-None role on, keyed
-	// by registry Name.
+	// by registry Name. The empty map + nil err means "authenticated but
+	// no accessible orgs".
 	Resolve(ctx context.Context, caller Caller) (map[string]Organization, error)
 }
 
-// resolver answers "what can this caller do?" by asking Grafana for the
+// authorizer answers "what can this caller do?" by asking Grafana for the
 // caller's org memberships and joining them against the OrgRegistry.
 //
 // The cache is keyed on OIDC subject (stable, non-spoofable). Email can
@@ -73,7 +87,7 @@ type authorizer struct {
 	negativeCacheTTL time.Duration
 }
 
-// NewAuthorizer constructs a Resolver with the given cache settings. Passing
+// NewAuthorizer constructs a Authorizer with the given cache settings. Passing
 // zero for any of the three cache parameters uses the DefaultCache*
 // constants. cacheSize of -1 disables caching entirely (useful for tests).
 func NewAuthorizer(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
@@ -96,7 +110,7 @@ func NewAuthorizer(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.
 	if cacheSize > 0 {
 		c, err := lru.New[string, cacheEntry](cacheSize)
 		if err != nil {
-			return nil, fmt.Errorf("resolver cache: %w", err)
+			return nil, fmt.Errorf("authorizer cache: %w", err)
 		}
 		r.cache = c
 	}

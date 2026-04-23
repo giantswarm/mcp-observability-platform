@@ -8,7 +8,7 @@ import (
 	"github.com/giantswarm/mcp-oauth/providers"
 )
 
-// Caller carries the identity bits the resolver needs to ask Grafana about
+// Caller carries the identity bits the authorizer needs to ask Grafana about
 // someone. Email is the human-facing handle Grafana provisions users by;
 // Subject is the OIDC sub claim, the stable non-spoofable identifier used
 // as the cache key.
@@ -30,7 +30,7 @@ func (c Caller) Identity() string {
 // Empty reports whether no identifying fields were set.
 func (c Caller) Empty() bool { return c.Email == "" && c.Subject == "" }
 
-// OrgRegistry is the resolver's port onto "the set of known Grafana
+// OrgRegistry is the authorizer's port onto "the set of known Grafana
 // organisations". Implementations today wrap controller-runtime's informer
 // cache of GrafanaOrganization CRs; tests implement it directly in-memory.
 // Domain types only — the adapter is responsible for translating CR shapes
@@ -39,9 +39,9 @@ type OrgRegistry interface {
 	List(ctx context.Context) ([]Organization, error)
 }
 
-// OrgMembershipLookup is the subset of grafana.Client the resolver needs.
+// OrgMembershipLookup is the subset of grafana.Client the authorizer needs.
 // Named from the consumer's perspective — the name doesn't leak "this is
-// satisfied by a Grafana client" because the resolver shouldn't care.
+// satisfied by a Grafana client" because the authorizer shouldn't care.
 type OrgMembershipLookup interface {
 	// LookupUserID returns Grafana's internal user id for the given email or
 	// login, or (0, false, nil) if the user hasn't been provisioned yet.
@@ -108,14 +108,14 @@ func CallerTokenSource(ctx context.Context) string {
 	return string(ui.TokenSource)
 }
 
-// CallerFromContext extracts the identifiers the resolver needs to ask
+// CallerFromContext extracts the identifiers the authorizer needs to ask
 // Grafana who this caller is. Returns an empty Caller if no identity is
-// attached; the resolver then errors downstream via ErrNoCallerIdentity.
+// attached; the authorizer then errors downstream via ErrNoCallerIdentity.
 //
 // Subject is the OIDC sub claim. Login is deliberately left empty: OIDC sub
 // is NOT a Grafana login name, and collapsing the two here would make
 // Grafana's /api/users/lookup silently miss when the caller's email/login
-// doesn't match their sub. The resolver falls back to Email-based lookup
+// doesn't match their sub. The authorizer falls back to Email-based lookup
 // when Login is empty.
 func CallerFromContext(ctx context.Context) Caller {
 	ui, ok := userInfoFromContext(ctx)
@@ -130,7 +130,7 @@ func CallerFromContext(ctx context.Context) Caller {
 // the argument to mcpsrv.WithHTTPContextFunc / WithSSEContextFunc — it
 // bridges HTTP-level OAuth state into MCP-level handler context. Callers
 // that reach a tool without a valid identity are rejected at the authz
-// boundary (the resolver returns ErrNoCallerIdentity on an empty Caller).
+// boundary (the authorizer returns ErrNoCallerIdentity on an empty Caller).
 func PromoteOAuthCaller(ctx context.Context, r *http.Request) context.Context {
 	if ui, ok := oauth.UserInfoFromContext(r.Context()); ok {
 		return withCaller(ctx, ui)

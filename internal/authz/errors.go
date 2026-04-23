@@ -12,7 +12,7 @@ var (
 	// (neither by Name nor by DisplayName). Wrappable via errors.Is.
 	ErrOrgNotFound = errors.New("org not found")
 
-	// ErrNoCallerIdentity means the resolver was called without any of
+	// ErrNoCallerIdentity means the authorizer was called without any of
 	// Email or Subject set on Caller.
 	ErrNoCallerIdentity = errors.New("no caller identity")
 )
