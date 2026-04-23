@@ -86,7 +86,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, d *Deps) {
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := promSelectorArgs(req)
-			names, err := fetchPromLabelList(ctx, d, org.OrgID, dsID, "api/v1/labels", q)
+			names, err := fetchPromLabelList(ctx, d, org.OrgID, dsID, "api/v1/labels", "api/v1/labels", q)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -403,8 +403,11 @@ func runPromLabelValues(ctx context.Context, d *Deps, orgRef, label string, req 
 	ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 	defer cancel()
 	q := promSelectorArgs(req)
+	// Use a templated metric path (":name" placeholder) so Prom label
+	// cardinality stays bounded — the user-controlled label value lives
+	// only in the URL, never in the metric's "path" label.
 	path := "api/v1/label/" + url.PathEscape(label) + "/values"
-	names, err := fetchPromLabelList(ctx, d, org.OrgID, dsID, path, q)
+	names, err := fetchPromLabelList(ctx, d, org.OrgID, dsID, "api/v1/label/:name/values", path, q)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -428,9 +431,11 @@ func promSelectorArgs(req mcp.CallToolRequest) url.Values {
 }
 
 // fetchPromLabelList hits a Prometheus label-list endpoint (labels or values)
-// and returns the data[] array.
-func fetchPromLabelList(ctx context.Context, d *Deps, orgID, dsID int64, path string, q url.Values) ([]string, error) {
-	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
+// and returns the data[] array. metricPath is the bounded-cardinality label
+// used on the proxy-count metric (e.g. "api/v1/label/:name/values"); path is
+// the actual URL path sent to Grafana.
+func fetchPromLabelList(ctx context.Context, d *Deps, orgID, dsID int64, metricPath, path string, q url.Values) ([]string, error) {
+	observability.GrafanaProxyTotal.WithLabelValues(metricPath).Inc()
 	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus %s: %w", path, err)

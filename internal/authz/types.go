@@ -36,13 +36,13 @@ type Datasource struct {
 // Role once resolved.
 //
 // An Organization straight from OrgRegistry.List carries Role = RoleNone —
-// that's "registry-output state, pre-resolution". The resolver fills Role
+// that's "registry-output state, pre-resolution". The authorizer fills Role
 // from the caller's Grafana membership before returning to tool handlers, so
 // any Organization a handler sees has been authorised (Role ≥ RoleViewer).
-// Code that calls OrgRegistry.List directly (the resolver only) MUST NOT
+// Code that calls OrgRegistry.List directly (the authorizer only) MUST NOT
 // treat a RoleNone entry as authorised.
 //
-// Handlers read Organization values returned from the resolver's Require /
+// Handlers read Organization values returned from the authorizer's Require /
 // Resolve methods; those are always deep-cloned so handler mutations cannot
 // escape into the cache — see cloneOrganization in cache.go.
 type Organization struct {

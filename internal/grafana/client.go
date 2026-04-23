@@ -66,8 +66,33 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-// Client is a Grafana HTTP client scoped to a single Grafana instance.
-type Client struct {
+// Client is the consumer-facing port onto Grafana. The concrete
+// implementation (the unexported `client` struct below) is built by New;
+// tests pass a fake implementing this interface.
+type Client interface {
+	Ping(ctx context.Context) error
+	VerifyServerAdmin(ctx context.Context) error
+	BaseURL() (*url.URL, error)
+	HasImageRenderer(ctx context.Context) (bool, error)
+	LookupUser(ctx context.Context, loginOrEmail string) (*struct {
+		ID    int64  `json:"id"`
+		Email string `json:"email"`
+		Login string `json:"login"`
+	}, error)
+	UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error)
+	GetDashboard(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error)
+	SearchDashboards(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error)
+	SearchFolders(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error)
+	ListDatasources(ctx context.Context, opts RequestOpts) (json.RawMessage, error)
+	GetDatasource(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error)
+	GetAnnotations(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error)
+	GetAnnotationTags(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error)
+	DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error)
+	RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID string, panelID int, q url.Values) ([]byte, string, error)
+}
+
+// client is the concrete Grafana HTTP client.
+type client struct {
 	base       *url.URL
 	publicBase *url.URL
 	authHeader redactedHeader
@@ -84,7 +109,7 @@ type Client struct {
 
 // New constructs a Client. Returns an error if URL is empty/unparseable or
 // neither/both credentials are set.
-func New(cfg Config) (*Client, error) {
+func New(cfg Config) (Client, error) {
 	if cfg.URL == "" {
 		return nil, errors.New("grafana: URL is required")
 	}
@@ -122,13 +147,21 @@ func New(cfg Config) (*Client, error) {
 					return "grafana " + r.Method + " " + r.URL.Path
 				}),
 			),
+			// Redirect policy: permit same-origin redirects (a sidecar proxy
+			// — nginx, istio, oauth2-proxy — may 301 for trailing-slash
+			// normalisation or intra-host path rewriting) up to a small hop
+			// limit, and reject anything cross-origin. Stdlib already strips
+			// Authorization on cross-origin redirects since Go 1.7; rejecting
+			// the redirect outright is belt-and-braces against a compromised
+			// or misconfigured Grafana bouncing us to an attacker-chosen host.
+			CheckRedirect: sameOriginRedirectPolicy(u, 3),
 		}
 	}
 	authHeader := redactedHeader("Bearer " + cfg.Token)
 	if cfg.BasicAuth != "" {
 		authHeader = redactedHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.BasicAuth)))
 	}
-	return &Client{base: u, publicBase: publicBase, authHeader: authHeader, http: hc}, nil
+	return &client{base: u, publicBase: publicBase, authHeader: authHeader, http: hc}, nil
 }
 
 // RequestOpts controls org scoping and audit attribution on a single request.
@@ -142,7 +175,7 @@ type RequestOpts struct {
 // Ping calls GET /api/health, Grafana's auth-free reachability endpoint.
 // Used by readiness probes; cheaper than VerifyServerAdmin (which lists all
 // orgs). Returns nil on 2xx.
-func (c *Client) Ping(ctx context.Context) error {
+func (c *client) Ping(ctx context.Context) error {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/health", nil, nil, RequestOpts{})
 	if err != nil {
 		return err
@@ -160,7 +193,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // VerifyServerAdmin calls GET /api/orgs, which requires the server-admin role.
 // 401/403 means the SA is not server-admin and cannot switch org via X-Grafana-Org-Id.
-func (c *Client) VerifyServerAdmin(ctx context.Context) error {
+func (c *client) VerifyServerAdmin(ctx context.Context) error {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/orgs", nil, nil, RequestOpts{})
 	if err != nil {
 		return err
@@ -184,7 +217,7 @@ func (c *Client) VerifyServerAdmin(ctx context.Context) error {
 }
 
 // GetDashboard fetches a dashboard by UID, in the given Grafana org.
-func (c *Client) GetDashboard(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error) {
+func (c *client) GetDashboard(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error) {
 	if uid == "" {
 		return nil, errors.New("grafana: dashboard uid is required")
 	}
@@ -193,7 +226,7 @@ func (c *Client) GetDashboard(ctx context.Context, opts RequestOpts, uid string)
 
 // SearchDashboards returns dashboards visible in the given org. Results are
 // bounded by limit (defaulting to 100); Grafana's API caps this at 5000.
-func (c *Client) SearchDashboards(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error) {
+func (c *client) SearchDashboards(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -206,7 +239,7 @@ func (c *Client) SearchDashboards(ctx context.Context, opts RequestOpts, query s
 
 // SearchFolders returns folders visible in the given org. Same endpoint as
 // SearchDashboards but with type=dash-folder.
-func (c *Client) SearchFolders(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error) {
+func (c *client) SearchFolders(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -218,12 +251,12 @@ func (c *Client) SearchFolders(ctx context.Context, opts RequestOpts, query stri
 }
 
 // ListDatasources returns the datasources visible in the given org.
-func (c *Client) ListDatasources(ctx context.Context, opts RequestOpts) (json.RawMessage, error) {
+func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) (json.RawMessage, error) {
 	return c.doGET(ctx, "/api/datasources", nil, opts)
 }
 
 // GetDatasource returns full datasource details by UID.
-func (c *Client) GetDatasource(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error) {
+func (c *client) GetDatasource(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error) {
 	if uid == "" {
 		return nil, errors.New("grafana: datasource uid is required")
 	}
@@ -231,14 +264,14 @@ func (c *Client) GetDatasource(ctx context.Context, opts RequestOpts, uid string
 }
 
 // GetAnnotations forwards a query to /api/annotations. Caller assembles q.
-func (c *Client) GetAnnotations(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
+func (c *client) GetAnnotations(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
 	return c.doGET(ctx, "/api/annotations", q, opts)
 }
 
 // GetAnnotationTags returns the set of tags used across annotations in the
 // given org, optionally filtered by a name prefix. Matches upstream
 // grafana/mcp-grafana's get_annotation_tags.
-func (c *Client) GetAnnotationTags(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
+func (c *client) GetAnnotationTags(ctx context.Context, opts RequestOpts, q url.Values) (json.RawMessage, error) {
 	return c.doGET(ctx, "/api/annotations/tags", q, opts)
 }
 
@@ -255,7 +288,7 @@ type UserOrgMembership struct {
 // Returns (nil, nil) with no error when the user doesn't exist yet — Grafana
 // only provisions users on first login, so a never-seen caller is a valid
 // state. Needs a server-admin credential.
-func (c *Client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
+func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 	ID    int64  `json:"id"`
 	Email string `json:"email"`
 	Login string `json:"login"`
@@ -297,7 +330,7 @@ func (c *Client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 // UserOrgs returns the org memberships Grafana has computed for the given
 // user id (Admin/Editor/Viewer per org, as resolved from SSO org_mapping at
 // the user's last login). Server-admin only.
-func (c *Client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error) {
+func (c *client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error) {
 	if userID <= 0 {
 		return nil, errors.New("grafana: userID is required")
 	}
@@ -315,7 +348,7 @@ func (c *Client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembershi
 // BaseURL returns a defensive copy of the user-facing Grafana URL (PublicURL
 // if set, otherwise the admin URL). Callers use it to build deeplinks handed
 // back to human operators, NOT for API traffic.
-func (c *Client) BaseURL() (*url.URL, error) {
+func (c *client) BaseURL() (*url.URL, error) {
 	u, err := url.Parse(c.publicBase.String())
 	if err != nil {
 		return nil, fmt.Errorf("grafana: parse public base url: %w", err)
@@ -327,7 +360,7 @@ func (c *Client) BaseURL() (*url.URL, error) {
 // Returns true only when the plugin is installed AND reachable. The result
 // is cached in-process for 5 minutes so repeated get_panel_image calls do
 // not ping /api/plugins on every request.
-func (c *Client) HasImageRenderer(ctx context.Context) (bool, error) {
+func (c *client) HasImageRenderer(ctx context.Context) (bool, error) {
 	c.rendererMu.RLock()
 	if time.Since(c.rendererAt) < 5*time.Minute {
 		present, err := c.rendererPresent, c.rendererErr
@@ -370,7 +403,7 @@ func (c *Client) HasImageRenderer(ctx context.Context) (bool, error) {
 // path is caller-controlled (tool handlers build it from user input such as
 // "api/v1/query" or "loki/api/v1/query_range"). validateDatasourceProxyPath
 // rejects anything that could escape the proxy prefix.
-func (c *Client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error) {
+func (c *client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error) {
 	if err := validateDatasourceProxyPath(path); err != nil {
 		return nil, err
 	}
@@ -383,7 +416,7 @@ func (c *Client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int
 // GF_RENDERING_SERVER_URL; without it Grafana returns an HTML error page.
 // The returned error includes a pointer to the setup docs when the renderer
 // is not available.
-func (c *Client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID string, panelID int, q url.Values) ([]byte, string, error) {
+func (c *client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID string, panelID int, q url.Values) ([]byte, string, error) {
 	if dashboardUID == "" {
 		return nil, "", errors.New("grafana: dashboard uid is required")
 	}
@@ -433,7 +466,7 @@ func (c *Client) RenderPanel(ctx context.Context, opts RequestOpts, dashboardUID
 	return body, ct, nil
 }
 
-func (c *Client) doGET(ctx context.Context, path string, query url.Values, opts RequestOpts) (json.RawMessage, error) {
+func (c *client) doGET(ctx context.Context, path string, query url.Values, opts RequestOpts) (json.RawMessage, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, path, query, nil, opts)
 	if err != nil {
 		return nil, err
@@ -441,7 +474,7 @@ func (c *Client) doGET(ctx context.Context, path string, query url.Values, opts 
 	return c.do(ctx, req, path)
 }
 
-func (c *Client) do(ctx context.Context, req *http.Request, path string) (json.RawMessage, error) {
+func (c *client) do(ctx context.Context, req *http.Request, path string) (json.RawMessage, error) {
 	ctx, span := tracer.Start(ctx, "grafana."+strings.TrimPrefix(path, "/api/"),
 		trace.WithAttributes(attribute.String("http.method", req.Method), attribute.String("grafana.path", path)),
 	)
@@ -510,7 +543,7 @@ func detectPromError(body []byte) error {
 // X-Grafana-Org-Id set so that Grafana scopes the call to that org.
 // orgID == 0 means "use Grafana's default org context" (only safe for
 // server-level endpoints such as /api/orgs).
-func (c *Client) newRequest(ctx context.Context, method, path string, query url.Values, body io.Reader, opts RequestOpts) (*http.Request, error) {
+func (c *client) newRequest(ctx context.Context, method, path string, query url.Values, body io.Reader, opts RequestOpts) (*http.Request, error) {
 	u := c.base.JoinPath(path)
 	if len(query) > 0 {
 		u.RawQuery = query.Encode()
@@ -568,6 +601,26 @@ func readLimited(resp *http.Response) ([]byte, error) {
 		return nil, fmt.Errorf("grafana: response exceeded %d bytes", maxResponseBytes)
 	}
 	return body, nil
+}
+
+// sameOriginRedirectPolicy returns a http.Client.CheckRedirect that allows
+// up to maxHops redirects whose scheme+host match origin's, and rejects all
+// others. Covers the sidecar-proxy case (Grafana behind nginx / istio /
+// oauth2-proxy doing trailing-slash or intra-host path rewrites) while
+// blocking a compromised Grafana from bouncing an API call with its
+// Authorization header to an attacker-controlled host.
+func sameOriginRedirectPolicy(origin *url.URL, maxHops int) func(*http.Request, []*http.Request) error {
+	originScheme := origin.Scheme
+	originHost := origin.Host
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxHops {
+			return fmt.Errorf("grafana: stopped after %d redirects", len(via))
+		}
+		if req.URL.Scheme != originScheme || req.URL.Host != originHost {
+			return fmt.Errorf("grafana: cross-origin redirect to %s blocked (only %s://%s allowed)", req.URL.Redacted(), originScheme, originHost)
+		}
+		return nil
+	}
 }
 
 // sanitizeCallerHeader strips control characters and non-printable-ASCII from

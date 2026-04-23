@@ -32,10 +32,12 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 
 // Deps bundles the handler-scoped dependencies so tool registration stays
 // concise. Exported so the server package can build one and hand it off to
-// RegisterAll.
+// RegisterAll. The fields are interfaces declared in their producer
+// packages (`authz.Authorizer`, `grafana.Client`) so tests can supply mocks
+// without re-declaring method sets here.
 type Deps struct {
-	Resolver *authz.Resolver
-	Grafana  *grafana.Client
+	Authorizer authz.Authorizer
+	Grafana    grafana.Client
 }
 
 // Package-wide string tokens. Kept as untyped constants so they drop into

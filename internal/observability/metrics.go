@@ -52,10 +52,8 @@ var ToolCallTotal = promauto.With(registry).NewCounterVec(
 )
 
 // ToolCallDuration measures per-tool handler latency. Buckets cover the
-// real handler range: cached CR lookups (~50 ms) up to panel renders
-// (~60 s broad LogQL / slow datasource proxy). The previous
-// ExponentialBuckets(0.01, 2.5, 10) jumped from 38 s straight to +Inf,
-// so p99 above 38 s was unmeasurable.
+// real handler range: cached CR lookups (~50 ms) up to panel renders and
+// broad LogQL (~60 s), so p99 stays measurable across the full range.
 var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,

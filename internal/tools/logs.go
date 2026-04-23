@@ -248,11 +248,16 @@ func fetchLokiLabels(ctx context.Context, d *Deps, orgRef, label string, req mcp
 	q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).UnixNano())))
 	q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().UnixNano())))
 
+	// Use a templated metric path (":name" placeholder) when the label is
+	// user-supplied so Prometheus label cardinality stays bounded — the
+	// value only flows into the URL, never into the "path" metric label.
 	path := "loki/api/v1/labels"
+	metricPath := path
 	if label != "" {
 		path = "loki/api/v1/label/" + url.PathEscape(label) + "/values"
+		metricPath = "loki/api/v1/label/:name/values"
 	}
-	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
+	observability.GrafanaProxyTotal.WithLabelValues(metricPath).Inc()
 	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("loki %s: %w", path, err)
