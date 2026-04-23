@@ -63,6 +63,9 @@ var (
 	flagMCPAddr     string
 	flagMetricsAddr string
 	flagDebug       bool
+
+	// 60s kubernetes sync period balances cache freshness against API-server
+	kubernetesSyncPeriod = 60 * time.Second
 )
 
 func init() {
@@ -115,14 +118,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("kube config: %w", err)
 	}
 
-	// 60s SyncPeriod balances cache freshness (post-reconciler edits to
-	// GrafanaOrganization CRs propagate within a minute) against API-server
-	// load — informers watch, so SyncPeriod is only a safety-net full
-	// resync, and a shorter value mostly burns List quota for no gain.
-	resync := 60 * time.Second
 	ctrlCache, err := ctrlcache.New(kubeCfg, ctrlcache.Options{
 		Scheme:     scheme,
-		SyncPeriod: &resync,
+		SyncPeriod: &kubernetesSyncPeriod,
 	})
 	if err != nil {
 		return fmt.Errorf("controller-runtime cache: %w", err)
@@ -150,7 +148,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	logger.Info("GrafanaOrganization cache synced")
 
-	gfClient, err := grafana.New(grafana.Config{
+	grafanaClient, err := grafana.New(grafana.Config{
 		URL:       cfg.GrafanaURL,
 		PublicURL: cfg.GrafanaPublicURL,
 		Token:     cfg.GrafanaSAToken,
@@ -159,7 +157,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("grafana client: %w", err)
 	}
-	if err := gfClient.VerifyServerAdmin(shutdownCtx); err != nil {
+	if err := grafanaClient.VerifyServerAdmin(shutdownCtx); err != nil {
 		return fmt.Errorf(
 			"grafana credential is not server-admin (cannot list all orgs); "+
 				"use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
@@ -171,7 +169,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// memberships) use a 5s TTL so a mid-SSO-outage failure doesn't lock
 	// anyone out for half a minute. LRU-bounded so long-running pods with
 	// many unique callers don't leak.
-	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, gfClient, logger,
+	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, grafanaClient, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
@@ -289,7 +287,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	mcp, err := server.New(server.Config{
 		Logger:     logger,
 		Authorizer: authorizer,
-		Grafana:    gfClient,
+		Grafana:    grafanaClient,
 		Version:    version,
 		Audit:      auditLogger,
 	})
@@ -348,7 +346,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// 2s per-check deadline keeps kubelet probes honest.
 	health := server.NewHealthChecker(version, 2*time.Second)
 	health.Register("grafana", func(ctx context.Context) (any, error) {
-		return nil, gfClient.Ping(ctx)
+		return nil, grafanaClient.Ping(ctx)
 	})
 	health.Register("dex", server.HTTPProbe(nil, strings.TrimRight(cfg.DexIssuerURL, "/")+"/.well-known/openid-configuration"))
 	health.Register("k8s_cache", func(ctx context.Context) (any, error) {
