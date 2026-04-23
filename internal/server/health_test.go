@@ -90,23 +90,61 @@ func TestHealthChecker_Detailed_ShapeAndStatus(t *testing.T) {
 	}
 }
 
+func TestHealthChecker_Detailed_MarshalErrorReturns500(t *testing.T) {
+	h := NewHealthChecker("test", 2*time.Second)
+	// A chan cannot be marshalled to JSON, so json.Marshal on the body
+	// fails. The hardening must turn this into a 500, not a truncated 200.
+	h.Register("bad_extra", func(ctx context.Context) (any, error) {
+		return make(chan int), nil
+	})
+	rec := httptest.NewRecorder()
+	h.Detailed(rec, httptest.NewRequest(http.MethodGet, "/healthz/detailed", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("detailed with unmarshallable Extra = %d, want 500", rec.Code)
+	}
+}
+
 func TestHTTPProbe(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ok":
 			w.WriteHeader(http.StatusOK)
+		case "/created":
+			w.WriteHeader(http.StatusCreated)
+		case "/redirect":
+			w.Header().Set("Location", "/ok")
+			w.WriteHeader(http.StatusMovedPermanently)
 		case "/fail":
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}))
 	defer srv.Close()
 
-	okProbe := HTTPProbe(srv.Client(), srv.URL+"/ok")
-	if _, err := okProbe(context.Background()); err != nil {
-		t.Fatalf("ok probe returned error: %v", err)
+	// Disable redirect following so /redirect surfaces as a 301 response
+	// the probe can inspect, instead of the client transparently
+	// resolving it to /ok and returning 200.
+	client := *srv.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	cases := []struct {
+		path    string
+		wantErr bool
+	}{
+		{"/ok", false},
+		{"/created", false}, // 2xx (not just 200) must pass
+		{"/redirect", true}, // 3xx must fail
+		{"/fail", true},     // 5xx must fail
 	}
-	failProbe := HTTPProbe(srv.Client(), srv.URL+"/fail")
-	if _, err := failProbe(context.Background()); err == nil {
-		t.Fatalf("fail probe should have errored")
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			probe := HTTPProbe(&client, srv.URL+c.path)
+			_, err := probe(context.Background())
+			if c.wantErr && err == nil {
+				t.Fatalf("%s: want error, got nil", c.path)
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("%s: unexpected error: %v", c.path, err)
+			}
+		})
 	}
 }

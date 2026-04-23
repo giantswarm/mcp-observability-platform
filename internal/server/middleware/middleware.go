@@ -1,22 +1,3 @@
-// Package middleware holds the cross-cutting concerns applied to every MCP
-// tool handler: one OTEL span, one metric pair, one audit record per
-// invocation, plus a response-size cap and outcome classifier.
-//
-// Middlewares use mcp-go's built-in mechanism — `server.ToolHandlerMiddleware`
-// plus the `WithToolHandlerMiddleware` server option — so they run
-// automatically on every tool call without per-handler wrapping. The tool
-// name is read from the request (`req.Params.Name`) rather than threaded
-// through a closure argument.
-//
-// Wiring happens once in `internal/server.New`:
-//
-//	mcpsrv.WithRecovery(),                                        // panic guard (mcp-go)
-//	mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(a)),   // tracing + metrics + audit
-//	mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),   // enforce body-size cap
-//
-// Instrument collapses what used to be three independent middlewares
-// (Tracing/Metrics/Audit) into one so `Classify` is computed once and the
-// span, metric, and audit outcome can never drift.
 package middleware
 
 import (

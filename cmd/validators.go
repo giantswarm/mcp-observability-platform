@@ -26,7 +26,7 @@ func splitAndTrimCSV(s string) []string {
 	return out
 }
 
-// validateEncryptionKeyEntropy rejects obviously weak `MCP_OAUTH_ENCRYPTION_KEY`
+// validateEncryptionKeyEntropy rejects obviously weak `OAUTH_ENCRYPTION_KEY`
 // values (all-zero, repeated byte, low distinct-byte count). Catches
 // copy-paste accidents like `0000…` or `aaaa…` before anything is
 // encrypted in production.
@@ -41,12 +41,12 @@ func validateEncryptionKeyEntropy(key []byte) error {
 		return nil
 	}
 	if len(key) < 32 {
-		return fmt.Errorf("MCP_OAUTH_ENCRYPTION_KEY is too short: %d bytes (want at least 32)", len(key))
+		return fmt.Errorf("OAUTH_ENCRYPTION_KEY is too short: %d bytes (want at least 32)", len(key))
 	}
 	const minBitsPerByte = 4.0
 	entropy := shannonEntropy(key)
 	if entropy < minBitsPerByte {
-		return fmt.Errorf("MCP_OAUTH_ENCRYPTION_KEY has low entropy (%.2f bits/byte, want >= %.1f) — check that the key is not all zeros, a repeated character, or a placeholder", entropy, minBitsPerByte)
+		return fmt.Errorf("OAUTH_ENCRYPTION_KEY has low entropy (%.2f bits/byte, want >= %.1f) — check that the key is not all zeros, a repeated character, or a placeholder", entropy, minBitsPerByte)
 	}
 	return nil
 }

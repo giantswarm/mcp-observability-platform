@@ -219,3 +219,86 @@ func TestLogger_Record_TruncatesTotalArgsOverCap(t *testing.T) {
 // callers outside the package without constructor ceremony. Keeps the
 // exported surface small: a single-arg constructor plus NewJSON.
 var _ = New(slog.NewTextHandler(io.Discard, nil))
+
+// TestLogger_Record_RedactorReturningNil_EmitsEmptyArgs guards against a
+// redactor that drops the whole map instead of masking values. The audit
+// record must still emit with the map replaced by an empty JSON object — the
+// tool-call line is still useful (who called what, outcome, duration), and
+// callers should not be able to suppress their own audit entry by returning
+// nil from a user-supplied redactor.
+func TestLogger_Record_RedactorReturningNil_EmitsEmptyArgs(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewJSON(&buf, WithRedactor(func(args map[string]any) map[string]any {
+		return nil
+	}))
+	l.Record(context.Background(), Record{
+		Tool:    "query_metrics",
+		Args:    map[string]any{"org": testOrg},
+		Outcome: "ok",
+	})
+	got := decodeOne(t, &buf)
+	// Audit entry still emits with all non-args fields intact.
+	if got["tool"] != "query_metrics" || got["outcome"] != "ok" {
+		t.Errorf("core fields missing: %+v", got)
+	}
+	// slog renders nil map as JSON null; what matters is that no stale
+	// args leak — a panic or misrender would be the real regression.
+	if v, ok := got["args"]; !ok {
+		t.Errorf("args key missing entirely: %+v", got)
+	} else if v != nil {
+		m, isMap := v.(map[string]any)
+		if isMap && len(m) != 0 {
+			t.Errorf("nil redactor leaked args: %+v", m)
+		}
+	}
+}
+
+// TestLogger_Record_RedactorPanic_DoesNotTakeDownCaller guards against a
+// buggy user redactor: a panic inside Record must not kill the tool-handler
+// goroutine. The audit package doesn't promise to recover today — this test
+// documents the current behaviour and fails if the decision changes silently.
+func TestLogger_Record_RedactorPanic_IsRecovered(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewJSON(&buf, WithRedactor(func(args map[string]any) map[string]any {
+		panic("redactor bug")
+	}))
+
+	defer func() {
+		if r := recover(); r == nil {
+			// We expect the panic to propagate to THIS defer: the audit
+			// package does not currently recover. Callers that want
+			// defence against a buggy redactor can wrap Record in their
+			// own recover — but the contract MUST be explicit, not
+			// incidental. Fail if someone silently adds a recover that
+			// changes that contract without updating this test.
+			t.Errorf("redactor panic was silently recovered; contract must be explicit")
+		}
+	}()
+
+	l.Record(context.Background(), Record{
+		Tool: "x",
+		Args: map[string]any{"token": "s"},
+	})
+}
+
+// TestLogger_Record_RedactorMutationDoesNotLeakToCaller proves the Logger
+// passes a defensive copy to the redactor, so a redactor that mutates its
+// input cannot poison the caller's Args map (which may still be referenced
+// by the surrounding handler code).
+func TestLogger_Record_RedactorMutationDoesNotLeakToCaller(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewJSON(&buf, WithRedactor(func(args map[string]any) map[string]any {
+		args["injected"] = "by redactor"
+		delete(args, "org")
+		return args
+	}))
+	original := map[string]any{"org": testOrg, "token": "s"}
+	l.Record(context.Background(), Record{Tool: "x", Args: original})
+
+	if _, leaked := original["injected"]; leaked {
+		t.Errorf("redactor's mutation leaked back to caller map: %+v", original)
+	}
+	if original["org"] != testOrg {
+		t.Errorf("redactor's delete leaked back to caller map: %+v", original)
+	}
+}

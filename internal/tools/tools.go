@@ -1,13 +1,9 @@
-// Package tools wires the MCP tool surface of this MCP.
-//
-// tools.go holds the package entry point — the exported Deps struct that the
-// server composition root hands in, the package-wide constants, and the
-// RegisterAll dispatcher. Tool handlers live in per-category files
-// (alerts.go, dashboards.go, …), shared helpers in focused files
-// (datasource.go, pagination.go, response_cap.go, timeout.go, annotations.go).
 package tools
 
 import (
+	"context"
+	"time"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -32,10 +28,12 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 
 // Deps bundles the handler-scoped dependencies so tool registration stays
 // concise. Exported so the server package can build one and hand it off to
-// RegisterAll.
+// RegisterAll. The fields are interfaces declared in their producer
+// packages (`authz.Authorizer`, `grafana.Client`) so tests can supply mocks
+// without re-declaring method sets here.
 type Deps struct {
-	Resolver *authz.Resolver
-	Grafana  *grafana.Client
+	Authorizer authz.Authorizer
+	Grafana    grafana.Client
 }
 
 // Package-wide string tokens. Kept as untyped constants so they drop into
@@ -75,4 +73,16 @@ func RegisterAll(s *mcpsrv.MCPServer, d *Deps) {
 	registerAlertTools(s, d)
 	registerSilenceTools(s, d)
 	registerPanelTools(s, d)
+}
+
+// withToolTimeout returns a derived context that enforces a per-tool handler
+// deadline. A bounded budget keeps a pathological LogQL query from holding
+// the MCP goroutine open until the Grafana HTTP client times out at 30s.
+// If ctx already has a deadline the function returns the original ctx and a
+// no-op cancel.
+func withToolTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
 }

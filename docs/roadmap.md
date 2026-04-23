@@ -19,7 +19,7 @@ landed. For what's already shipped:
 | CI | CircleCI multi-arch image push + chart publish matching `mcp-kubernetes` shape; hand-written `ci.yaml`; devctl-generated release / scanning workflows | #6 |
 | Deep readiness + two-phase shutdown | `/healthz` vs `/readyz` split, JSON `/healthz/detailed`, graceful drain ordered MCP → observability | #7 |
 | Audit middleware | Structured JSON per tool call on stderr. Shared `Classify()` feeds audit + metrics + span attributes. Pluggable `Redactor` | #8 |
-| Transports + config validators | All three MCP transports wired (`streamable-http` default, `sse`, `stdio`). Config validators reusing mcp-oauth exports. Encryption-key entropy check. `MCP_OAUTH_TRUSTED_AUDIENCES` / `MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES` for SSO token forwarding + CLI redirect schemes | #19 |
+| Transports + config validators | All three MCP transports wired (`streamable-http` default, `sse`, `stdio`). Config validators reusing mcp-oauth exports. Encryption-key entropy check. `OAUTH_TRUSTED_AUDIENCES` / `OAUTH_TRUSTED_REDIRECT_SCHEMES` for SSO token forwarding + CLI redirect schemes | #19 |
 | Resolver cache correctness | Singleflight-collapsed stampedes; cache keyed on OIDC `sub`; split positive/negative TTLs (30s / 5s); bounded by `hashicorp/golang-lru/v2`; slice-cloned returns; distinct `ErrOrgNotFound` vs `ErrNotAuthorised`; informer-alive atomic bool feeding the `k8s_cache` readiness probe; `Caller.Login` field deleted | #21 |
 | Tool layer cleanup + upstream alignment | Stop mutating `req.Params.Arguments` in re-dispatching handlers (audit records now show caller's actual args); uniform `response_too_large` payload; tool renames to match `grafana/mcp-grafana` (`query_prometheus`, `query_loki_logs`, `search_dashboards`); new `search_folders` + `get_annotation_tags`; deleted `DatasourceProxyPOST` + `doPOSTForm` + `prompts.go` + `resources.go` + `annotations.go` + `metricLabelValuesHandler`; `GrafanaProxyDuration` gained a `status` label and error-path observation | #22 |
 | Authz package split + deep-clone | `internal/authz/` split into `resolver.go` / `cache.go` / `role.go` / `access.go` / `caller.go` / `errors.go` (each file is now one concept). `cloneOrgAccess` uses CR-generated `DeepCopyInto` so handler mutations of `Tenants[i].Types` (or other nested slices) can't escape into the cache | #23 |
@@ -43,51 +43,18 @@ Glossary of jargon used in the Tier 1 descriptions:
 
 ## Tier 1 — ship next (before v0.1.0)
 
-Three PRs remaining (11, 12, 13). PR 10's composite `Instrument`
-middleware has landed, so PR 13's HTTP middleware chain can reuse the
-same compute-once shape. Total ≈ 1500 LOC across the three.
-
-### PR 11 — Hexagonal boundaries + cmd/serve polish (~700 LOC)
-
-**Hexagonal cleanup:**
-
-- **`OrgAccess` stops re-exporting Kubernetes CR types.** Today
-  `OrgAccess.Tenants []obsv1alpha2.TenantConfig` and
-  `Datasources []obsv1alpha2.DataSource` pull
-  `observability-operator/api/v1alpha2` and transitively
-  `controller-runtime` into every `internal/tools/*.go` consumer.
-  Introduce domain types `authz.Tenant` / `authz.Datasource`; translate
-  in `toOrgAccess`.
-- **Narrow the `ctrlclient.Reader` port** to a consumer-owned
-  `OrgRegistry { List(ctx); Lookup(ctx, ref) }`. Resolver tests drop
-  from "build a fake ctrlclient" to implementing two methods.
-- **Rename `GrafanaOrgLookup` → `OrgMembershipLookup`.** Consumer-side
-  naming shouldn't reference the adapter.
-- **Drop JSON tags from `OrgAccess`.** Define wire DTOs at the
-  tool-handler layer where marshalling actually happens.
-- **`Role.AtLeast(other)` method** replaces silent `oa.Role < minRole`
-  iota comparison.
-
-**cmd/serve polish:**
-
-- **Require hex-64 or base64-44 for `OAUTH_ENCRYPTION_KEY`** — drop the
-  raw-32-bytes branch. README documents `openssl rand -hex 32`.
-- **Env var prefix `MCP_OAUTH_*` → `OAUTH_*`** to match mcp-oauth's
-  `oauthconfig` package convention + mcp-kubernetes sibling.
-- **`envBool` warns on parse error** (today `DEBUG=yes` silently becomes
-  false).
-- **HTTP server timeouts** — `IdleTimeout: 60s` on both servers;
-  `WriteTimeout: 10s` on obsServer only (MCP streams can be long-lived).
-- **JSON logs in Kubernetes** — default to JSON handler when
-  `KUBERNETES_SERVICE_HOST` is set; `LOG_FORMAT=json|text` override.
-- **`OrgCacheSize` gauge via informer EventHandler** — swap the 30s
-  polling goroutine for `OnAdd`/`OnDelete` handlers.
-- **Health handler hardening** — marshal to buffer first (don't ship
-  half-written JSON on encoder error); use `statusOK` constant;
-  `HTTPProbe` requires `200 ≤ code < 300` (not `< 300`, which accepts
-  1xx).
-- **Helm `PodDisruptionBudget` smart default** — gate
-  `templates/poddisruptionbudget.yaml` on `replicas > 1` (today opt-in).
+Two PRs remaining (12, 13). PR 11's scope landed in two halves: the
+hexagonal boundary work in #28 (see "What's landed"), and the `cmd/serve`
+polish in #TBD (OAUTH_ENCRYPTION_KEY tightened to hex-64 / base64-44,
+`MCP_OAUTH_*` → `OAUTH_*`, `envBool` / `envInt` / `envDuration` fail
+startup on malformed values instead of silently defaulting, HTTP server
+`IdleTimeout` + obs-server `WriteTimeout`, JSON logs by default inside
+Kubernetes with `LOG_FORMAT=json|text` override, health handler marshal-
+to-buffer + `HTTPProbe` 2xx-only guard). Items dropped from the original
+plan: the `GrafanaOrgLookup` → `OrgMembershipLookup` rename (superseded —
+the interface landed as `OrgRegistry` directly), and the `OrgCacheSize`
+informer EventHandler swap (current 30s poll is gauge-only and bounded;
+not worth the churn).
 
 ### PR 12 — Sift-equivalent co-pilot tools (~200 LOC)
 
@@ -153,7 +120,7 @@ Files: new `internal/server/httpmiddleware/*.go`, new
 - `cmd/serve.go:runServe` (~295 LOC) → `buildKubeCache`, `buildOAuth`,
   `buildMCPMux`, `buildObsMux`, `runTwoPhaseShutdown`. Makes `cmd/`
   unit-testable.
-- `internal/tools/dashboards.go` (1020 LOC) → `internal/tools/dashparse/`
+- `internal/tools/dashboards.go` (1020 LOC) → `internal/tools/dashboards/`
   for pure helpers (`readJSONPointer`, `expandGrafanaVars`, JSON
   projections with their own tests) + `dashboards.go`, `deeplinks.go`
   for tool registrations.
@@ -211,8 +178,8 @@ subscriptions.
 - `internal/tools/dashboards.go#readJSONPointer` — RFC 6901 edge cases
   (`~0` / `~1` escapes, array indexing, non-container traversal).
 
-Both bundled into PR 11's dashboards-split work if it lands, otherwise
-backfill independently.
+Bundled into the dashboards-split work listed under Tier 2 "File splits"
+if it lands, otherwise backfill independently.
 
 ## Deferred from landed PRs
 
