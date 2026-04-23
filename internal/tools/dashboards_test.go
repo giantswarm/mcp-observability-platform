@@ -2,9 +2,12 @@ package tools
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestGroupDashboardsByFolder_BasicGrouping(t *testing.T) {
@@ -357,5 +360,106 @@ func TestDatasourceKindFromRef(t *testing.T) {
 				t.Errorf("datasourceKindFromRef(%s) = %q, want %q", c.raw, got, c.want)
 			}
 		})
+	}
+}
+
+func TestTemplateVarsToMap_SkipsDatasourceVarsAndHandlesAll(t *testing.T) {
+	vars := []rawTemplateVar{
+		{Name: "ds", Type: "datasource", Query: "prometheus"},
+	}
+	// Non-datasource vars: a plain one, an $__all var (should become ".+")
+	// and an unset one (also becomes ".+"). Current.Value is an `any` — plug
+	// in concrete types the code expects.
+	cluster := rawTemplateVar{Name: "cluster", Type: "custom"}
+	cluster.Current.Value = "prod"
+	env := rawTemplateVar{Name: "env", Type: "custom"}
+	env.Current.Value = "$__all"
+	missing := rawTemplateVar{Name: "missing", Type: "custom"}
+	missing.Current.Value = ""
+	vars = append(vars, cluster, env, missing)
+
+	got := templateVarsToMap(vars)
+
+	if _, has := got["ds"]; has {
+		t.Errorf("datasource-typed var should be skipped: %v", got)
+	}
+	if got["cluster"] != "prod" {
+		t.Errorf("cluster = %q, want prod", got["cluster"])
+	}
+	if got["env"] != ".+" {
+		t.Errorf("$__all should become regex '.+', got %q", got["env"])
+	}
+	if got["missing"] != ".+" {
+		t.Errorf("empty value should default to '.+', got %q", got["missing"])
+	}
+}
+
+func TestGrafanaTimeArg_ProvidedValueWins(t *testing.T) {
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"start": "2024-01-01T00:00:00Z"}}}
+	got := grafanaTimeArg(req, "start", -1*time.Hour)
+	if got != "2024-01-01T00:00:00Z" {
+		t.Errorf("provided start should pass through, got %q", got)
+	}
+}
+
+func TestGrafanaTimeArg_MissingValueUsesOffsetFromNow(t *testing.T) {
+	// With offset = -1h, the result should be a unix-millis stamp roughly
+	// 1 hour in the past. Allow generous slack.
+	before := time.Now().Add(-1 * time.Hour).Add(-5 * time.Second).UnixMilli()
+	after := time.Now().Add(-1 * time.Hour).Add(5 * time.Second).UnixMilli()
+	got := grafanaTimeArg(mcp.CallToolRequest{}, "start", -1*time.Hour)
+	stamp, err := strconv.ParseInt(got, 10, 64)
+	if err != nil {
+		t.Fatalf("grafanaTimeArg output %q is not an integer: %v", got, err)
+	}
+	if stamp < before || stamp > after {
+		t.Errorf("grafanaTimeArg offset = %d, want between %d and %d", stamp, before, after)
+	}
+}
+
+func TestPickPanelTarget_FindsNestedInRow(t *testing.T) {
+	// Dashboard with a row containing panel id 2; pickPanelTarget should
+	// descend through rows and find it.
+	doc := json.RawMessage(`{
+		"dashboard":{
+			"panels":[
+				{"id":1,"type":"timeseries","datasource":{"type":"prometheus","uid":"mimir"},"targets":[{"refId":"A","expr":"up"}]},
+				{"id":10,"type":"row","panels":[
+					{"id":2,"type":"timeseries","datasource":{"type":"loki","uid":"loki"},"targets":[{"refId":"A","query":"{job=\"x\"}"}]}
+				]}
+			],
+			"templating":{"list":[]}
+		}
+	}`)
+	panel, target, kind, _, err := pickPanelTarget(doc, 2, 0)
+	if err != nil {
+		t.Fatalf("pickPanelTarget: %v", err)
+	}
+	if panel.ID != 2 {
+		t.Errorf("panel.ID = %d, want 2", panel.ID)
+	}
+	if target.Query != `{job="x"}` {
+		t.Errorf("target.Query = %q, want {job=\"x\"}", target.Query)
+	}
+	if kind != "loki" {
+		t.Errorf("kind = %q, want loki", kind)
+	}
+}
+
+func TestPickPanelTarget_NotFound(t *testing.T) {
+	doc := json.RawMessage(`{"dashboard":{"panels":[{"id":1}],"templating":{"list":[]}}}`)
+	_, _, _, _, err := pickPanelTarget(doc, 999, 0)
+	if err == nil {
+		t.Fatal("expected error for missing panel id")
+	}
+}
+
+func TestPickPanelTarget_TargetIdxOutOfRange(t *testing.T) {
+	doc := json.RawMessage(`{"dashboard":{"panels":[
+		{"id":1,"type":"timeseries","datasource":{"type":"prometheus"},"targets":[{"refId":"A","expr":"up"}]}
+	],"templating":{"list":[]}}}`)
+	_, _, _, _, err := pickPanelTarget(doc, 1, 5)
+	if err == nil {
+		t.Fatal("expected error for targetIdx out of range")
 	}
 }
