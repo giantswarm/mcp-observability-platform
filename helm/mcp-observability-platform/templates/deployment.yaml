@@ -63,11 +63,11 @@ spec:
               value: ":9091"
 
             # OAuth (resource server) — its own identity
-            - name: MCP_OAUTH_ISSUER
+            - name: OAUTH_ISSUER
               value: {{ .Values.oauth.issuer | quote }}
-            - name: MCP_OAUTH_ALLOW_INSECURE_HTTP
+            - name: OAUTH_ALLOW_INSECURE_HTTP
               value: {{ .Values.oauth.allowInsecureHTTP | quote }}
-            - name: MCP_OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
+            - name: OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
               value: {{ .Values.oauth.allowPublicClientRegistration | quote }}
 
             # Dex (IdP) — how this MCP talks to Dex
@@ -100,7 +100,7 @@ spec:
 
             # Optional: AES-256 encryption-at-rest for mcp-oauth
             {{- if .Values.oauth.encryption.existingSecret }}
-            - name: MCP_OAUTH_ENCRYPTION_KEY
+            - name: OAUTH_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.oauth.encryption.existingSecret }}

@@ -119,13 +119,20 @@ func (h *HealthChecker) Detailed(w http.ResponseWriter, r *http.Request) {
 		Version:       h.version,
 		Checks:        results,
 	}
+	// Marshal to a buffer before writing so a MarshalJSON error from any
+	// Check.Extra value surfaces as a 500 instead of a truncated 200 body.
+	buf, err := json.Marshal(body)
+	if err != nil {
+		http.Error(w, "failed to marshal health response", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	if overall != "ok" {
+	if overall != statusOK {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
-	_ = json.NewEncoder(w).Encode(body)
+	_, _ = w.Write(buf)
 }
 
 // runAll executes every registered probe in parallel with h.timeout. Probes
@@ -194,7 +201,10 @@ func HTTPProbe(client *http.Client, url string) CheckFn {
 			return nil, err
 		}
 		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode >= 300 {
+		// 2xx only. Guard against 1xx (e.g. 101 Switching Protocols from a
+		// misconfigured handler) which resp.StatusCode exposes even though
+		// client.Do usually consumes them.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, fmt.Errorf("status %d", resp.StatusCode)
 		}
 		return nil, nil

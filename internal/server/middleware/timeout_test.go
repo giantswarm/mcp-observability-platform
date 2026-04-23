@@ -10,18 +10,17 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func callTimeout(t *testing.T, parent context.Context, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) (*mcp.CallToolResult, error) {
+func callTimeout(t *testing.T, parent context.Context, timeout time.Duration, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) (*mcp.CallToolResult, error) {
 	t.Helper()
-	wrapped := ToolTimeout()(handler)
+	wrapped := ToolTimeout(timeout)(handler)
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "test_tool"
 	return wrapped(parent, req)
 }
 
 func TestToolTimeout_ReturnsIsErrorOnDeadline(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "50ms")
 	var finished bool
-	res, err := callTimeout(t, context.Background(), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	res, err := callTimeout(t, context.Background(), 50*time.Millisecond, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		select {
 		case <-time.After(500 * time.Millisecond):
 			finished = true
@@ -46,8 +45,7 @@ func TestToolTimeout_ReturnsIsErrorOnDeadline(t *testing.T) {
 }
 
 func TestToolTimeout_PassesThroughFastHandler(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "1s")
-	res, err := callTimeout(t, context.Background(), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	res, err := callTimeout(t, context.Background(), time.Second, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("fast"), nil
 	})
 	if err != nil {
@@ -62,9 +60,8 @@ func TestToolTimeout_PassesThroughFastHandler(t *testing.T) {
 }
 
 func TestToolTimeout_ZeroDurationDisables(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "0")
 	var sawDeadline bool
-	_, err := callTimeout(t, context.Background(), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	_, err := callTimeout(t, context.Background(), 0, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if _, ok := ctx.Deadline(); ok {
 			sawDeadline = true
 		}
@@ -74,51 +71,15 @@ func TestToolTimeout_ZeroDurationDisables(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if sawDeadline {
-		t.Errorf("ctx should have no deadline when TOOL_TIMEOUT=0")
-	}
-}
-
-func TestToolTimeout_UsesDefaultWhenUnset(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "")
-	var gotDeadline time.Duration
-	_, err := callTimeout(t, context.Background(), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if d, ok := ctx.Deadline(); ok {
-			gotDeadline = time.Until(d)
-		}
-		return mcp.NewToolResultText("ok"), nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	// Deadline should be close to DefaultToolTimeout (30s) — allow generous slack.
-	if gotDeadline < DefaultToolTimeout-5*time.Second || gotDeadline > DefaultToolTimeout {
-		t.Errorf("deadline = %s, want close to %s", gotDeadline, DefaultToolTimeout)
-	}
-}
-
-func TestToolTimeout_FallsBackOnMalformedValue(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "not-a-duration")
-	var gotDeadline time.Duration
-	_, err := callTimeout(t, context.Background(), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if d, ok := ctx.Deadline(); ok {
-			gotDeadline = time.Until(d)
-		}
-		return mcp.NewToolResultText("ok"), nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if gotDeadline < DefaultToolTimeout-5*time.Second || gotDeadline > DefaultToolTimeout {
-		t.Errorf("malformed TOOL_TIMEOUT should fall back to default; got deadline %s", gotDeadline)
+		t.Errorf("ctx should have no deadline when timeout=0")
 	}
 }
 
 func TestToolTimeout_PreservesParentCancellation(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "5s")
 	parent, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before calling the middleware
 
-	res, err := callTimeout(t, parent, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	res, err := callTimeout(t, parent, 5*time.Second, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
@@ -134,9 +95,8 @@ func TestToolTimeout_PreservesParentCancellation(t *testing.T) {
 }
 
 func TestToolTimeout_HandlerErrorNotMaskedAsTimeout(t *testing.T) {
-	t.Setenv("TOOL_TIMEOUT", "1s")
 	wantErr := errors.New("grafana: upstream 502")
-	res, err := callTimeout(t, context.Background(), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	res, err := callTimeout(t, context.Background(), time.Second, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return nil, wantErr
 	})
 	if !errors.Is(err, wantErr) {
