@@ -147,6 +147,14 @@ func New(cfg Config) (Client, error) {
 					return "grafana " + r.Method + " " + r.URL.Path
 				}),
 			),
+			// Redirect policy: permit same-origin redirects (a sidecar proxy
+			// — nginx, istio, oauth2-proxy — may 301 for trailing-slash
+			// normalisation or intra-host path rewriting) up to a small hop
+			// limit, and reject anything cross-origin. Stdlib already strips
+			// Authorization on cross-origin redirects since Go 1.7; rejecting
+			// the redirect outright is belt-and-braces against a compromised
+			// or misconfigured Grafana bouncing us to an attacker-chosen host.
+			CheckRedirect: sameOriginRedirectPolicy(u, 3),
 		}
 	}
 	authHeader := redactedHeader("Bearer " + cfg.Token)
@@ -593,6 +601,26 @@ func readLimited(resp *http.Response) ([]byte, error) {
 		return nil, fmt.Errorf("grafana: response exceeded %d bytes", maxResponseBytes)
 	}
 	return body, nil
+}
+
+// sameOriginRedirectPolicy returns a http.Client.CheckRedirect that allows
+// up to maxHops redirects whose scheme+host match origin's, and rejects all
+// others. Covers the sidecar-proxy case (Grafana behind nginx / istio /
+// oauth2-proxy doing trailing-slash or intra-host path rewrites) while
+// blocking a compromised Grafana from bouncing an API call with its
+// Authorization header to an attacker-controlled host.
+func sameOriginRedirectPolicy(origin *url.URL, maxHops int) func(*http.Request, []*http.Request) error {
+	originScheme := origin.Scheme
+	originHost := origin.Host
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxHops {
+			return fmt.Errorf("grafana: stopped after %d redirects", len(via))
+		}
+		if req.URL.Scheme != originScheme || req.URL.Host != originHost {
+			return fmt.Errorf("grafana: cross-origin redirect to %s blocked (only %s://%s allowed)", req.URL.Redacted(), originScheme, originHost)
+		}
+		return nil
+	}
 }
 
 // sanitizeCallerHeader strips control characters and non-printable-ASCII from

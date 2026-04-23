@@ -12,7 +12,12 @@ import (
 const (
 	DefaultCacheTTL         = 30 * time.Second
 	DefaultNegativeCacheTTL = 5 * time.Second
-	DefaultCacheSize        = 10000
+	// DefaultCacheSize bounds memory on long-running pods with many distinct
+	// OIDC subjects (large tenants + SSO-forwarded callers). At ~5 KiB per
+	// entry (two maps + a dozen orgs worst-case), 10k subjects ≈ 50 MiB — an
+	// order of magnitude below pod RSS while still big enough that realistic
+	// churn doesn't evict hot callers.
+	DefaultCacheSize = 10000
 )
 
 // cacheEntry is one authorizer-cache entry. It holds everything Require

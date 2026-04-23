@@ -17,10 +17,10 @@ import (
 // validation-path tests.
 type stubResolver struct{}
 
-func (stubResolver) Require(context.Context, authz.Caller, string, authz.Role) (authz.Organization, error) {
+func (stubResolver) RequireOrg(context.Context, authz.Caller, string, authz.Role) (authz.Organization, error) {
 	return authz.Organization{}, nil
 }
-func (stubResolver) Resolve(context.Context, authz.Caller) (map[string]authz.Organization, error) {
+func (stubResolver) ListOrgs(context.Context, authz.Caller) (map[string]authz.Organization, error) {
 	return nil, nil
 }
 

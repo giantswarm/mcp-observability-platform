@@ -17,7 +17,7 @@
 //
 // # Layout
 //
-//   - authorizer.go — Authorizer + Resolve/Require/load (this file).
+//   - authorizer.go — Authorizer + RequireOrg/ListOrgs/load (this file).
 //   - cache.go    — LRU + singleflight + TTL + clone discipline.
 //   - role.go     — Role enum.
 //   - caller.go   — Caller + OrgRegistry + OrgMembershipLookup ports.
@@ -40,7 +40,7 @@ import (
 
 // Authorizer decides whether a caller may act on a given Grafana org, and at
 // what Role. It's the authz package's main consumer-facing surface: tool
-// handlers hold one and call Require() before touching any datasource.
+// handlers hold one and call RequireOrg() before touching any datasource.
 //
 // The production implementation asks Grafana (the source of truth for
 // role assignments, evaluated from SSO org_mapping at each login) who the
@@ -54,16 +54,16 @@ import (
 // escape into any internal cache. An empty Caller (no Email, no Subject)
 // returns ErrNoCallerIdentity.
 type Authorizer interface {
-	// Require returns the caller's Organization access to orgRef (the
-	// registry Name or its DisplayName, case-insensitive), or an error
-	// classifying why access was denied: ErrNoCallerIdentity,
+	// RequireOrg returns the caller's Organization access to orgRef (matched
+	// case-insensitively against Organization.Name or .DisplayName), or an
+	// error classifying why access was denied: ErrNoCallerIdentity,
 	// ErrOrgNotFound, ErrNotAuthorised, or ErrInsufficientRole.
-	Require(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error)
+	RequireOrg(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error)
 
-	// Resolve returns every org the caller has a non-None role on, keyed
-	// by registry Name. The empty map + nil err means "authenticated but
+	// ListOrgs returns every org the caller has a non-None role on, keyed
+	// by Organization.Name. Empty map + nil error means "authenticated but
 	// no accessible orgs".
-	Resolve(ctx context.Context, caller Caller) (map[string]Organization, error)
+	ListOrgs(ctx context.Context, caller Caller) (map[string]Organization, error)
 }
 
 // authorizer answers "what can this caller do?" by asking Grafana for the
@@ -87,7 +87,7 @@ type authorizer struct {
 	negativeCacheTTL time.Duration
 }
 
-// NewAuthorizer constructs a Authorizer with the given cache settings. Passing
+// NewAuthorizer constructs an Authorizer with the given cache settings. Passing
 // zero for any of the three cache parameters uses the DefaultCache*
 // constants. cacheSize of -1 disables caching entirely (useful for tests).
 func NewAuthorizer(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
@@ -117,10 +117,10 @@ func NewAuthorizer(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.
 	return r, nil
 }
 
-// Resolve returns the caller's authorised orgs + role by asking Grafana and
+// ListOrgs returns the caller's authorised orgs + role by asking Grafana and
 // enriching with registry metadata. The returned map is deep-cloned so
 // handler mutations cannot escape into the cache.
-func (r *authorizer) Resolve(ctx context.Context, caller Caller) (map[string]Organization, error) {
+func (r *authorizer) ListOrgs(ctx context.Context, caller Caller) (map[string]Organization, error) {
 	entry, err := r.resolveWithOrgs(ctx, caller)
 	if err != nil {
 		return nil, err
@@ -128,14 +128,14 @@ func (r *authorizer) Resolve(ctx context.Context, caller Caller) (map[string]Org
 	return cloneOrganizations(entry.orgs), nil
 }
 
-// Require returns the caller's access to orgRef, erroring if the org
+// RequireOrg returns the caller's access to orgRef, erroring if the org
 // doesn't exist (ErrOrgNotFound), the caller isn't authorised for it
 // (ErrNotAuthorised), or their role is below minRole.
 //
 // orgRef may be either the registry name or the displayName
 // (case-insensitive). The returned Organization is deep-cloned so handler
 // mutations cannot escape into the cache.
-func (r *authorizer) Require(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error) {
+func (r *authorizer) RequireOrg(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error) {
 	entry, err := r.resolveWithOrgs(ctx, caller)
 	if err != nil {
 		return Organization{}, err
@@ -159,7 +159,7 @@ func (r *authorizer) Require(ctx context.Context, caller Caller, orgRef string, 
 
 // resolveWithOrgs is the internal variant that returns the full cacheEntry
 // (both the caller's access and the registry-ref set for Require's
-// error-disambiguation). Callers outside this package should use Resolve.
+// error-disambiguation). Callers outside this package should use ListOrgs.
 func (r *authorizer) resolveWithOrgs(ctx context.Context, caller Caller) (cacheEntry, error) {
 	if caller.Empty() {
 		return cacheEntry{}, ErrNoCallerIdentity
