@@ -36,6 +36,8 @@ import (
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // Authorizer decides whether a caller may act on a given Grafana org, and at
@@ -78,7 +80,7 @@ type Authorizer interface {
 // CacheSize entries. Positive and negative entries carry different TTLs.
 type authorizer struct {
 	registry OrgRegistry
-	grafana  OrgMembershipLookup
+	grafana  grafana.Client
 	log      *slog.Logger
 
 	cache            *lru.Cache[string, cacheEntry]
@@ -90,7 +92,7 @@ type authorizer struct {
 // NewAuthorizer constructs an Authorizer with the given cache settings. Passing
 // zero for any of the three cache parameters uses the DefaultCache*
 // constants. cacheSize of -1 disables caching entirely (useful for tests).
-func NewAuthorizer(registry OrgRegistry, grafana OrgMembershipLookup, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
+func NewAuthorizer(registry OrgRegistry, grafana grafana.Client, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
 	if cacheTTL == 0 {
 		cacheTTL = DefaultCacheTTL
 	}
@@ -186,7 +188,7 @@ func (r *authorizer) resolveWithOrgs(ctx context.Context, caller Caller) (cacheE
 // in Role from the Grafana membership). Caches the result with the
 // appropriate positive-or-negative TTL.
 func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cacheEntry, error) {
-	userID, found, err := r.grafana.LookupUserID(ctx, caller.Identity())
+	user, err := r.grafana.LookupUser(ctx, caller.Identity())
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana lookup: %w", err)
 	}
@@ -197,7 +199,7 @@ func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cache
 	}
 	allOrgRefs := buildOrgRefSet(orgs)
 
-	if !found {
+	if user == nil {
 		// User exists in our IdP but has never logged into Grafana yet — we
 		// genuinely don't know what orgs they have. Return empty + cache
 		// briefly so the MCP tells them "log into Grafana first" without
@@ -211,7 +213,7 @@ func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cache
 		return entry, nil
 	}
 
-	memberships, err := r.grafana.UserOrgs(ctx, userID)
+	memberships, err := r.grafana.UserOrgs(ctx, user.ID)
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana user orgs: %w", err)
 	}

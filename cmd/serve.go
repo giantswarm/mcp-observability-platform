@@ -171,7 +171,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// memberships) use a 5s TTL so a mid-SSO-outage failure doesn't lock
 	// anyone out for half a minute. LRU-bounded so long-running pods with
 	// many unique callers don't leak.
-	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, grafanaAuthz{c: gfClient}, logger,
+	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, gfClient, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
@@ -644,36 +644,6 @@ func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) 
 			Tenants:     tenants,
 			Datasources: datasources,
 		}
-	}
-	return out, nil
-}
-
-// grafanaAuthz adapts grafana.Client to authz.OrgMembershipLookup. Lives in
-// cmd/ (the composition root) rather than in authz/ or grafana/ so that
-// neither domain package has to know about the other: authz declares the
-// port it needs, grafana exposes a generic API, and this adapter bridges
-// them at wire-up time.
-type grafanaAuthz struct{ c grafana.Client }
-
-func (g grafanaAuthz) LookupUserID(ctx context.Context, loginOrEmail string) (int64, bool, error) {
-	u, err := g.c.LookupUser(ctx, loginOrEmail)
-	if err != nil {
-		return 0, false, err
-	}
-	if u == nil {
-		return 0, false, nil
-	}
-	return u.ID, true, nil
-}
-
-func (g grafanaAuthz) UserOrgs(ctx context.Context, userID int64) ([]authz.OrgMembership, error) {
-	ms, err := g.c.UserOrgs(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]authz.OrgMembership, 0, len(ms))
-	for _, m := range ms {
-		out = append(out, authz.OrgMembership{OrgID: m.OrgID, Role: m.Role})
 	}
 	return out, nil
 }

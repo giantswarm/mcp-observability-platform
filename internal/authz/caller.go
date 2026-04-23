@@ -39,26 +39,6 @@ type OrgRegistry interface {
 	List(ctx context.Context) ([]Organization, error)
 }
 
-// OrgMembershipLookup is the subset of grafana.Client the authorizer needs.
-// Named from the consumer's perspective — the name doesn't leak "this is
-// satisfied by a Grafana client" because the authorizer shouldn't care.
-type OrgMembershipLookup interface {
-	// LookupUserID returns Grafana's internal user id for the given email or
-	// login, or (0, false, nil) if the user hasn't been provisioned yet.
-	LookupUserID(ctx context.Context, loginOrEmail string) (id int64, found bool, err error)
-
-	// UserOrgs returns the (orgID, roleString) pairs Grafana has computed
-	// for the given user. roleString is one of "Admin" | "Editor" | "Viewer"
-	// | "None" (Grafana's own strings).
-	UserOrgs(ctx context.Context, userID int64) ([]OrgMembership, error)
-}
-
-// OrgMembership is the authz-internal projection of a Grafana org membership.
-type OrgMembership struct {
-	OrgID int64
-	Role  string // Grafana's role string
-}
-
 // callerKey is an unexported context key for the caller's validated
 // identity. Unexported so external packages cannot overwrite the value.
 type callerKey struct{}
