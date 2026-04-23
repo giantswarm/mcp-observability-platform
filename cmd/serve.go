@@ -34,6 +34,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
+	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -284,12 +285,17 @@ func runServe(_ *cobra.Command, _ []string) error {
 	auditLogger := audit.New(auditHandler, audit.WithRedactor(redactSecretArgs))
 
 	// --- MCP server + tools/resources ---
+	// TOOL_TIMEOUT / TOOL_MAX_RESPONSE_BYTES are read once at startup and
+	// threaded through to the middleware constructors — avoids the per-
+	// invocation env parse that was only ever there for test convenience.
 	mcp, err := server.New(server.Config{
-		Logger:     logger,
-		Authorizer: authorizer,
-		Grafana:    grafanaClient,
-		Version:    version,
-		Audit:      auditLogger,
+		Logger:           logger,
+		Authorizer:       authorizer,
+		Grafana:          grafanaClient,
+		Version:          version,
+		Audit:            auditLogger,
+		ToolTimeout:      cfg.ToolTimeout,
+		MaxResponseBytes: cfg.MaxResponseBytes,
 	})
 	if err != nil {
 		return fmt.Errorf("mcp server: %w", err)
@@ -470,6 +476,15 @@ type config struct {
 	GrafanaPublicURL            string
 	GrafanaSAToken              string
 	GrafanaBasicAuth            string
+
+	// ToolTimeout is the per-tool-call context deadline. Zero disables the
+	// middleware entirely; a malformed TOOL_TIMEOUT env value falls back to
+	// middleware.DefaultToolTimeout.
+	ToolTimeout time.Duration
+	// MaxResponseBytes caps tool response TextContent size. Zero disables
+	// capping; a malformed TOOL_MAX_RESPONSE_BYTES env value falls back to
+	// middleware.DefaultMaxResponseBytes.
+	MaxResponseBytes int
 }
 
 func loadConfig() (*config, error) {
@@ -493,6 +508,8 @@ func loadConfig() (*config, error) {
 		GrafanaPublicURL:                   os.Getenv("GRAFANA_PUBLIC_URL"),
 		GrafanaSAToken:                     os.Getenv("GRAFANA_SA_TOKEN"),
 		GrafanaBasicAuth:                   os.Getenv("GRAFANA_BASIC_AUTH"),
+		ToolTimeout:                        envDuration("TOOL_TIMEOUT", middleware.DefaultToolTimeout),
+		MaxResponseBytes:                   envInt("TOOL_MAX_RESPONSE_BYTES", middleware.DefaultMaxResponseBytes),
 	}
 	var missing []string
 	for k, v := range map[string]string{
@@ -676,6 +693,33 @@ func redactSecretArgs(args map[string]any) map[string]any {
 		}
 	}
 	return args
+}
+
+// envDuration reads a time.Duration env var. "0" / "0s" yields 0 (disable);
+// an unset or malformed value falls back to def.
+func envDuration(k string, def time.Duration) time.Duration {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	if v == "0" {
+		return 0
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d
+	}
+	return def
+}
+
+// envInt reads an int env var. 0 is a valid value (typically "disable"); an
+// unset or malformed value falls back to def.
+func envInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func envBool(k string, def bool) bool {

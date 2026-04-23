@@ -10,8 +10,7 @@ import (
 )
 
 func TestResponseCap_PassesThroughSmallResults(t *testing.T) {
-	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "100")
-	h := ResponseCap()(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h := ResponseCap(100)(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: `{"ok":true}`}}}, nil
 	})
 	res, err := h(context.Background(), mcp.CallToolRequest{})
@@ -28,9 +27,8 @@ func TestResponseCap_PassesThroughSmallResults(t *testing.T) {
 }
 
 func TestResponseCap_ReplacesOversizedWithStructuredError(t *testing.T) {
-	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "100")
 	oversized := strings.Repeat("A", 150)
-	h := ResponseCap()(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h := ResponseCap(100)(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: oversized}}}, nil
 	})
 	res, err := h(context.Background(), mcp.CallToolRequest{})
@@ -54,9 +52,8 @@ func TestResponseCap_ReplacesOversizedWithStructuredError(t *testing.T) {
 }
 
 func TestResponseCap_DisabledWhenLimitZero(t *testing.T) {
-	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "0")
 	huge := strings.Repeat("A", 1_000_000)
-	h := ResponseCap()(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h := ResponseCap(0)(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{Content: []mcp.Content{mcp.TextContent{Type: "text", Text: huge}}}, nil
 	})
 	res, _ := h(context.Background(), mcp.CallToolRequest{})
@@ -69,8 +66,7 @@ func TestResponseCap_DisabledWhenLimitZero(t *testing.T) {
 }
 
 func TestResponseCap_PassesThroughHandlerError(t *testing.T) {
-	t.Setenv("TOOL_MAX_RESPONSE_BYTES", "100")
-	h := ResponseCap()(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h := ResponseCap(100)(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return nil, context.Canceled
 	})
 	res, err := h(context.Background(), mcp.CallToolRequest{})
