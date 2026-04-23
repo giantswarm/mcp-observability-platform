@@ -12,10 +12,15 @@ import (
 const (
 	DefaultCacheTTL         = 30 * time.Second
 	DefaultNegativeCacheTTL = 5 * time.Second
-	DefaultCacheSize        = 10000
+	// DefaultCacheSize bounds memory on long-running pods with many distinct
+	// OIDC subjects (large tenants + SSO-forwarded callers). At ~5 KiB per
+	// entry (two maps + a dozen orgs worst-case), 10k subjects ≈ 50 MiB — an
+	// order of magnitude below pod RSS while still big enough that realistic
+	// churn doesn't evict hot callers.
+	DefaultCacheSize = 10000
 )
 
-// cacheEntry is one resolver-cache entry. It holds everything Require
+// cacheEntry is one authorizer-cache entry. It holds everything Require
 // needs so the authorised path never re-lists the registry: access gives
 // the caller's accessible orgs, and allOrgRefs is the name/displayname set
 // used to pick the right error when access misses.
@@ -32,7 +37,7 @@ type cacheEntry struct {
 // fresh. The returned entry aliases cache-owned slices; callers that hand
 // Organization values to external code must clone via cloneOrganization
 // or cloneOrganizations.
-func (r *Resolver) cacheLookup(key string) (cacheEntry, bool) {
+func (r *authorizer) cacheLookup(key string) (cacheEntry, bool) {
 	if r.cache == nil {
 		return cacheEntry{}, false
 	}
@@ -45,7 +50,7 @@ func (r *Resolver) cacheLookup(key string) (cacheEntry, bool) {
 
 // cacheStore writes an entry to the LRU. No-op when caching is disabled
 // (cacheSize < 0 at construction time).
-func (r *Resolver) cacheStore(key string, entry cacheEntry) {
+func (r *authorizer) cacheStore(key string, entry cacheEntry) {
 	if r.cache == nil {
 		return
 	}
@@ -55,7 +60,7 @@ func (r *Resolver) cacheStore(key string, entry cacheEntry) {
 // cacheKey returns the key under which Caller's access is cached. OIDC
 // subject is the stable, non-spoofable identifier and is always preferred.
 // When no subject is present (unauthenticated test paths, legacy callers)
-// we fall back to lowercased email so the resolver still functions; these
+// we fall back to lowercased email so the authorizer still functions; these
 // paths shouldn't reach production because PromoteOAuthCaller populates
 // Subject for authenticated callers.
 func cacheKey(c Caller) string {

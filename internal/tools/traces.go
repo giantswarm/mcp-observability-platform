@@ -214,8 +214,10 @@ func fetchTempoTags(ctx context.Context, d *Deps, orgRef, tag string, req mcp.Ca
 		return v1.TagNames, nil
 	}
 
+	// Templated metric path: user-controlled tag lives in the URL only,
+	// never in the "path" Prom label (bounded cardinality).
 	path := "api/v2/search/tag/" + url.PathEscape(tag) + "/values"
-	observability.GrafanaProxyTotal.WithLabelValues(path).Inc()
+	observability.GrafanaProxyTotal.WithLabelValues("api/v2/search/tag/:name/values").Inc()
 	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("tempo tag values: %w", err)

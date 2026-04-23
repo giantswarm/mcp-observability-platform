@@ -63,6 +63,9 @@ var (
 	flagMCPAddr     string
 	flagMetricsAddr string
 	flagDebug       bool
+
+	// 60s kubernetes sync period balances cache freshness against API-server
+	kubernetesSyncPeriod = 60 * time.Second
 )
 
 func init() {
@@ -115,10 +118,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("kube config: %w", err)
 	}
 
-	resync := 60 * time.Second
 	ctrlCache, err := ctrlcache.New(kubeCfg, ctrlcache.Options{
 		Scheme:     scheme,
-		SyncPeriod: &resync,
+		SyncPeriod: &kubernetesSyncPeriod,
 	})
 	if err != nil {
 		return fmt.Errorf("controller-runtime cache: %w", err)
@@ -146,7 +148,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	logger.Info("GrafanaOrganization cache synced")
 
-	gfClient, err := grafana.New(grafana.Config{
+	grafanaClient, err := grafana.New(grafana.Config{
 		URL:       cfg.GrafanaURL,
 		PublicURL: cfg.GrafanaPublicURL,
 		Token:     cfg.GrafanaSAToken,
@@ -155,7 +157,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("grafana client: %w", err)
 	}
-	if err := gfClient.VerifyServerAdmin(shutdownCtx); err != nil {
+	if err := grafanaClient.VerifyServerAdmin(shutdownCtx); err != nil {
 		return fmt.Errorf(
 			"grafana credential is not server-admin (cannot list all orgs); "+
 				"use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
@@ -167,7 +169,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// memberships) use a 5s TTL so a mid-SSO-outage failure doesn't lock
 	// anyone out for half a minute. LRU-bounded so long-running pods with
 	// many unique callers don't leak.
-	resolver, err := authz.NewResolver(k8sOrgRegistry{reader: ctrlCache}, grafanaAuthz{c: gfClient}, logger,
+	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, grafanaClient, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
@@ -274,15 +276,20 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if otelLogHandler != nil {
 		auditHandler = observability.FanoutHandler(auditHandler, otelLogHandler)
 	}
-	auditLogger := audit.New(auditHandler)
+	// Wire a conservative denylist redactor so any tool whose args end up
+	// carrying a credential (future additions, upstream param renames) gets
+	// masked before emission. The current tool surface takes no secrets, but
+	// the denylist is proactive — auditing a leaked secret is worse than the
+	// cost of a few extra map reads per call.
+	auditLogger := audit.New(auditHandler, audit.WithRedactor(redactSecretArgs))
 
 	// --- MCP server + tools/resources ---
 	mcp, err := server.New(server.Config{
-		Logger:   logger,
-		Resolver: resolver,
-		Grafana:  gfClient,
-		Version:  version,
-		Audit:    auditLogger,
+		Logger:     logger,
+		Authorizer: authorizer,
+		Grafana:    grafanaClient,
+		Version:    version,
+		Audit:      auditLogger,
 	})
 	if err != nil {
 		return fmt.Errorf("mcp server: %w", err)
@@ -339,7 +346,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// 2s per-check deadline keeps kubelet probes honest.
 	health := server.NewHealthChecker(version, 2*time.Second)
 	health.Register("grafana", func(ctx context.Context) (any, error) {
-		return nil, gfClient.Ping(ctx)
+		return nil, grafanaClient.Ping(ctx)
 	})
 	health.Register("dex", server.HTTPProbe(nil, strings.TrimRight(cfg.DexIssuerURL, "/")+"/.well-known/openid-configuration"))
 	health.Register("k8s_cache", func(ctx context.Context) (any, error) {
@@ -639,34 +646,36 @@ func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) 
 	return out, nil
 }
 
-// grafanaAuthz adapts *grafana.Client to authz.OrgMembershipLookup. Lives in
-// cmd/ (the composition root) rather than in authz/ or grafana/ so that
-// neither domain package has to know about the other: authz declares the
-// port it needs, grafana exposes a generic API, and this adapter bridges
-// them at wire-up time.
-type grafanaAuthz struct{ c *grafana.Client }
-
-func (g grafanaAuthz) LookupUserID(ctx context.Context, loginOrEmail string) (int64, bool, error) {
-	u, err := g.c.LookupUser(ctx, loginOrEmail)
-	if err != nil {
-		return 0, false, err
-	}
-	if u == nil {
-		return 0, false, nil
-	}
-	return u.ID, true, nil
+// secretArgKeys is the denylist of tool-argument names whose values must never
+// appear in audit records. Matched case-insensitively against the full key
+// and as a substring (so "api_key", "auth_token", "bearerToken" all hit).
+// Additions are safe (redaction is a one-way projection); removals need a
+// security review.
+var secretArgKeys = []string{
+	"token",
+	"apikey", "api_key",
+	"authorization",
+	"cookie",
+	"bearer",
+	"password", "passwd",
+	"secret",
+	"credential", "credentials",
 }
 
-func (g grafanaAuthz) UserOrgs(ctx context.Context, userID int64) ([]authz.Membership, error) {
-	ms, err := g.c.UserOrgs(ctx, userID)
-	if err != nil {
-		return nil, err
+// redactSecretArgs replaces values of any key containing a secret-like
+// substring with "[REDACTED]". Operates on the defensive copy audit.Logger
+// gives us; safe to mutate in place.
+func redactSecretArgs(args map[string]any) map[string]any {
+	for k := range args {
+		lk := strings.ToLower(k)
+		for _, needle := range secretArgKeys {
+			if strings.Contains(lk, needle) {
+				args[k] = "[REDACTED]"
+				break
+			}
+		}
 	}
-	out := make([]authz.Membership, 0, len(ms))
-	for _, m := range ms {
-		out = append(out, authz.Membership{OrgID: m.OrgID, Role: m.Role})
-	}
-	return out, nil
+	return args
 }
 
 func envBool(k string, def bool) bool {

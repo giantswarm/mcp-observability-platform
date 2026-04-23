@@ -13,10 +13,11 @@
 //	mcpsrv.WithRecovery(),                                        // panic guard (mcp-go)
 //	mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(a)),   // tracing + metrics + audit
 //	mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),   // enforce body-size cap
+//	mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout()),   // per-handler ctx deadline
 //
-// Instrument collapses what used to be three independent middlewares
-// (Tracing/Metrics/Audit) into one so `Classify` is computed once and the
-// span, metric, and audit outcome can never drift.
+// Instrument is the single place `Classify(res, err)` is called; the
+// result is fanned out to the span status, metric label, and audit
+// outcome so they always agree.
 package middleware
 
 import (
