@@ -1,13 +1,10 @@
-// Package server wires the MCP protocol layer: it registers tools and resource
-// templates against a mark3labs/mcp-go server. Transport wrapping (streamable-
-// HTTP, SSE, stdio) is the caller's concern — this package returns the core
-// `*mcpsrv.MCPServer` plus convenience handlers for the HTTP transports.
 package server
 
 import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -27,6 +24,14 @@ type Config struct {
 	// Audit sinks one Record per tool call. Nil is allowed — the audit
 	// middleware then degrades to a pass-through.
 	Audit *audit.Logger
+	// ToolTimeout is the per-tool-handler context deadline. 0 disables
+	// per-handler timeouts (ctx passes through unchanged). Callers
+	// typically feed middleware.ToolTimeoutFromEnv() here.
+	ToolTimeout time.Duration
+	// MaxResponseBytes caps each tool response's TextContent size. 0
+	// disables capping. Callers typically feed
+	// middleware.MaxResponseBytesFromEnv() here.
+	MaxResponseBytes int
 }
 
 // New builds the core MCP server and registers tools + resource templates +
@@ -79,8 +84,8 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolCapabilities(false),
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Audit)),
-		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap()),
-		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout()),
+		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap(cfg.MaxResponseBytes)),
+		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
 	tools.RegisterAll(mcp, deps)

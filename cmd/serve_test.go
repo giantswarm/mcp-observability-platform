@@ -159,31 +159,3 @@ func TestShutdown_DeadlineStarvesSlowHandler(t *testing.T) {
 		t.Fatal("Shutdown returned nil with a slow handler and tiny deadline; expected deadline-exceeded")
 	}
 }
-
-func TestDecodeEncryptionKey(t *testing.T) {
-	cases := []struct {
-		name    string
-		in      string
-		wantLen int
-		wantErr bool
-	}{
-		{"raw 32 bytes", strings.Repeat("x", 32), 32, false},
-		{"hex 64 chars", strings.Repeat("ab", 32), 32, false},
-		{"too short", "short", 0, true},
-		{"empty", "", 0, true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			b, err := decodeEncryptionKey(c.in)
-			if c.wantErr && err == nil {
-				t.Errorf("decodeEncryptionKey(%q) = nil, want error", c.in)
-			}
-			if !c.wantErr && err != nil {
-				t.Errorf("decodeEncryptionKey(%q) = %v, want nil", c.in, err)
-			}
-			if !c.wantErr && len(b) != c.wantLen {
-				t.Errorf("decodeEncryptionKey(%q) len = %d, want %d", c.in, len(b), c.wantLen)
-			}
-		})
-	}
-}

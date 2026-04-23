@@ -25,13 +25,13 @@ tests:
           path: data.MCP_RATE_LIMIT_GLOBAL
           value: "0"
       - equal:
-          path: data.MCP_OAUTH_REFRESH_AHEAD
+          path: data.OAUTH_REFRESH_AHEAD
           value: "5m"
       - equal:
-          path: data.MCP_OAUTH_TRUSTED_AUDIENCES
+          path: data.OAUTH_TRUSTED_AUDIENCES
           value: ""
       - equal:
-          path: data.MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES
+          path: data.OAUTH_TRUSTED_REDIRECT_SCHEMES
           value: ""
 
   - it: joins trusted audiences + schemes as CSV
@@ -45,10 +45,10 @@ tests:
           - vscode
     asserts:
       - equal:
-          path: data.MCP_OAUTH_TRUSTED_AUDIENCES
+          path: data.OAUTH_TRUSTED_AUDIENCES
           value: "muster-client,sibling-mcp"
       - equal:
-          path: data.MCP_OAUTH_TRUSTED_REDIRECT_SCHEMES
+          path: data.OAUTH_TRUSTED_REDIRECT_SCHEMES
           value: "cursor,vscode"
 
   - it: honours runtime overrides
