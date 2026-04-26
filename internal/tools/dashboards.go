@@ -414,10 +414,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			base, err := d.Grafana.BaseURL()
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("base url", err), nil
-			}
+			base := d.Grafana.BaseURL()
 			from := req.GetString("from", "")
 			if from == "" {
 				from = "now-1h"

@@ -268,12 +268,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if otelLogHandler != nil {
 		auditHandler = observability.FanoutHandler(auditHandler, otelLogHandler)
 	}
-	// Wire a conservative denylist redactor so any tool whose args end up
-	// carrying a credential (future additions, upstream param renames) gets
-	// masked before emission. The current tool surface takes no secrets, but
-	// the denylist is proactive — auditing a leaked secret is worse than the
-	// cost of a few extra map reads per call.
-	auditLogger := audit.New(auditHandler, audit.WithRedactor(redactSecretArgs))
+	// No tool argument names match a credential pattern today and authentication
+	// is out-of-band (OAuth caller in ctx, Grafana SA token in env). Add a
+	// targeted redactor here only when a future tool actually accepts a secret.
+	auditLogger := audit.New(auditHandler)
 
 	// --- MCP server + tools/resources ---
 	mcp, err := server.New(server.Config{

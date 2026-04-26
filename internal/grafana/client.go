@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -67,7 +66,7 @@ type Config struct {
 type Client interface {
 	Ping(ctx context.Context) error
 	VerifyServerAdmin(ctx context.Context) error
-	BaseURL() (*url.URL, error)
+	BaseURL() *url.URL
 	HasImageRenderer(ctx context.Context) (bool, error)
 	LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 		ID    int64  `json:"id"`
@@ -92,14 +91,6 @@ type client struct {
 	publicBase *url.URL
 	authHeader redactedHeader
 	http       *http.Client
-
-	// In-process cache for HasImageRenderer; TTL 5 minutes. The plugin is
-	// almost never installed/uninstalled at runtime, so this tiny cache
-	// saves a round-trip on every get_panel_image call.
-	rendererMu      sync.RWMutex
-	rendererAt      time.Time
-	rendererPresent bool
-	rendererErr     error
 }
 
 // New constructs a Client. Returns an error if URL is empty/unparseable or
@@ -394,48 +385,35 @@ func (c *client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembershi
 	return out, nil
 }
 
-// BaseURL returns a defensive copy of the user-facing Grafana URL (PublicURL
-// if set, otherwise the admin URL). Callers use it to build deeplinks handed
-// back to human operators, NOT for API traffic.
-func (c *client) BaseURL() (*url.URL, error) {
-	u, err := url.Parse(c.publicBase.String())
-	if err != nil {
-		return nil, fmt.Errorf("grafana: parse public base url: %w", err)
-	}
-	return u, nil
+// BaseURL returns a defensive shallow copy of the user-facing Grafana URL
+// (PublicURL if set, otherwise the admin URL). Callers use it to build
+// deeplinks handed back to human operators, NOT for API traffic.
+func (c *client) BaseURL() *url.URL {
+	u := *c.publicBase
+	return &u
 }
 
 // HasImageRenderer probes Grafana for the grafana-image-renderer plugin.
-// Returns true only when the plugin is installed AND reachable. The result
-// is cached in-process for 5 minutes so repeated get_panel_image calls do
-// not ping /api/plugins on every request.
+// Returns true only when the plugin is installed AND reachable. Stateless:
+// `get_panel_image` is rare enough (human-rate LLM tool calls, not loops)
+// that caching this one in-cluster probe was net-negative — staleness +
+// poisoning risk outweighed saving a sub-millisecond round-trip.
 func (c *client) HasImageRenderer(ctx context.Context) (bool, error) {
-	c.rendererMu.RLock()
-	if time.Since(c.rendererAt) < 5*time.Minute {
-		present, err := c.rendererPresent, c.rendererErr
-		c.rendererMu.RUnlock()
-		return present, err
-	}
-	c.rendererMu.RUnlock()
-
-	c.rendererMu.Lock()
-	defer c.rendererMu.Unlock()
-	// Double-check inside the write lock in case another goroutine just refreshed.
-	if time.Since(c.rendererAt) < 5*time.Minute {
-		return c.rendererPresent, c.rendererErr
-	}
-
 	status, _, _, err := c.fetch(ctx, http.MethodGet, "/api/plugins/grafana-image-renderer/settings", nil, nil, RequestOpts{})
-	c.rendererAt = time.Now()
 	if err != nil {
-		c.rendererErr = err
 		return false, err
 	}
-	c.rendererErr = nil
-	// 200 -> plugin settings exist -> installed; 404 -> not installed.
-	// Anything else (403 etc.) treat as unknown; retry later.
-	c.rendererPresent = status == http.StatusOK
-	return c.rendererPresent, nil
+	// 200 = installed, 404 = not installed; anything else (5xx / 403) is
+	// "unknown" and surfaces as an error so callers don't treat a transient
+	// blip as a definitive "renderer missing".
+	switch status {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("grafana: GET /api/plugins/grafana-image-renderer/settings: status %d", status)
+	}
 }
 
 // DatasourceProxy forwards a GET to /api/datasources/proxy/{dsID}/{path} in the

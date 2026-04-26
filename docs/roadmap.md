@@ -98,22 +98,17 @@ Files: new `internal/server/httpmiddleware/*.go`, new
 
 ### Grafana client hardening
 
+Most items landed in PR #26 (LimitReader 16 MiB, `X-Grafana-User`
+sanitisation, SSRF on `DatasourceProxy`, redacted `authHeader`, `%w`
+wrapping, bounded `detectPromError`). Cleanup PR (this branch)
+removed the `HasImageRenderer` 5-min cache (a one-shot probe per
+panel render isn't worth the staleness + cache-poisoning surface)
+and shallow-copied `BaseURL()` instead of round-tripping through
+`url.Parse`. Real remaining item:
+
 - Jittered retry on idempotent 5xx / connect errors; `sony/gobreaker`
   for circuit-breaker. Rolling Grafana upgrades stop failing in-flight
-  MCP calls.
-- `io.ReadAll` → `io.LimitReader` with 16 MiB cap.
-- Sanitise `opts.Caller` before `X-Grafana-User` header set; strip
-  control chars, cap length.
-- SSRF defence on `DatasourceProxy` path construction; regex validate,
-  reject `..`.
-- `HasImageRenderer` — on error, don't advance `rendererAt` cache; retry
-  on next call instead of disabling renders for 5 minutes.
-- Consistent `%w` error wrapping.
-- `authHeader` field → redacted type with `String() → "[REDACTED]"`.
-- `BaseURL()` copy-don't-reparse.
-- `detectPromError` bounded scan.
-
-~400 LOC. Independent.
+  MCP calls. ~150 LOC.
 
 ### File splits (pure movement)
 
