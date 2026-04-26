@@ -118,8 +118,15 @@ func expandGrafanaVars(expr string, vars map[string]string, start, end, step str
 	if intvl == "" {
 		intvl = "5m"
 	}
-	intvlMs := durationToMillis(intvl)
 	rng := computeRangeDuration(start, end)
+	// step ("5m" default) and rng (from computeRangeDuration) are always
+	// well-formed, so ParseDuration cannot fail here. The zero-value on the
+	// theoretical-error path produces "0" / "0ms" — harmless.
+	intvlD, _ := time.ParseDuration(intvl)
+	rngD, _ := time.ParseDuration(rng)
+	intvlMs := strconv.FormatInt(intvlD.Milliseconds(), 10)
+	rangeMs := strconv.FormatInt(rngD.Milliseconds(), 10)
+	rangeS := strconv.FormatInt(int64(rngD.Seconds()), 10)
 
 	// Built-ins first (longer names before shorter to avoid prefix collisions).
 	replacements := []struct{ from, to string }{
@@ -129,10 +136,10 @@ func expandGrafanaVars(expr string, vars map[string]string, start, end, step str
 		{"${__interval_ms}", intvlMs},
 		{"$__interval", intvl},
 		{"${__interval}", intvl},
-		{"$__range_ms", durationToMillis(rng)},
-		{"${__range_ms}", durationToMillis(rng)},
-		{"$__range_s", strconv.FormatInt(durationToSeconds(rng), 10)},
-		{"${__range_s}", strconv.FormatInt(durationToSeconds(rng), 10)},
+		{"$__range_ms", rangeMs},
+		{"${__range_ms}", rangeMs},
+		{"$__range_s", rangeS},
+		{"${__range_s}", rangeS},
 		{"$__range", rng},
 		{"${__range}", rng},
 	}
@@ -153,24 +160,6 @@ func expandGrafanaVars(expr string, vars map[string]string, start, end, step str
 		expr = strings.ReplaceAll(expr, "$"+name, vars[name])
 	}
 	return expr
-}
-
-// durationToMillis returns "<n>" milliseconds for a Prometheus-shaped
-// duration string (e.g. "5m" -> "300000"). Returns "300000" on parse error.
-func durationToMillis(d string) string {
-	td, err := time.ParseDuration(d)
-	if err != nil {
-		return "300000"
-	}
-	return strconv.FormatInt(td.Milliseconds(), 10)
-}
-
-func durationToSeconds(d string) int64 {
-	td, err := time.ParseDuration(d)
-	if err != nil {
-		return 300
-	}
-	return int64(td.Seconds())
 }
 
 // computeRangeDuration turns start+end (RFC3339 or unix epoch seconds) into

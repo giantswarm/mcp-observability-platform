@@ -30,7 +30,7 @@ type stubGrafana struct{}
 
 func (stubGrafana) Ping(context.Context) error              { return nil }
 func (stubGrafana) VerifyServerAdmin(context.Context) error { return nil }
-func (stubGrafana) BaseURL() (*url.URL, error)              { return nil, nil }
+func (stubGrafana) BaseURL() *url.URL                       { return nil }
 func (stubGrafana) HasImageRenderer(context.Context) (bool, error) {
 	return false, nil
 }
