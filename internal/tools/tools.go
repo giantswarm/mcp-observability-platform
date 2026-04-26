@@ -73,6 +73,7 @@ func RegisterAll(s *mcpsrv.MCPServer, d *Deps) {
 	registerAlertTools(s, d)
 	registerSilenceTools(s, d)
 	registerPanelTools(s, d)
+	registerTriageTools(s, d)
 }
 
 // withToolTimeout returns a derived context that enforces a per-tool handler

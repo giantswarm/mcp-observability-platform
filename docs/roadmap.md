@@ -56,24 +56,21 @@ the interface landed as `OrgRegistry` directly), and the `OrgCacheSize`
 informer EventHandler swap (current 30s poll is gauge-only and bounded;
 not worth the churn).
 
-### PR 12 — Sift-equivalent co-pilot tools (~200 LOC)
+### PR 12 — Triage co-pilot tools — IN FLIGHT
 
-Thin API wrappers force the LLM to write PromQL / LogQL / TraceQL.
-Higher-level composites improve success on vague questions. OSS
-equivalents of upstream Sift tools (Grafana-Cloud-only).
+Three composites that synthesise common SRE-triage questions, mirroring
+grafana/mcp-grafana's Sift surface where an upstream equivalent exists
+(no Grafana Cloud Sift backend required — composes existing primitives):
 
-- **`find_error_pattern_logs(org, service, lookback)`** — auto-selects
-  a LogQL selector from service labels + error-keyword filter; calls
-  `query_loki_stats` first to avoid `response_too_large`. Matches
-  upstream Sift name.
-- **`find_slow_requests(org, service, lookback, min_duration?)`** —
-  wraps `query_traces` with service filter + duration threshold +
-  optional TraceQL `status=error`. Matches upstream Sift name.
-- **`explain_query(org, promql)`** — series-count + selectivity estimate
-  before the LLM fires an expensive query. Prevents pathological
-  queries. No upstream equivalent.
-
-Each ~50 LOC, each reuses existing tools internally.
+- **`find_error_pattern_logs(org, service, lookback?)`** — probes
+  service_name → service → job to pick the right Loki label, runs the
+  size-estimate first, refuses when bytes > 256 MiB, otherwise
+  `query_range` with an error-keyword regex.
+- **`find_slow_requests(org, service, lookback?, min_duration?, errors_only?)`**
+  — TraceQL `{ resource.service.name = "X" && duration > Y [&& status = error] }`
+  via Tempo `api/search`.
+- **`explain_query(org, promql)`** — series-count preflight via
+  `count(<expr>)`. Warns when count > 10 000. No upstream equivalent.
 
 ### PR 13 — HTTP middleware chain + rate limit + OAuth token refresh (~600 LOC)
 
@@ -193,8 +190,6 @@ if it lands, otherwise backfill independently.
 
 ## Out of scope (explicitly not doing)
 
-- **Prompts.** Tried in the original roadmap; dropped. LLMs do fine with
-  tool outputs; maintaining prompt templates is higher cost than value.
 - **Multi-cluster / federating MCP.** One MCP per Grafana is a design
   constraint. A federator above it complicates auth, error propagation,
   and observability for marginal benefit. Let the LLM pick the right
@@ -233,10 +228,3 @@ Shared patterns worth upstreaming to the sibling MCP:
   it).
 - Three-bucket `outcome` metric label + shared `Classify()` across
   middlewares.
-
-### Candidates to propose upstream to `mcp-oauth`
-
-- **Encryption-key entropy check.** Already drafted in mcp-oauth PR
-  #273 (on `feat/oauthconfig-from-env`). Ports our local
-  `validateEncryptionKeyEntropy` into `security.NewEncryptor` so every
-  downstream caller gets the guard for free.
