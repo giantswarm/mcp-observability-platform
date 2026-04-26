@@ -89,6 +89,18 @@ are intentionally out of scope for this MCP.
 | `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
 | `list_silences` | `api/v2/silences` — paged, end-time-sorted                |
 
+**Triage co-pilots**
+
+Composite tools that synthesise common SRE-triage queries from a few inputs.
+Names mirror grafana/mcp-grafana's Sift surface where an upstream equivalent
+exists; OSS-only — no Grafana Cloud Sift backend required.
+
+| Tool                       | Composes                                                                         |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `find_error_pattern_logs`  | service-label probe → `loki/api/v1/index/stats` size guard → `query_range` with error-keyword regex |
+| `find_slow_requests`       | TraceQL builder (`resource.service.name` + `duration > min` + optional `status=error`) → Tempo `api/search` |
+| `explain_query`            | wraps PromQL in `count(...)` → Mimir `api/v1/query` for series-count preflight   |
+
 ### Resources and prompts — deliberately not implemented
 
 LLMs handle tool calls far more reliably than resource URIs or prompts, so
