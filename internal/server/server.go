@@ -72,10 +72,15 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	//                                         once and fanned out so span
 	//                                         status, metric label, and audit
 	//                                         outcome stay in sync.
-	//   3. middleware.ResponseCap()         — replace oversized text content
+	//   3. middleware.RequireCaller()       — fail-closed authentication.
+	//                                         Inside Instrument so denials
+	//                                         still emit metrics + audit
+	//                                         records (Classify routes them
+	//                                         as user_error via IsError).
+	//   4. middleware.ResponseCap()         — replace oversized text content
 	//                                         with a structured
 	//                                         response_too_large payload.
-	//   4. middleware.ToolTimeout()         — per-handler context deadline.
+	//   5. middleware.ToolTimeout()         — per-handler context deadline.
 	//                                         Innermost so Instrument classifies
 	//                                         timeouts as system_error.
 	mcp := mcpsrv.NewMCPServer(
@@ -84,6 +89,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolCapabilities(false),
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Audit)),
+		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
 		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap(cfg.MaxResponseBytes)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
