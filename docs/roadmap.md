@@ -25,13 +25,15 @@ landed. For what's already shipped:
 | Authz package split + deep-clone | `internal/authz/` split into `resolver.go` / `cache.go` / `role.go` / `access.go` / `caller.go` / `errors.go` (each file is now one concept). `cloneOrgAccess` uses CR-generated `DeepCopyInto` so handler mutations of `Tenants[i].Types` (or other nested slices) can't escape into the cache | #23 |
 | Response-cap as middleware + YAGNI sweep + doc fix | Response cap moved from ~22 per-handler call sites into `middleware.ResponseCap()`. `datasourceSpec.ForceRange` + `DefaultRangeAgo` (single caller each) removed, `invocationFromRequest` inlined. README "Prompts" + "Resource templates" sections deleted (they advertised things that don't register); all 34 registered tools listed under current names. Package-doc comments added to every `internal/tools/*.go` file | #24 |
 | Observability + audit hardening + OTLP logs | Tracing / Metrics / Audit collapsed into one composite `middleware.Instrument` so `Classify()` is computed once and span / metric / audit outcomes can't drift. Metric namespace `mcp_observability_platform_*` → `mcp_*` with realistic latency buckets (25 ms → 60 s for tool calls, `DefBuckets` for Grafana proxy). Audit records gain `caller_token_source` (oauth / sso) and a 4 KiB per-value / 16 KiB total args size cap. OTLP logs via `otelslog` bridge fan out slog records (operator + audit) with `trace_id` / `span_id` correlation when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set. `firstNonEmpty` → `cmp.Or` | #25 |
+| `cmd/serve` polish (PR 11b) | `OAUTH_ENCRYPTION_KEY` tightened to hex-64 / base64-44 (raw-32 dropped); `MCP_OAUTH_*` → `OAUTH_*` rename across cmd/, helm/, README; `envBool`/`envInt`/`envDuration` return errors so a malformed `DEBUG=yes` fails startup instead of silently defaulting; HTTP `IdleTimeout` 60s on both servers + `WriteTimeout` 10s on obs server only; JSON logs when `KUBERNETES_SERVICE_HOST` set with `LOG_FORMAT=json\|text` override; `/healthz/detailed` marshals to buffer first; `HTTPProbe` rejects non-2xx. Helper `KeyFromHex`/`KeyToHex` upstreamed to `mcp-oauth/security`. | #34 |
+| YAGNI sweep + dep fix | Deleted `cmd/audit.go` (the redactor was a no-op on every current tool — no arg name matched the denylist). Dropped the `HasImageRenderer` 5-min in-process cache: one probe per `get_panel_image` call (human-rate, sub-ms in-cluster Grafana) didn't justify the staleness + the cache-poisoning bug class. Shallow-copied `BaseURL()` instead of round-tripping through `url.Parse`. Inlined `durationToMillis` / `durationToSeconds` (silent fallbacks for inputs callers always sanitised). Pinned `k8s.io/*` back to v0.35.4 to match `controller-runtime` v0.23.3 (PR #31 had bumped to 0.36 and broken the build) + `go` directive 1.26 → 1.25.5. | #37 |
 
 ## Orientation — pre-release cleanup
 
 Nothing is deployed yet, so **backwards compatibility is not a constraint**.
-The Tier 1 block below is cleanup + upstream-alignment work targeting
+Tier 1 below is the remaining cleanup + upstream-alignment work targeting
 v0.1.0. Tier 2 is optional follow-up that doesn't block the release.
-Glossary of jargon used in the Tier 1 descriptions:
+Glossary of jargon used in Tier 1:
 
 - **Stampede / thundering herd** — N concurrent callers all miss a cold
   cache entry and each call upstream instead of sharing one round-trip.
@@ -43,20 +45,7 @@ Glossary of jargon used in the Tier 1 descriptions:
 
 ## Tier 1 — ship next (before v0.1.0)
 
-Two PRs remaining (12, 13). PR 11's scope landed in two halves: the
-hexagonal boundary work in #28 (see "What's landed"), and the `cmd/serve`
-polish in #TBD (OAUTH_ENCRYPTION_KEY tightened to hex-64 / base64-44,
-`MCP_OAUTH_*` → `OAUTH_*`, `envBool` / `envInt` / `envDuration` fail
-startup on malformed values instead of silently defaulting, HTTP server
-`IdleTimeout` + obs-server `WriteTimeout`, JSON logs by default inside
-Kubernetes with `LOG_FORMAT=json|text` override, health handler marshal-
-to-buffer + `HTTPProbe` 2xx-only guard). Items dropped from the original
-plan: the `GrafanaOrgLookup` → `OrgMembershipLookup` rename (superseded —
-the interface landed as `OrgRegistry` directly), and the `OrgCacheSize`
-informer EventHandler swap (current 30s poll is gauge-only and bounded;
-not worth the churn).
-
-### PR 12 — Triage co-pilot tools — IN FLIGHT
+### PR 12 — Triage co-pilot tools — IN FLIGHT (#38)
 
 Three composites that synthesise common SRE-triage questions, mirroring
 grafana/mcp-grafana's Sift surface where an upstream equivalent exists
@@ -72,55 +61,50 @@ grafana/mcp-grafana's Sift surface where an upstream equivalent exists
 - **`explain_query(org, promql)`** — series-count preflight via
   `count(<expr>)`. Warns when count > 10 000. No upstream equivalent.
 
-### PR 13 — HTTP middleware chain + rate limit + OAuth token refresh (~600 LOC)
+### `cmd/serve` split — IN FLIGHT
 
-**HTTP middleware chain** (outer → inner):
-`SecurityHeaders` → `CORS` → `HTTPMetrics` → existing
-`oauthHandler.ValidateToken` → MCP.
+Refactor of `runServe` (354 lines) into focused builders living in
+per-concern files: `cmd/oauth.go` (dex provider + storage backend +
+mcp-oauth server + handler), `cmd/orgregistry.go` (controller-runtime
+cache + `authz.OrgRegistry` adapter + gauge reporter), `cmd/mux.go`
+(MCP and observability muxes + two-phase shutdown). `runServe` itself
+becomes ~155 lines of orchestration. Zero behaviour change.
 
-**Rate limit** — per-caller + per-org + global token bucket. Thresholds
-from runtime ConfigMap (`RATE_LIMIT_*` already seeded in the chart).
-Rejection → `isError: true` with rate-limit text + `Retry-After` hint.
+### Items dropped from the previous plan
 
-**OAuth token refresh** — active refresh before expiry via
-`mcp-oauth.SetTokenRefreshHandler`. Refresh failure returns an auth
-error prompting re-authentication (vs today's silent mid-session
-expiry).
-
-Files: new `internal/server/httpmiddleware/*.go`, new
-`internal/ratelimit/ratelimit.go`, edits to
-`internal/authz/resolver.go` and `cmd/serve.go`.
+- **PR 13 (HTTP middleware + rate limit + OAuth refresh).** Skipped on
+  fit-for-purpose grounds:
+  - `SecurityHeaders` / `CORS` target browser threat models; MCP
+    callers are MCP clients (Claude Code, mcp-inspector), not
+    browsers running off another origin.
+  - HTTP-level metrics duplicate the per-tool `mcp_*` metrics +
+    `otelhttp` server spans we already emit.
+  - Rate limiting infrastructure for a problem we haven't seen.
+    Per-call blast radius is already capped by `ToolTimeout` (30s)
+    and Grafana's own server-side limits. The unused
+    `MCP_RATE_LIMIT_*` ConfigMap entries should be dropped.
+  - OAuth token refresh requires `mcp-oauth.SetTokenRefreshHandler`
+    which doesn't exist in v0.2.103. Reconsider when the upstream
+    API ships and real session-expiry complaints surface.
+- **`OrgCacheSize` informer EventHandler swap.** Current 30s poll is
+  gauge-only, bounded, and the informer-event rewrite earned no
+  correctness gain.
+- **`GrafanaOrgLookup` → `OrgMembershipLookup` rename.** The interface
+  landed as `OrgRegistry` directly during PR 11a; superseded.
 
 ## Tier 2 — follow-up (doesn't block v0.1.0)
 
 ### Grafana client hardening
 
-Most items landed in PR #26 (LimitReader 16 MiB, `X-Grafana-User`
-sanitisation, SSRF on `DatasourceProxy`, redacted `authHeader`, `%w`
-wrapping, bounded `detectPromError`). Cleanup PR (this branch)
-removed the `HasImageRenderer` 5-min cache (a one-shot probe per
-panel render isn't worth the staleness + cache-poisoning surface)
-and shallow-copied `BaseURL()` instead of round-tripping through
-`url.Parse`. Real remaining item:
+All items from the original list landed (LimitReader 16 MiB,
+`X-Grafana-User` sanitisation, SSRF on `DatasourceProxy`, redacted
+`authHeader`, `%w` wrapping, bounded `detectPromError` in #26;
+`HasImageRenderer` cache + `BaseURL()` simplification in #37).
 
-- Jittered retry on idempotent 5xx / connect errors; `sony/gobreaker`
-  for circuit-breaker. Rolling Grafana upgrades stop failing in-flight
-  MCP calls. ~150 LOC.
-
-### File splits (pure movement)
-
-- `cmd/serve.go:runServe` (~295 LOC) → `buildKubeCache`, `buildOAuth`,
-  `buildMCPMux`, `buildObsMux`, `runTwoPhaseShutdown`. Makes `cmd/`
-  unit-testable.
-- `internal/tools/dashboards.go` (1020 LOC) → `internal/tools/dashboards/`
-  for pure helpers (`readJSONPointer`, `expandGrafanaVars`, JSON
-  projections with their own tests) + `dashboards.go`, `deeplinks.go`
-  for tool registrations.
-- Extract histogram-cardinality logic from
-  `internal/tools/metrics.go` (538 LOC).
-
-Zero behaviour change. Defer unless someone needs to touch the large
-files.
+The previously-listed jittered retry + `sony/gobreaker` circuit
+breaker is dropped: in-cluster Grafana sub-ms latency, 30–60s
+rolling-upgrade windows, and LLM-client-side retry-on-error already
+cover the failure modes. Reconsider only if real incidents demand it.
 
 ## Tier 3 — post-release features
 
@@ -170,8 +154,7 @@ subscriptions.
 - `internal/tools/dashboards.go#readJSONPointer` — RFC 6901 edge cases
   (`~0` / `~1` escapes, array indexing, non-container traversal).
 
-Bundled into the dashboards-split work listed under Tier 2 "File splits"
-if it lands, otherwise backfill independently.
+Backfill independently if/when the helpers are touched.
 
 ## Deferred from landed PRs
 
