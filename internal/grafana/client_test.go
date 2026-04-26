@@ -195,6 +195,79 @@ func TestClient_RenderPanel_Success(t *testing.T) {
 	}
 }
 
+func TestClient_HasImageRenderer(t *testing.T) {
+	// 200 = installed, 404 = not installed, anything else surfaces as an
+	// error so callers don't treat a transient 5xx as "renderer missing".
+	cases := []struct {
+		name         string
+		status       int
+		wantPresent  bool
+		wantErr      bool
+		wantStatusIn string
+	}{
+		{"installed", http.StatusOK, true, false, ""},
+		{"not installed", http.StatusNotFound, false, false, ""},
+		{"transient 502 surfaces error", http.StatusBadGateway, false, true, "status 502"},
+		{"perms error surfaces", http.StatusForbidden, false, true, "status 403"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer ts.Close()
+			c, _ := New(Config{URL: ts.URL, Token: "t"})
+
+			present, err := c.HasImageRenderer(context.Background())
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got present=%v nil", present)
+				}
+				if tc.wantStatusIn != "" && !strings.Contains(err.Error(), tc.wantStatusIn) {
+					t.Errorf("error %q should mention %q", err, tc.wantStatusIn)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if present != tc.wantPresent {
+				t.Errorf("present = %v, want %v", present, tc.wantPresent)
+			}
+		})
+	}
+}
+
+func TestClient_HasImageRenderer_RecoversAfterTransientError(t *testing.T) {
+	// Without the cache, a probe that fails once must not lock callers out
+	// — the next call re-probes and observes recovery immediately.
+	var attempts int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	c, _ := New(Config{URL: ts.URL, Token: "t"})
+
+	if _, err := c.HasImageRenderer(context.Background()); err == nil {
+		t.Fatal("first call: want error, got nil")
+	}
+	present, err := c.HasImageRenderer(context.Background())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if !present {
+		t.Fatal("second call: present=false, want true after upstream recovery")
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2", attempts)
+	}
+}
+
 func TestNew_Validation(t *testing.T) {
 	cases := []struct {
 		cfg  Config
