@@ -65,10 +65,10 @@ func TestParseDurationOrDefault(t *testing.T) {
 
 func TestParsePromInstantScalar(t *testing.T) {
 	cases := []struct {
-		name    string
-		body    string
-		wantN   int64
-		wantOK  bool
+		name   string
+		body   string
+		wantN  int64
+		wantOK bool
 	}{
 		{
 			name:   "vector with one sample",
