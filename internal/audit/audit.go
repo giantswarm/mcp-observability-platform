@@ -33,11 +33,6 @@ type Record struct {
 
 // Logger wraps an slog.Logger dedicated to the audit stream.
 //
-// Design rule: tools must not accept secret arguments. If a future tool
-// needs a credential, look it up server-side from the caller identity
-// rather than threading it through the tool params — that keeps the
-// audit stream clean by construction and removes any need for
-// per-argument redaction.
 type Logger struct {
 	slog *slog.Logger
 }
