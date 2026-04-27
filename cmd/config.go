@@ -15,6 +15,12 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
+// OAUTH_STORAGE values accepted by loadConfig / newOAuthStore.
+const (
+	oauthStorageMemory = "memory"
+	oauthStorageValkey = "valkey"
+)
+
 // config is the process-wide resolved configuration: env-driven today,
 // flag-driven when convenient. Fed by loadConfig at startup.
 type config struct {
@@ -106,7 +112,7 @@ func loadConfig() (*config, error) {
 		OAuthRedirectURL:                   envOr("OAUTH_REDIRECT_URL", ""),
 		OAuthAllowInsecureHTTP:             allowInsecureHTTP,
 		OAuthAllowPublicClientRegistration: allowPublicClientReg,
-		OAuthStorage:                       strings.ToLower(envOr("OAUTH_STORAGE", "memory")),
+		OAuthStorage:                       strings.ToLower(envOr("OAUTH_STORAGE", oauthStorageMemory)),
 		ValkeyAddr:                         os.Getenv("VALKEY_ADDR"),
 		ValkeyPassword:                     os.Getenv("VALKEY_PASSWORD"),
 		ValkeyTLS:                          valkeyTLS,
@@ -137,7 +143,7 @@ func loadConfig() (*config, error) {
 	if c.GrafanaSAToken != "" && c.GrafanaBasicAuth != "" {
 		return nil, fmt.Errorf("GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH are mutually exclusive — set one and unset the other")
 	}
-	if c.OAuthStorage == "valkey" && c.ValkeyAddr == "" {
+	if c.OAuthStorage == oauthStorageValkey && c.ValkeyAddr == "" {
 		missing = append(missing, "VALKEY_ADDR (required when OAUTH_STORAGE=valkey)")
 	}
 	if len(missing) > 0 {
@@ -159,7 +165,7 @@ func loadConfig() (*config, error) {
 	// Valkey-backed OAuth state (tokens, codes, PKCE state) persists across
 	// pod restarts and may live on a shared instance. Refuse to start without
 	// encryption-at-rest; OAUTH_ALLOW_INSECURE_HTTP=true overrides for dev.
-	if c.OAuthStorage == "valkey" && c.OAuthEncryptionKey == nil && !c.OAuthAllowInsecureHTTP {
+	if c.OAuthStorage == oauthStorageValkey && c.OAuthEncryptionKey == nil && !c.OAuthAllowInsecureHTTP {
 		return nil, fmt.Errorf("OAUTH_STORAGE=valkey requires OAUTH_ENCRYPTION_KEY (set OAUTH_ALLOW_INSECURE_HTTP=true to override for dev)")
 	}
 

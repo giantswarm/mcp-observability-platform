@@ -84,10 +84,10 @@ func newOAuthStore(cfg *config, logger *slog.Logger) (
 	storage.TokenStore, storage.ClientStore, storage.FlowStore, func(), error,
 ) {
 	switch cfg.OAuthStorage {
-	case "", "memory":
+	case "", oauthStorageMemory:
 		s := memory.New()
 		return s, s, s, func() { s.Stop() }, nil
-	case "valkey":
+	case oauthStorageValkey:
 		vcfg := valkey.Config{
 			Address:  cfg.ValkeyAddr,
 			Password: cfg.ValkeyPassword,
