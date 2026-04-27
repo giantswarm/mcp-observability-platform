@@ -88,7 +88,7 @@ func findErrorPatternLogsHandler(az authz.Authorizer, gc grafana.Client) func(co
 			return mcp.NewToolResultError(fmt.Sprintf("lookback: %v", err)), nil
 		}
 
-		org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
+		org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -100,7 +100,7 @@ func findErrorPatternLogsHandler(az authz.Authorizer, gc grafana.Client) func(co
 		startNs := strconv.FormatInt(start.UnixNano(), 10)
 		endNs := strconv.FormatInt(end.UnixNano(), 10)
 
-		label, err := pickServiceLabel(ctx, az, gc, org.OrgID, dsID, service, startNs, endNs)
+		label, err := pickServiceLabel(ctx, gc, org.OrgID, dsID, service, startNs, endNs)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("loki label probe", err), nil
 		}
@@ -191,7 +191,7 @@ func findSlowRequestsHandler(az authz.Authorizer, gc grafana.Client) func(contex
 		}
 		errorsOnly := req.GetBool("errors_only", false)
 
-		org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
+		org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -237,7 +237,7 @@ func explainQueryHandler(az authz.Authorizer, gc grafana.Client) func(context.Co
 			return mcp.NewToolResultError("promql must not be empty"), nil
 		}
 
-		org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+		org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -278,7 +278,7 @@ func explainQueryHandler(az authz.Authorizer, gc grafana.Client) func(context.Co
 // pickServiceLabel returns the first label in serviceLabelCandidates whose
 // values list contains service. Returns ("", nil) when none match,
 // ("", err) only if every candidate's HTTP/JSON probe failed.
-func pickServiceLabel(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgID, dsID int64, service, start, end string) (string, error) {
+func pickServiceLabel(ctx context.Context, gc grafana.Client, orgID, dsID int64, service, start, end string) (string, error) {
 	var lastErr error
 	for _, label := range serviceLabelCandidates {
 		q := url.Values{}

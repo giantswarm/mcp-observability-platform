@@ -26,7 +26,7 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 // required tenant type (empty = skip), and a datasource whose name contains
 // all nameContains substrings (case-insensitive) must exist. Errors are
 // caller-ready strings so handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
+func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
 	org, err := az.RequireOrg(ctx, orgRef, role)
 	if err != nil {
 		return authz.Organization{}, 0, err
@@ -110,7 +110,7 @@ func runDatasourceProxy(ctx context.Context, az authz.Authorizer, gc grafana.Cli
 	if inv.Org == "" {
 		return mcp.NewToolResultError("missing required argument \"org\""), nil
 	}
-	org, dsID, err := resolveDatasource(ctx, az, gc, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
+	org, dsID, err := resolveDatasource(ctx, az, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

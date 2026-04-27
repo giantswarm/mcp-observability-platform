@@ -9,6 +9,7 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // ReadOnlyAnnotation is the MCP tool option that flags a tool as read-only,
@@ -30,7 +31,7 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 // []string{...} literals and switch arms cleanly.
 const (
 	// Datasource kind tokens, substring-matched against Grafana datasource
-	// names in NameContains specs and produced by datasourceKindFromRef.
+	// names in NameContains specs.
 	dsKindMimir = "mimir"
 	dsKindLoki  = "loki"
 	dsKindTempo = "tempo"
@@ -47,16 +48,19 @@ const (
 	// projection) and accepted by list_alert_rules / get_alert_rule.
 	ruleTypeAlert  = "alert"
 	ruleTypeRecord = "record"
-
-	// Grafana panel type for legacy nested rows.
-	panelTypeRow = "row"
 )
 
 // RegisterAll wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding per-category file.
-func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	registerOrgTools(s, az, gc)
-	registerDashboardTools(s, az, gc)
+//
+// Org-only tools (dashboards, datasources, annotations, deeplinks, panel
+// rendering) delegate to upstream grafana/mcp-grafana via br.Wrap.
+// Tools that resolve a specific datasource by tenant + name match
+// (Mimir/Loki/Tempo/Alertmanager queries, triage co-pilots) stay local
+// for now — upstream takes a datasourceUid which we don't surface yet.
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, br *upstream.Bridge) {
+	registerOrgTools(s, br)
+	registerDashboardTools(s, br)
 	registerMetricsTools(s, az, gc)
 	registerLogTools(s, az, gc)
 	registerTraceTools(s, az, gc)

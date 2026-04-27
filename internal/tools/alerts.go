@@ -50,7 +50,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 
-			body, err := fetchAlerts(ctx, az, gc, org.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
+			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
 			}
@@ -89,7 +89,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			body, err := fetchAlerts(ctx, az, gc, org.OrgID, dsID, filterAll, "")
+			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
 			}
@@ -109,13 +109,13 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 // resolveDatasource, kept as its own name so call sites in resources.go read
 // at the same abstraction level as the tool handlers.
 func resolveAlertmanagerDS(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef string) (authz.Organization, int64, error) {
-	return resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+	return resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 }
 
 // fetchAlerts calls Alertmanager's /api/v2/alerts through the Grafana
 // datasource proxy with the requested state/filter narrowing applied
 // server-side. Defaults state to "active" when empty.
-func fetchAlerts(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
+func fetchAlerts(ctx context.Context, gc grafana.Client, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
 	if state == "" {
 		state = amActive
 	}

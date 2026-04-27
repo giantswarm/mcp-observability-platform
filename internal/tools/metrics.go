@@ -80,14 +80,14 @@ func registerMetricsTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.C
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
 			q := promSelectorArgs(req)
-			names, err := fetchPromLabelList(ctx, az, gc, org.OrgID, dsID, "api/v1/labels", "api/v1/labels", q)
+			names, err := fetchPromLabelList(ctx, gc, org.OrgID, dsID, "api/v1/labels", "api/v1/labels", q)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -138,7 +138,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.C
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -235,7 +235,7 @@ func registerMetricsTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.C
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -354,7 +354,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc gr
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			group := req.GetString("group", "")
-			org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -397,7 +397,7 @@ func registerSingleAlertRuleTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc gr
 // label-values tools: call /api/v1/label/{label}/values with match[] +
 // time filters, then apply client-side prefix filter + pagination.
 func runPromLabelValues(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef, label string, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+	org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -408,7 +408,7 @@ func runPromLabelValues(ctx context.Context, az authz.Authorizer, gc grafana.Cli
 	// cardinality stays bounded — the user-controlled label value lives
 	// only in the URL, never in the metric's "path" label.
 	path := "api/v1/label/" + url.PathEscape(label) + "/values"
-	names, err := fetchPromLabelList(ctx, az, gc, org.OrgID, dsID, "api/v1/label/:name/values", path, q)
+	names, err := fetchPromLabelList(ctx, gc, org.OrgID, dsID, "api/v1/label/:name/values", path, q)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -435,7 +435,7 @@ func promSelectorArgs(req mcp.CallToolRequest) url.Values {
 // and returns the data[] array. metricPath is the bounded-cardinality label
 // used on the proxy-count metric (e.g. "api/v1/label/:name/values"); path is
 // the actual URL path sent to Grafana.
-func fetchPromLabelList(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgID, dsID int64, metricPath, path string, q url.Values) ([]string, error) {
+func fetchPromLabelList(ctx context.Context, gc grafana.Client, orgID, dsID int64, metricPath, path string, q url.Values) ([]string, error) {
 	observability.GrafanaProxyTotal.WithLabelValues(metricPath).Inc()
 	body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, path, q)
 	if err != nil {

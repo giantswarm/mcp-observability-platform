@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 var serveCmd = &cobra.Command{
@@ -153,10 +156,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	auditLogger := audit.New(auditHandler)
 
+	bridge, err := newUpstreamBridge(authorizer, cfg)
+	if err != nil {
+		return fmt.Errorf("upstream bridge: %w", err)
+	}
+
 	mcp, err := server.New(server.Config{
 		Logger:           logger,
 		Authorizer:       authorizer,
 		Grafana:          grafanaClient,
+		Bridge:           bridge,
 		Version:          version,
 		Audit:            auditLogger,
 		ToolTimeout:      cfg.ToolTimeout,
@@ -221,6 +230,25 @@ func guardStdioInCluster(transport string) error {
 		return nil
 	}
 	return fmt.Errorf("MCP_TRANSPORT=stdio refused inside Kubernetes (stdio bypasses OAuth); use streamable-http or set MCP_ALLOW_STDIO_IN_CLUSTER=true to override")
+}
+
+// newUpstreamBridge constructs the upstream-mcp-grafana bridge from
+// runtime config. APIKey vs BasicAuth are mutually exclusive at config-
+// load time (see cmd/config.go) so exactly one of the two will be set.
+func newUpstreamBridge(az authz.Authorizer, cfg *config) (*upstream.Bridge, error) {
+	br := &upstream.Bridge{
+		Authorizer: az,
+		GrafanaURL: cfg.GrafanaURL,
+		APIKey:     cfg.GrafanaSAToken,
+	}
+	if cfg.GrafanaBasicAuth != "" {
+		user, pass, ok := strings.Cut(cfg.GrafanaBasicAuth, ":")
+		if !ok || user == "" {
+			return nil, fmt.Errorf("GRAFANA_BASIC_AUTH must be in the form user:password")
+		}
+		br.BasicAuth = url.UserPassword(user, pass)
+	}
+	return br, nil
 }
 
 // shutdownWithTimeout invokes a provider's Shutdown with a fresh 5s

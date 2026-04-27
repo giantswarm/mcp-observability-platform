@@ -18,6 +18,7 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // newGrafanaJSONServer wraps handler with a default Content-Type:
@@ -71,8 +72,9 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			{ID: 13, Name: "alertmanager-acme"},
 		},
 	}}
+	br := &upstream.Bridge{Authorizer: az, GrafanaURL: ts.URL, APIKey: "test-token"}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	RegisterAll(s, az, gf)
+	RegisterAll(s, az, gf, br)
 	return s
 }
 
@@ -233,51 +235,6 @@ func TestHandler_QueryPrometheusHistogram(t *testing.T) {
 		if !strings.Contains(sawQuery, want) {
 			t.Errorf("synthesized PromQL missing %q:\n%s", want, sawQuery)
 		}
-	}
-}
-
-// TestHandler_RunPanelQuery exercises run_panel_query, the tool whose full
-// flow (dashboard fetch → panel parse → datasource kind resolve → proxy
-// dispatch → expr forwarding) is impossible to cover from pure helpers.
-// This is the single-highest-ROI test in the file — a regression anywhere
-// along the chain surfaces here.
-func TestHandler_RunPanelQuery(t *testing.T) {
-	const dashboard = `{
-		"dashboard": {
-			"panels": [{
-				"id": 1,
-				"type": "timeseries",
-				"datasource": {"type": "prometheus", "uid": "mimir-acme"},
-				"targets": [{"refId": "A", "expr": "rate(http_requests_total[5m])"}]
-			}],
-			"templating": {"list": []}
-		}
-	}`
-
-	var sawProxyQuery string
-	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/api/dashboards/uid/"):
-			_, _ = w.Write([]byte(dashboard))
-		case strings.HasPrefix(r.URL.Path, "/api/datasources/proxy/10/api/v1/query"):
-			sawProxyQuery = r.URL.Query().Get("query")
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	defer ts.Close()
-
-	res := callTool(t, wireHandlerTest(t, ts), "run_panel_query", map[string]any{
-		"org":     "acme",
-		"uid":     "dash1",
-		"panelId": 1,
-	})
-	if res.IsError {
-		t.Fatalf("unexpected IsError: %s", resultText(res))
-	}
-	if !strings.Contains(sawProxyQuery, "rate(http_requests_total[5m])") {
-		t.Errorf("proxy query missing panel expr: %q", sawProxyQuery)
 	}
 }
 

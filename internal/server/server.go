@@ -13,6 +13,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 	"github.com/giantswarm/mcp-observability-platform/internal/tools"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // Config configures a new MCP HTTP server.
@@ -20,7 +21,10 @@ type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	Version    string
+	// Bridge delegates org-only tools to upstream grafana/mcp-grafana
+	// handlers. Required.
+	Bridge  *upstream.Bridge
+	Version string
 	// Audit sinks one Record per tool call. Nil is allowed — the audit
 	// middleware then degrades to a pass-through.
 	Audit *audit.Logger
@@ -47,6 +51,9 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	}
 	if cfg.Grafana == nil {
 		return nil, errors.New("server: Grafana is required")
+	}
+	if cfg.Bridge == nil {
+		return nil, errors.New("server: Bridge is required")
 	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
@@ -89,7 +96,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
-	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana)
+	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.Bridge)
 
 	return mcp, nil
 }
