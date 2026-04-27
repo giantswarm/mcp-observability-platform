@@ -72,7 +72,6 @@ func RegisterAll(s *mcpsrv.MCPServer, d *Deps) {
 	registerTraceTools(s, d)
 	registerAlertTools(s, d)
 	registerSilenceTools(s, d)
-	registerPanelTools(s, d)
 	registerTriageTools(s, d)
 }
 
