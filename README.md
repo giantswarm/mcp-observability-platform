@@ -317,25 +317,8 @@ make build
 
 ## Layout
 
-```
-cmd/                               Cobra CLI + per-concern builders
-                                   (oauth.go, orgregistry.go, mux.go, serve.go)
-internal/
-  audit/                           Per-tool-call JSON records (size-capped)
-  authz/                           GrafanaOrganization CR cache + role resolver
-                                   + caller identity (OIDC UserInfo on ctx)
-  grafana/                         Grafana HTTP client (server-admin SA + per-request
-                                   X-Grafana-Org-Id / X-Grafana-User)
-  observability/                   Prometheus metrics + OTEL tracing/logs setup
-  server/                          MCP server construction + transport wrappers
-    middleware/                    Instrument (span + metric + audit) + RequireCaller
-                                   + ResponseCap + ToolTimeout
-  tools/                           MCP tool surface (37 tools) + shared dispatch helpers
-helm/mcp-observability-platform/   Helm chart
-  templates/                       Deployment, Service, ClusterRole(Binding), ConfigMap, NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, NOTES
-  tests/                           helm-unittest specs (configmap, deployment, hpa, networkpolicy, pdb, servicemonitor, vpa)
-  values-{memory,valkey,rbac-minimal,autoscaling}.yaml   Opinionated overlays
-```
+See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the package
+layout table and what each package is responsible for.
 
 ## Related
 
