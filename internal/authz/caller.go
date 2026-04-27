@@ -11,7 +11,8 @@ import (
 // Caller carries the identity bits the authorizer needs to ask Grafana about
 // someone. Email is the human-facing handle Grafana provisions users by;
 // Subject is the OIDC sub claim, the stable non-spoofable identifier used
-// as the cache key.
+// as the cache key. A valid Caller MUST have a non-empty Subject — see
+// Empty().
 type Caller struct {
 	Email   string
 	Subject string
@@ -27,8 +28,12 @@ func (c Caller) Identity() string {
 	return c.Subject
 }
 
-// Empty reports whether no identifying fields were set.
-func (c Caller) Empty() bool { return c.Email == "" && c.Subject == "" }
+// Empty reports whether no usable identity is attached. A caller with no
+// Subject is treated as empty even if Email is set: email is mutable in
+// some IdPs and isn't safe to use as the cache key (see cacheKey). Two
+// callers with the same email and no subject would otherwise collide on
+// one cache slot.
+func (c Caller) Empty() bool { return c.Subject == "" }
 
 // OrgRegistry is the authorizer's port onto "the set of known Grafana
 // organisations". Implementations today wrap controller-runtime's informer

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/giantswarm/mcp-oauth/providers"
 
@@ -18,7 +19,15 @@ import (
 // propagation as runtime callers. Authorizer methods derive the caller
 // from ctx via CallerFromContext, with the framework-level RequireCaller
 // middleware already filtering out empty callers before any handler runs.
+//
+// Subject is required at the production boundary (Caller.Empty() rejects
+// subjectless callers — see fail-closed change) but most test fixtures
+// only care about the email-based Grafana lookup; default Subject from
+// Email when the test didn't supply one explicitly.
 func ctxWithCaller(c Caller) context.Context {
+	if c.Subject == "" && c.Email != "" {
+		c.Subject = "sub-" + c.Email
+	}
 	return withCaller(context.Background(), &providers.UserInfo{Email: c.Email, ID: c.Subject})
 }
 
@@ -64,6 +73,17 @@ func registry(descs ...Organization) *fakeRegistry {
 func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g grafana.Client, cacheSize int) Authorizer {
 	t.Helper()
 	res, err := NewAuthorizer(reg, g, nil, 0, 0, cacheSize)
+	if err != nil {
+		t.Fatalf("NewAuthorizer: %v", err)
+	}
+	return res
+}
+
+// mustNewAuthorizerWithTTL is the same as mustNewAuthorizer but exposes
+// the cache TTLs so expiry-window tests can use very short values.
+func mustNewAuthorizerWithTTL(t *testing.T, reg OrgRegistry, g grafana.Client, positiveTTL, negativeTTL time.Duration, cacheSize int) Authorizer {
+	t.Helper()
+	res, err := NewAuthorizer(reg, g, nil, positiveTTL, negativeTTL, cacheSize)
 	if err != nil {
 		t.Fatalf("NewAuthorizer: %v", err)
 	}
@@ -229,14 +249,19 @@ func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 
 func TestRoleFromGrafana(t *testing.T) {
 	cases := map[string]Role{
-		"Admin":         RoleAdmin,
-		"admin":         RoleAdmin,
-		"Grafana Admin": RoleAdmin,
-		"Editor":        RoleEditor,
-		"Viewer":        RoleViewer,
-		"None":          RoleNone,
-		"":              RoleNone,
-		"weird":         RoleNone, // unknown -> deny
+		"Admin":  RoleAdmin,
+		"admin":  RoleAdmin,
+		"Editor": RoleEditor,
+		"Viewer": RoleViewer,
+		"None":   RoleNone,
+		"":       RoleNone,
+		"weird":  RoleNone, // unknown -> deny
+		// "Grafana Admin" is the server-admin role on /api/users/{id},
+		// not a per-org role string. roleFromGrafana parses per-org
+		// memberships only, so an unrelated string lookup must NOT
+		// elevate to RoleAdmin (catches a regression that re-adds the
+		// alias).
+		"Grafana Admin": RoleNone,
 	}
 	for in, want := range cases {
 		if got := roleFromGrafana(in); got != want {
@@ -606,4 +631,186 @@ func mapKeys(m map[string]Organization) []string {
 		ks = append(ks, k)
 	}
 	return ks
+}
+
+// TestAuthorizer_PositiveCacheTTL_Expires proves that a positive cache
+// entry is re-fetched after the configured TTL elapses. The doc and
+// README treat the 30s positive-cache TTL as the freshness guarantee
+// for org membership; before this test, no assertion proved it
+// actually expires. Uses 20ms TTL + 60ms sleep so the test runs in
+// well under 100ms while still leaving headroom against scheduler
+// jitter.
+func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
+	g := &fakeGrafana{
+		users: map[string]int64{"u@e.com": 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: "Viewer"}}},
+	}
+	r := mustNewAuthorizerWithTTL(t, registry(alpha), g, 20*time.Millisecond, 5*time.Millisecond, 100)
+
+	// First call → upstream lookup.
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#1: %v", err)
+	}
+	// Second call within TTL → no upstream.
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#2: %v", err)
+	}
+	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
+		t.Fatalf("within-TTL: expected 1 lookup + 1 userOrgs, got %d/%d", g.calls.lookup, g.calls.userOrgs)
+	}
+
+	// Sleep past TTL → next call should re-fetch.
+	time.Sleep(60 * time.Millisecond)
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#3: %v", err)
+	}
+	if g.calls.lookup != 2 || g.calls.userOrgs != 2 {
+		t.Errorf("after TTL: expected 2 lookups + 2 userOrgs, got %d/%d (cache failed to expire)", g.calls.lookup, g.calls.userOrgs)
+	}
+}
+
+// TestAuthorizer_NegativeCacheTTL_Expires proves the negative-cache TTL
+// also expires — important because a freshly-provisioned user
+// (LookupUser returns 404 → nil user) must be re-checked sooner than
+// the positive window so they don't wait the full 30s after their
+// first Grafana login. Distinct paths: nil-user (this test) vs
+// empty-memberships (other test below).
+func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
+	g := &fakeGrafana{users: map[string]int64{} /* never-seen user */}
+	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond, 100)
+
+	// First call → 404 → nil user → cached negative.
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#1: %v", err)
+	}
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#2: %v", err)
+	}
+	if g.calls.lookup != 1 {
+		t.Fatalf("within negative TTL: expected 1 lookup, got %d", g.calls.lookup)
+	}
+
+	// Negative TTL is shorter — sleep past it but not past the positive.
+	time.Sleep(60 * time.Millisecond)
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#3: %v", err)
+	}
+	if g.calls.lookup != 2 {
+		t.Errorf("after negative TTL: expected 2 lookups, got %d (negative cache failed to expire)", g.calls.lookup)
+	}
+}
+
+// TestAuthorizer_NegativeCacheTTL_Expires_EmptyMemberships covers the
+// other negative path: user found but with no org memberships. Same
+// short-TTL semantics as the not-yet-provisioned case.
+func TestAuthorizer_NegativeCacheTTL_Expires_EmptyMemberships(t *testing.T) {
+	g := &fakeGrafana{
+		users: map[string]int64{"u@e.com": 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, no orgs
+	}
+	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond, 100)
+
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#1: %v", err)
+	}
+	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
+		t.Fatalf("first call: expected 1/1, got %d/%d", g.calls.lookup, g.calls.userOrgs)
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+		t.Fatalf("ListOrgs#2: %v", err)
+	}
+	if g.calls.lookup != 2 {
+		t.Errorf("after negative TTL: expected 2 lookups, got %d", g.calls.lookup)
+	}
+}
+
+// TestAuthorizer_RegistryDeleteIsImmediate proves M1: a
+// GrafanaOrganization removed from the registry is invisible to
+// RequireOrg / ListOrgs IMMEDIATELY, not after the per-caller cache
+// TTL. The registry list is read fresh on every authz call, so a
+// caller with a cached membership for org X cannot still RequireOrg
+// it after X is deleted.
+func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
+	g := &fakeGrafana{
+		users: map[string]int64{"u@e.com": 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: "Admin"}}},
+	}
+	reg := registry(alpha)
+	// Long TTL so any leaked cached state would survive the delete.
+	r := mustNewAuthorizerWithTTL(t, reg, g, time.Hour, time.Hour, 100)
+
+	ctx := ctxWithCaller(Caller{Email: "u@e.com"})
+	// Warm the per-caller cache with a positive entry.
+	if _, err := r.RequireOrg(ctx, "alpha", RoleViewer); err != nil {
+		t.Fatalf("RequireOrg#1: %v", err)
+	}
+
+	// Delete the org from the registry. Cache entry for caller still
+	// names OrgID=42, but the registry no longer knows about it.
+	reg.descs = nil
+
+	if _, err := r.RequireOrg(ctx, "alpha", RoleViewer); err == nil {
+		t.Fatalf("RequireOrg#2 after delete: expected error (org not in registry)")
+	}
+	if _, err := r.RequireOrg(ctx, "alpha", RoleViewer); !errors.Is(err, ErrOrgNotFound) {
+		t.Errorf("RequireOrg#3 after delete: err = %v, want wraps ErrOrgNotFound", err)
+	}
+}
+
+// TestRequireOrg_RejectsRoleNone proves H2: passing RoleNone as
+// minRole is a vacuous gate (Role.AtLeast(RoleNone) is always true)
+// and must be rejected explicitly so a future contributor can't
+// silently bypass authorisation by writing it.
+func TestRequireOrg_RejectsRoleNone(t *testing.T) {
+	g := &fakeGrafana{users: map[string]int64{"u@e.com": 1}}
+	r := mustNewAuthorizer(t, registry(), g, -1)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleNone)
+	if !errors.Is(err, ErrInvalidMinRole) {
+		t.Errorf("err = %v, want wraps ErrInvalidMinRole", err)
+	}
+}
+
+// TestCallerEmpty_RejectsSubjectlessCaller proves H3: a Caller with
+// only an email and no subject is treated as empty even though both
+// fields aren't blank — email is unsafe to use as a cache key (mutable
+// in some IdPs, mappable to a different user) so cacheKey trusts only
+// Subject.
+func TestCallerEmpty_RejectsSubjectlessCaller(t *testing.T) {
+	if !(Caller{Email: "u@e.com"}).Empty() {
+		t.Error("Caller with email and no Subject must be Empty (subject required)")
+	}
+	if !(Caller{}).Empty() {
+		t.Error("zero Caller must be Empty")
+	}
+	if (Caller{Subject: "sub-1"}).Empty() {
+		t.Error("Caller with Subject must NOT be Empty")
+	}
+	if (Caller{Email: "u@e.com", Subject: "sub-1"}).Empty() {
+		t.Error("Caller with both Subject and Email must NOT be Empty")
+	}
+}
+
+// TestRequireOrg_AmbiguousDisplayName proves M2: when multiple
+// registered orgs share a DisplayName, RequireOrg refuses to silently
+// pick one (map iteration is non-deterministic) and returns
+// ErrAmbiguousOrgRef so an operator can fix the collision.
+func TestRequireOrg_AmbiguousDisplayName(t *testing.T) {
+	a := newOrg("a", "Prod", 1, TenantTypeData)
+	b := newOrg("b", "Prod", 2, TenantTypeData)
+	g := &fakeGrafana{
+		users: map[string]int64{"u@e.com": 1},
+		orgs: map[int64][]grafana.UserOrgMembership{1: {
+			{OrgID: 1, Role: "Viewer"},
+			{OrgID: 2, Role: "Viewer"},
+		}},
+	}
+	r := mustNewAuthorizer(t, registry(a, b), g, -1)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "Prod", RoleViewer)
+	if !errors.Is(err, ErrAmbiguousOrgRef) {
+		t.Errorf("err = %v, want wraps ErrAmbiguousOrgRef", err)
+	}
 }
