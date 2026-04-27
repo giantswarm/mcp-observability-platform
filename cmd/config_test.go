@@ -116,6 +116,45 @@ func TestLoadConfig_WeakEncryptionKeyRejected(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_TrustedAudiencesCSVParsing(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty stays empty", "", nil},
+		{"single value", "muster", []string{"muster"}},
+		{"csv unquoted", "muster,prom-mcp,kube-mcp", []string{"muster", "prom-mcp", "kube-mcp"}},
+		{"trims surrounding whitespace", " muster , prom-mcp ", []string{"muster", "prom-mcp"}},
+		{"drops empty entries", "muster,,prom-mcp,", []string{"muster", "prom-mcp"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setMinimalValid(t)
+			t.Setenv("OAUTH_TRUSTED_AUDIENCES", c.in)
+			cfg, err := loadConfig()
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if !equalStringSlices(cfg.OAuthTrustedAudiences, c.want) {
+				t.Errorf("OAuthTrustedAudiences = %#v, want %#v", cfg.OAuthTrustedAudiences, c.want)
+			}
+		})
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestDecodeEncryptionKey(t *testing.T) {
 	raw := bytes.Repeat([]byte{0xab, 0xcd, 0xef, 0x12}, 8) // 32 bytes
 	cases := []struct {
