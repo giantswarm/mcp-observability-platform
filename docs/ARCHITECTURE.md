@@ -45,10 +45,19 @@ security boundaries are, and where to add a new tool.
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
               │ Tool handler (internal/tools/*.go)                             │
-              │   • parses args from CallToolRequest                           │
-              │   • az.RequireOrg(ctx, orgRef, role) → resolved Organization   │
-              │   • picks the right datasource by tenant + name match          │
-              │   • calls grafana.Client (proxies to Mimir/Loki/Tempo/AM)      │
+              │                                                                │
+              │ Bridged tools (most of the surface):                           │
+              │   internal/tools/upstream.Bridge.Wrap{,Datasource}             │
+              │     1. read "org" from CallToolRequest                         │
+              │     2. az.RequireOrg(ctx, org, role) → Organization            │
+              │     3. WrapDatasource: pick DS by Kind, look up its UID via    │
+              │        grafana.LookupDatasourceUIDByID, inject datasourceUid   │
+              │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
+              │     5. delegate to upstream grafana/mcp-grafana handler        │
+              │                                                                │
+              │ Local tools (Tempo, Alertmanager v2, silences, triage,         │
+              │ list_orgs, explain_query) read args, az.RequireOrg, then       │
+              │ call grafana.Client.DatasourceProxy directly.                  │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
@@ -68,8 +77,9 @@ security boundaries are, and where to add a new tool.
 | `internal/server/middleware/` | One file per middleware. `Classify()` is the shared outcome bucketer feeding span / metric / audit. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + LRU/singleflight cache. `OrgRegistry` is a domain port — the K8s informer adapter sits in `cmd/orgregistry.go`. |
 | `internal/audit/` | Structured tool-call records on stderr. Args are size-capped (4 KiB / 16 KiB). |
-| `internal/grafana/` | HTTP client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
-| `internal/tools/` | One file per tool category (`orgs.go`, `dashboards*.go`, `metrics.go`, `logs.go`, `traces.go`, `alerts.go`, `silences.go`, `triage.go`). `datasource.go` holds the shared proxy dispatcher. |
+| `internal/grafana/` | HTTP client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. `LookupDatasourceUIDByID` is the per-call ID→UID resolver the upstream bridge uses. |
+| `internal/tools/` | One file per tool category. Bridged: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (and bridged datasource tools in `orgs.go`). Local: `orgs.go` (list_orgs), `alerts.go`, `silences.go`, `traces.go`, `triage.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`. |
+| `internal/tools/upstream/` | Bridge to upstream `grafana/mcp-grafana` tool handlers. `Bridge.Wrap` covers org-only tools; `Bridge.WrapDatasource` covers tools that need a datasource UID (resolves it via `grafana.LookupDatasourceUIDByID` and injects it server-side so the LLM keeps the simple `{org, ...}` shape). `WithOrg` / `WithOrgReplacingArg` rewrite the upstream input schema accordingly. |
 | `internal/observability/` | Prometheus metrics + OTEL tracing/logs init. Three-bucket outcome metrics (`ok` / `user_error` / `system_error`). |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -111,44 +121,85 @@ only"; do not expose stdio to untrusted users.
 
 ## Where to add a new read-only tool
 
-Canonical example: `internal/tools/orgs.go` `list_datasources`. Steps:
+**First, check upstream.** Before adding a local handler, look at
+`grafana/mcp-grafana` for a tool with the same intent. If it exists,
+register it through the bridge (Loki/Prometheus/dashboards/alert-rules
+all do this). This inherits upstream maintenance for free; the
+*only* place we add local code is when upstream has no equivalent
+(today: Tempo, Alertmanager v2, silences, list_orgs, triage co-pilots,
+explain_query — see `internal/tools/doc.go` for the rationale per
+category).
 
-1. **Pick the file** that matches the category (`metrics.go` for
-   PromQL / Mimir, `logs.go` for LogQL / Loki, `dashboards.go` for
-   Grafana dashboards, …).
-2. **Define the tool** inside the existing `register*Tools` function:
-   ```go
-   s.AddTool(
-       mcp.NewTool("your_tool_name",
-           ReadOnlyAnnotation(),
-           mcp.WithDescription("..."),
-           mcp.WithString("org", mcp.Required(), mcp.Description("...")),
-           // ... other args
-       ),
-       func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-           orgRef, err := req.RequireString("org")
-           if err != nil {
-               return mcp.NewToolResultError(err.Error()), nil
-           }
-           org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
-           if err != nil {
-               return mcp.NewToolResultError(err.Error()), nil
-           }
-           // … call gc (grafana.Client) using grafanaOpts(ctx, org.OrgID)
-           return mcp.NewToolResultJSON(result)
-       },
-   )
-   ```
-3. **For datasource-proxied tools** (Mimir / Loki / Tempo / Alertmanager),
-   reuse `datasourceProxyHandler(az, gc, datasourceSpec{...})` instead of
-   hand-rolling — see `metrics.go` `query_prometheus` for the pattern.
-4. **Don't accept secret arguments.** Look credentials up server-side
-   from the caller identity. The audit stream stays clean by
-   construction; the package doc on `internal/audit` spells out the
-   rule.
-5. **Add an integration test** in `internal/tools/handler_integration_test.go`
-   if the tool has non-trivial response shaping; the table-driven
-   `handler_authz_test.go` already covers the deny path generically.
+### Path A — bridge an upstream tool (preferred)
+
+Add the registration to the matching `register*Tools` in the
+appropriate file. For tools that take an `org` and a datasource UID
+upstream:
+
+```go
+import (
+    mcpgrafanatools "github.com/grafana/mcp-grafana/tools"
+    "github.com/giantswarm/mcp-observability-platform/internal/authz"
+    "github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
+)
+
+t := mcpgrafanatools.QuerySomething
+s.AddTool(
+    upstream.WithOrgReplacingDatasource(t.Tool),
+    br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, t),
+)
+```
+
+The bridge resolves `org → OrgID + datasource UID` server-side, so
+the LLM-visible schema is upstream's verbatim minus `datasourceUid`,
+plus our `org`. Tools whose upstream arg name isn't `datasourceUid`
+(e.g. `alerting_manage_rules` uses `datasource_uid`) use the
+`WithOrgReplacingArg` / `WrapDatasourceArg` pair.
+
+For org-only upstream tools (no datasource), use `upstream.WithOrg` +
+`br.Wrap`.
+
+### Path B — local handler (only when upstream has no equivalent)
+
+Document why in the file header. Then add the registration:
+
+```go
+s.AddTool(
+    mcp.NewTool("your_tool_name",
+        ReadOnlyAnnotation(),
+        mcp.WithDescription("..."),
+        mcp.WithString("org", mcp.Required(), mcp.Description("...")),
+        // ... other args
+    ),
+    func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        orgRef, err := req.RequireString("org")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        // … call gc (grafana.Client) using grafanaOpts(ctx, org.OrgID)
+        return mcp.NewToolResultJSON(result)
+    },
+)
+```
+
+For datasource-proxied tools, reuse `datasourceProxyHandler(az, gc,
+datasourceSpec{...})` instead of hand-rolling.
+
+### Always
+
+- **Don't accept secret arguments.** Look credentials up server-side
+  from the caller identity. The audit stream stays clean by
+  construction; the package doc on `internal/audit` spells out the
+  rule.
+- **Tests.** `handler_authz_test.go` enumerates every registered
+  tool that takes an `org` argument and asserts the deny path —
+  bridged tools are covered automatically. Add a happy-path
+  integration test in `handler_integration_test.go` only for tools
+  with non-trivial response shaping that's still local.
 
 ## Out of scope
 

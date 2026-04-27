@@ -32,6 +32,28 @@ type Datasource struct {
 	Name string
 }
 
+// DatasourceKind names the canonical role a datasource plays for the MCP
+// (a metrics backend, a logs backend, …). Today FindDatasource picks the
+// concrete Datasource by case-insensitive name substring; the kind ↔
+// substring rules live with the authz package so the substring vocabulary
+// stays in one place.
+//
+// TODO(uid-publish): once observability-operator publishes per-datasource
+// kind on the GrafanaOrganization CR, drop the substring rules and read
+// the kind off the Datasource directly.
+type DatasourceKind string
+
+const (
+	DSKindMimir        DatasourceKind = "mimir"
+	DSKindLoki         DatasourceKind = "loki"
+	DSKindTempo        DatasourceKind = "tempo"
+	DSKindAlertmanager DatasourceKind = "alertmanager"
+)
+
+// String returns the kind name (already a string under the hood; this
+// satisfies fmt.Stringer for cleaner formatting at error sites).
+func (k DatasourceKind) String() string { return string(k) }
+
 // Organization is the domain entity backing a Grafana org, plus the caller's
 // Role once resolved.
 //
@@ -85,6 +107,32 @@ func (o Organization) FindDatasourceID(mustContain ...string) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// FindDatasource picks the datasource backing the given kind. Today the
+// kind ↔ substring rules are baked in here; tomorrow (CR-status uid +
+// kind publishing) they're a direct read off Datasource.
+func (o Organization) FindDatasource(kind DatasourceKind) (Datasource, bool) {
+	needle, ok := datasourceKindSubstring[kind]
+	if !ok {
+		return Datasource{}, false
+	}
+	for _, ds := range o.Datasources {
+		if strings.Contains(strings.ToLower(ds.Name), needle) {
+			return ds, true
+		}
+	}
+	return Datasource{}, false
+}
+
+// datasourceKindSubstring is the single source of truth for "what
+// substring identifies a datasource of kind K?". Kept private so changing
+// it doesn't ripple to consumers — they reference the kind constants.
+var datasourceKindSubstring = map[DatasourceKind]string{
+	DSKindMimir:        "mimir",
+	DSKindLoki:         "loki",
+	DSKindTempo:        "tempo",
+	DSKindAlertmanager: "alertmanager",
 }
 
 // cloneTenants returns a deep copy of a Tenant slice: the outer slice and

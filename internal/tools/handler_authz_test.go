@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,15 +43,9 @@ type stubGrafanaForAuthz struct {
 	memberships    map[int64][]grafana.UserOrgMembership
 }
 
-type lookupUser = struct {
-	ID    int64  `json:"id"`
-	Email string `json:"email"`
-	Login string `json:"login"`
-}
-
-func (s stubGrafanaForAuthz) LookupUser(_ context.Context, key string) (*lookupUser, error) {
+func (s stubGrafanaForAuthz) LookupUser(_ context.Context, key string) (*grafana.User, error) {
 	if id, ok := s.users[key]; ok {
-		return &lookupUser{ID: id, Email: key}, nil
+		return &grafana.User{ID: id, Email: key}, nil
 	}
 	return nil, nil
 }
@@ -105,48 +100,83 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		t.Fatalf("grafana.New: %v", err)
 	}
 
-	br := &upstream.Bridge{Authorizer: az, GrafanaURL: ts.URL, APIKey: "test-token"}
+	br, err := upstream.NewBridge(az, gf, ts.URL, "test-token", nil)
+	if err != nil {
+		t.Fatalf("upstream.NewBridge: %v", err)
+	}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
 	RegisterAll(s, az, gf, br)
 	return s, ts.Close
 }
 
-// TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools picks one tool
-// from each major category and confirms a caller with no org membership
-// gets a structured authz-error result rather than a happy-path response
-// or a panic. If a future tool category is added that forgets RequireOrg
-// (or its equivalent), this test catches it.
+// TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools enumerates every
+// registered tool that takes an `org` argument and asserts that an
+// unauthorised caller receives a structured authz-error result. The
+// enumeration is intentional: a future tool added in any path (local
+// handler that forgets RequireOrg, bridged tool that bypasses the
+// bridge by accident) is caught here without anyone updating a table.
+//
+// Tools without an `org` argument are skipped. list_orgs is the one
+// notable exclusion among org-arg tools: it surfaces what the caller
+// CAN see (empty list for unauthorised callers, not an error). Treat
+// the list_orgs special case in its own test below.
 func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 	const caller = "alice@example.com"
 	s, closeTS := wireAuthzDenyTest(t, caller)
 	defer closeTS()
 	ctx := callerCtx(caller)
 
-	// One representative tool per category that takes `org`. list_orgs is
-	// excluded — it lists across all orgs the caller can see, which is
-	// supposed to return an empty result for unauthorized callers, not an
-	// error. (Tested separately below.)
-	cases := []struct {
-		tool string
-		args map[string]any
-	}{
-		{"list_datasources", map[string]any{"org": "acme"}},
-		{"get_dashboard_by_uid", map[string]any{"org": "acme", "uid": "abc"}},
-		{"query_prometheus", map[string]any{"org": "acme", "query": "up"}},
-		{"query_loki_logs", map[string]any{"org": "acme", "query": `{job="x"}`}},
-		{"list_alerts", map[string]any{"org": "acme"}},
+	tools := s.ListTools()
+	// A handful of tools take args beyond `org` that the bridge or local
+	// handler validates BEFORE running authz; supply minimal stand-in
+	// values so the call reaches the authz boundary. Unknown args are
+	// either ignored (bridged) or used by validation we don't care about
+	// in this test (local).
+	stockArgs := map[string]any{
+		"org":            "acme",
+		"uid":            "abc",
+		"query":          "up",
+		"name":           "x",
+		"label":          "x",
+		"tag":            "service.name",
+		"metric":         "http_requests_total",
+		"promql":         "up",
+		"service":        "api",
+		"fingerprint":    "0123456789abcdef",
+		"dashboardUid":   "abc",
+		"panelId":        1,
+		"datasource_uid": "any", // alerting_manage_rules: bridge clobbers, but its own validate() expects an operation
+		"operation":      "list",
+		"q":              "{}",
+		"logql":          `{job="x"}`,
+		"queryType":      "instant",
 	}
-	for _, c := range cases {
-		t.Run(c.tool, func(t *testing.T) {
-			res := callToolWithCtx(t, ctx, s, c.tool, c.args)
+
+	denyCount := 0
+	for name, st := range tools {
+		if name == "list_orgs" {
+			continue // tested separately
+		}
+		if !slices.Contains(st.Tool.InputSchema.Required, "org") {
+			continue
+		}
+		denyCount++
+		t.Run(name, func(t *testing.T) {
+			res := callToolWithCtx(t, ctx, s, name, stockArgs)
 			if !res.IsError {
-				t.Fatalf("tool %q must return IsError for unauthorised caller; got %s", c.tool, resultText(res))
+				t.Fatalf("tool %q must return IsError for unauthorised caller; got %s", name, resultText(res))
 			}
 			text := resultText(res)
 			if !strings.Contains(text, "not authorised") {
-				t.Errorf("tool %q error should name authz; got %q", c.tool, text)
+				t.Errorf("tool %q error should name authz; got %q", name, text)
 			}
 		})
+	}
+	// Defensive: enumerator must actually find tools. A registration
+	// regression that drops `org` from every tool's schema would
+	// silently let this test pass with zero cases otherwise.
+	if denyCount < 5 {
+		t.Errorf("enumerated only %d org-arg tools; expected >= 5 (registration regression?)", denyCount)
 	}
 }
 

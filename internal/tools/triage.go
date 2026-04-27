@@ -1,7 +1,17 @@
 // Package tools — triage.go: SRE-triage co-pilot tools.
-// find_error_pattern_logs and find_slow_requests mirror grafana/mcp-grafana's
-// Sift surface (the Cloud-only Sift backend isn't required — both compose
-// existing Loki/Tempo primitives). explain_query has no upstream counterpart.
+//
+// find_error_pattern_logs and find_slow_requests deliberately keep the
+// upstream grafana/mcp-grafana tool names + descriptions so an LLM
+// prompt written for Grafana Cloud works unchanged here. Upstream's
+// implementations of those tools delegate to Grafana Cloud's managed
+// **Sift** backend, which isn't reachable from a self-hosted
+// Mimir/Loki/Tempo install — so we can't bridge to upstream and have
+// to compute equivalent results locally against the open-source
+// primitives. Same surface, different back end. If a future
+// open-sourced Sift becomes available, the bridge can replace these
+// handlers verbatim.
+//
+// explain_query is bespoke — no upstream counterpart.
 package tools
 
 import (

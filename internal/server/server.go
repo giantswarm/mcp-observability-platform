@@ -38,10 +38,12 @@ type Config struct {
 	MaxResponseBytes int
 }
 
-// New builds the core MCP server and registers tools + resource templates +
-// prompts. Transport wrapping (streamable-HTTP, SSE, stdio) is the caller's
-// concern — use `StreamableHTTPHandler` / `SSEHandler` or drive stdio via
-// `mcpsrv.ServeStdio` directly.
+// New builds the core MCP server and registers the tool surface. This
+// MCP exposes only tools — no resources or prompts (see the
+// WithToolCapabilities-only construction below and docs/roadmap.md
+// "Out of scope"). Transport wrapping (streamable-HTTP, SSE, stdio)
+// is the caller's concern — use `StreamableHTTPHandler` / `SSEHandler`
+// or drive stdio via `mcpsrv.ServeStdio` directly.
 func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Logger == nil {
 		return nil, errors.New("server: Logger is required")

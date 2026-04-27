@@ -72,7 +72,10 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			{ID: 13, Name: "alertmanager-acme"},
 		},
 	}}
-	br := &upstream.Bridge{Authorizer: az, GrafanaURL: ts.URL, APIKey: "test-token"}
+	br, err := upstream.NewBridge(az, gf, ts.URL, "test-token", nil)
+	if err != nil {
+		t.Fatalf("upstream.NewBridge: %v", err)
+	}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
 	RegisterAll(s, az, gf, br)
 	return s
@@ -194,50 +197,6 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 }
 
 // TestHandler_QueryPrometheusHistogram proves the synthesis path: the
-// handler composes histogram_quantile over the supplied metric/matchers/
-// window/groupBy and dispatches it as a single Grafana datasource-proxy
-// call. A subtle change in buildHistogramQuantile would slip past the
-// helper-level test because the handler layer does not re-validate the
-// PromQL — this test catches that class of regression.
-func TestHandler_QueryPrometheusHistogram(t *testing.T) {
-	var sawPath, sawQuery string
-	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
-		sawPath = r.URL.Path
-		sawQuery = r.URL.Query().Get("query")
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
-	})
-	defer ts.Close()
-
-	res := callTool(t, wireHandlerTest(t, ts), "query_prometheus_histogram", map[string]any{
-		"org":      "acme",
-		"metric":   "http_request_duration_seconds_bucket",
-		"quantile": 0.95,
-		"window":   "5m",
-		"matchers": `job="api"`,
-		"groupBy":  "route",
-	})
-	if res.IsError {
-		t.Fatalf("unexpected IsError: %s", resultText(res))
-	}
-	// Proxy should route through the Mimir datasource (ID 10 per fixture).
-	if !strings.HasPrefix(sawPath, "/api/datasources/proxy/10/api/v1/query") {
-		t.Errorf("path = %q, want /api/datasources/proxy/10/api/v1/query*", sawPath)
-	}
-	// Synthesized PromQL must carry every user-supplied piece.
-	for _, want := range []string{
-		"histogram_quantile(0.95",
-		"http_request_duration_seconds_bucket",
-		`job="api"`,
-		"rate(",
-		"[5m]",
-		"sum by (le, route)",
-	} {
-		if !strings.Contains(sawQuery, want) {
-			t.Errorf("synthesized PromQL missing %q:\n%s", want, sawQuery)
-		}
-	}
-}
-
 // TestHandler_ListSilences covers the Alertmanager silences tool: tenant
 // gating (needs TenantTypeAlerting), datasource selection (alertmanager-*),
 // and the AM v2 projection that collapses matcher shapes into a single

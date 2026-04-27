@@ -102,22 +102,13 @@ type fakeGrafana struct {
 	calls          struct{ lookup, userOrgs int }
 }
 
-// lookupUserReturn is the precise shape grafana.Client.LookupUser returns
-// (an anonymous struct pointer); declared as a named type so the test
-// stubs can return it without repeating the literal every time.
-type lookupUserReturn = struct {
-	ID    int64  `json:"id"`
-	Email string `json:"email"`
-	Login string `json:"login"`
-}
-
-func (f *fakeGrafana) LookupUser(_ context.Context, loginOrEmail string) (*lookupUserReturn, error) {
+func (f *fakeGrafana) LookupUser(_ context.Context, loginOrEmail string) (*grafana.User, error) {
 	f.calls.lookup++
 	id, ok := f.users[loginOrEmail]
 	if !ok {
 		return nil, nil // not yet provisioned in Grafana
 	}
-	return &lookupUserReturn{ID: id, Email: loginOrEmail}, nil
+	return &grafana.User{ID: id, Email: loginOrEmail}, nil
 }
 
 func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {
@@ -346,7 +337,7 @@ type blockingGrafana struct {
 	release        chan struct{}
 }
 
-func (b *blockingGrafana) LookupUser(_ context.Context, loginOrEmail string) (*lookupUserReturn, error) {
+func (b *blockingGrafana) LookupUser(_ context.Context, loginOrEmail string) (*grafana.User, error) {
 	b.lookupCalls.Add(1)
 	if b.release != nil {
 		<-b.release
@@ -355,7 +346,7 @@ func (b *blockingGrafana) LookupUser(_ context.Context, loginOrEmail string) (*l
 	if !ok {
 		return nil, nil
 	}
-	return &lookupUserReturn{ID: id, Email: loginOrEmail}, nil
+	return &grafana.User{ID: id, Email: loginOrEmail}, nil
 }
 
 func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {
