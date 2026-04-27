@@ -32,7 +32,6 @@ type Record struct {
 }
 
 // Logger wraps an slog.Logger dedicated to the audit stream.
-//
 type Logger struct {
 	slog *slog.Logger
 }
