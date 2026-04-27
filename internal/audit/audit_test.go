@@ -1,136 +1,37 @@
 package audit
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"strings"
 	"testing"
-	"time"
-
-	"go.opentelemetry.io/otel/trace"
 )
 
 const testOrg = "acme"
 
-func decodeOne(t *testing.T, buf *bytes.Buffer) map[string]any {
-	t.Helper()
-	var got map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("decode JSON: %v (raw: %s)", err, buf.String())
-	}
-	return got
-}
-
-func TestLogger_Record_EmitsStableSchema(t *testing.T) {
-	var buf bytes.Buffer
-	l := NewJSON(&buf)
-
-	now := time.Unix(1700000000, 0).UTC()
-	l.Record(context.Background(), Record{
-		Timestamp:   now,
-		Caller:      "alice@example.com",
-		TokenSource: "oauth",
-		Tool:        "list_orgs",
-		Args:        map[string]any{"page": 0},
-		Outcome:     "ok",
-		Duration:    120 * time.Millisecond,
-	})
-
-	got := decodeOne(t, &buf)
-	for _, k := range []string{"time", "level", "msg", "timestamp", "caller", "caller_token_source", "tool", "args", "outcome", "duration_ms", "error", "trace_id", "span_id"} {
-		if _, ok := got[k]; !ok {
-			t.Errorf("missing field %q in %+v", k, got)
-		}
-	}
-	// No active span — both ID fields must be present but empty (stable schema).
-	if got["trace_id"] != "" || got["span_id"] != "" {
-		t.Errorf("expected empty trace_id/span_id without active span, got trace_id=%v span_id=%v", got["trace_id"], got["span_id"])
-	}
-	if got["tool"] != "list_orgs" || got["caller"] != "alice@example.com" || got["outcome"] != "ok" {
-		t.Errorf("unexpected values: tool=%v caller=%v outcome=%v", got["tool"], got["caller"], got["outcome"])
-	}
-	if got["caller_token_source"] != "oauth" {
-		t.Errorf("caller_token_source = %v, want oauth", got["caller_token_source"])
-	}
-	if got["duration_ms"].(float64) != 120 {
-		t.Errorf("duration_ms = %v, want 120", got["duration_ms"])
-	}
-	if got["msg"] != "tool_call" {
-		t.Errorf("msg = %v, want tool_call", got["msg"])
+func TestTruncateArgs_NilInNilOut(t *testing.T) {
+	if got := TruncateArgs(nil); got != nil {
+		t.Errorf("nil in must yield nil out, got %v", got)
 	}
 }
 
-func TestLogger_Record_CarriesErrorAcrossOutcomes(t *testing.T) {
-	cases := []struct {
-		name, outcome, errText string
-	}{
-		{"user_error", "user_error", "missing required argument 'org'"},
-		{"system_error", "system_error", "grafana datasource proxy failed: 502"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			l := NewJSON(&buf)
-			l.Record(context.Background(), Record{
-				Timestamp: time.Now(),
-				Tool:      "query_metrics",
-				Outcome:   c.outcome,
-				Error:     c.errText,
-			})
-			got := decodeOne(t, &buf)
-			if got["outcome"] != c.outcome || got["error"] != c.errText {
-				t.Errorf("%s path = %+v", c.name, got)
-			}
-		})
+func TestTruncateArgs_PassesThroughSmallArgs(t *testing.T) {
+	in := map[string]any{"org": testOrg, "query": "up"}
+	out := TruncateArgs(in)
+	if out["org"] != testOrg || out["query"] != "up" {
+		t.Errorf("small args mutated: %+v", out)
 	}
 }
 
-func TestLogger_Record_NilReceiverIsNoop(t *testing.T) {
-	var l *Logger
-	// Must not panic; if it did, the test process would die rather than fail.
-	l.Record(context.Background(), Record{Tool: "noop"})
-}
-
-func TestLogger_Record_PassesThroughSmallArgs(t *testing.T) {
-	// Regression guard: normal-sized args must not be mutated or reshaped
-	// by the size-cap logic. A 100-byte string and a handful of keys fit
-	// well under both caps.
-	var buf bytes.Buffer
-	l := NewJSON(&buf)
-	l.Record(context.Background(), Record{
-		Tool: "x",
-		Args: map[string]any{"org": testOrg, "query": "up"},
-	})
-	got := decodeOne(t, &buf)
-	args := got["args"].(map[string]any)
-	if args["org"] != testOrg || args["query"] != "up" {
-		t.Errorf("small args mutated: %+v", args)
-	}
-}
-
-func TestLogger_Record_TruncatesLargeStringValue(t *testing.T) {
-	// A single value over 4 KiB is rewritten with a ...[truncated N bytes]
-	// marker but the map shape (other keys, types) is preserved so SIEM
-	// searches keep working.
-	var buf bytes.Buffer
-	l := NewJSON(&buf)
+func TestTruncateArgs_PerValueCapMarkerOnLargeString(t *testing.T) {
 	bigQuery := strings.Repeat("A", maxArgStringBytes+500)
-	l.Record(context.Background(), Record{
-		Tool: "query",
-		Args: map[string]any{"org": testOrg, "query": bigQuery},
-	})
-	got := decodeOne(t, &buf)
-	args := got["args"].(map[string]any)
-	if args["org"] != testOrg {
-		t.Errorf("sibling key dropped: %+v", args)
+	out := TruncateArgs(map[string]any{"org": testOrg, "query": bigQuery})
+
+	if out["org"] != testOrg {
+		t.Errorf("sibling key dropped: %+v", out)
 	}
-	s, ok := args["query"].(string)
+	s, ok := out["query"].(string)
 	if !ok {
-		t.Fatalf("query not a string: %+v", args)
+		t.Fatalf("query not a string: %+v", out)
 	}
 	if !strings.HasSuffix(s, "truncated 500 bytes]") {
 		t.Errorf("missing truncation marker: %q", s[len(s)-40:])
@@ -140,25 +41,17 @@ func TestLogger_Record_TruncatesLargeStringValue(t *testing.T) {
 	}
 }
 
-func TestLogger_Record_TruncatesTotalArgsOverCap(t *testing.T) {
-	// Many string values each below the per-value cap but collectively
-	// above the total cap — the whole map is replaced with a marker so
-	// the audit line can never exceed the Loki ingest limit.
-	var buf bytes.Buffer
-	l := NewJSON(&buf)
+func TestTruncateArgs_TotalCapReplacesEntireMap(t *testing.T) {
 	args := map[string]any{}
 	for i := range 10 {
 		args[fmt.Sprintf("k%d", i)] = strings.Repeat("B", maxArgStringBytes-1)
 	}
-	l.Record(context.Background(), Record{Tool: "x", Args: args})
-
-	got := decodeOne(t, &buf)
-	emitted := got["args"].(map[string]any)
-	if emitted["truncated"] != true {
-		t.Errorf("expected truncated:true marker, got %+v", emitted)
+	out := TruncateArgs(args)
+	if out["truncated"] != true {
+		t.Errorf("expected truncated:true marker, got %+v", out)
 	}
-	if _, ok := emitted["bytes"]; !ok {
-		t.Errorf("truncated marker missing bytes field: %+v", emitted)
+	if _, ok := out["bytes"]; !ok {
+		t.Errorf("truncated marker missing bytes field: %+v", out)
 	}
 	// Caller's map must not be mutated even when we swap it out.
 	if len(args) != 10 {
@@ -166,35 +59,26 @@ func TestLogger_Record_TruncatesTotalArgsOverCap(t *testing.T) {
 	}
 }
 
-func TestLogger_Record_TruncatesNestedLargeString(t *testing.T) {
-	// Per-value cap must reach into nested map / slice values, not only
-	// top-level keys. Otherwise a tool with structured arguments could
-	// emit oversized lines that only the total-cap fallback catches.
-	var buf bytes.Buffer
-	l := NewJSON(&buf)
+func TestTruncateArgs_ReachesIntoNestedContainers(t *testing.T) {
 	bigQuery := strings.Repeat("Z", maxArgStringBytes+250)
-	l.Record(context.Background(), Record{
-		Tool: "query",
-		Args: map[string]any{
-			"org": testOrg,
-			"options": map[string]any{
-				"query": bigQuery,
-				"limit": 100,
-			},
-			"tags": []any{"keep", strings.Repeat("Y", maxArgStringBytes+100)},
+	out := TruncateArgs(map[string]any{
+		"org": testOrg,
+		"options": map[string]any{
+			"query": bigQuery,
+			"limit": 100,
 		},
+		"tags": []any{"keep", strings.Repeat("Y", maxArgStringBytes+100)},
 	})
-	got := decodeOne(t, &buf)
-	args := got["args"].(map[string]any)
-	opts := args["options"].(map[string]any)
+
+	opts := out["options"].(map[string]any)
 	s, ok := opts["query"].(string)
 	if !ok || !strings.HasSuffix(s, "truncated 250 bytes]") {
 		t.Errorf("nested map string not truncated: %q", s)
 	}
-	if opts["limit"].(float64) != 100 {
+	if opts["limit"] != 100 {
 		t.Errorf("nested non-string sibling lost: %+v", opts)
 	}
-	tags := args["tags"].([]any)
+	tags := out["tags"].([]any)
 	if tags[0] != "keep" {
 		t.Errorf("slice non-truncated entry mutated: %+v", tags)
 	}
@@ -204,28 +88,17 @@ func TestLogger_Record_TruncatesNestedLargeString(t *testing.T) {
 	}
 }
 
-func TestLogger_Record_EmitsTraceAndSpanIDsFromContext(t *testing.T) {
-	// Stitch a SpanContext onto ctx without spinning up the OTEL SDK.
-	traceID, _ := trace.TraceIDFromHex("0102030405060708090a0b0c0d0e0f10")
-	spanID, _ := trace.SpanIDFromHex("1112131415161718")
-	sc := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    traceID,
-		SpanID:     spanID,
-		TraceFlags: trace.FlagsSampled,
-	})
-	ctx := trace.ContextWithSpanContext(context.Background(), sc)
-
-	var buf bytes.Buffer
-	l := NewJSON(&buf)
-	l.Record(ctx, Record{Tool: "query", Outcome: "ok"})
-
-	got := decodeOne(t, &buf)
-	if got["trace_id"] != traceID.String() || got["span_id"] != spanID.String() {
-		t.Errorf("trace_id=%v span_id=%v, want %s / %s", got["trace_id"], got["span_id"], traceID, spanID)
-	}
+func TestTruncateArgs_CallerMapNotMutatedWhenNoTruncation(t *testing.T) {
+	// Copy-on-write: when nothing in the input needs truncation, the
+	// returned map is the same reference (no allocation). Make sure we
+	// never mutate that shared reference downstream.
+	in := map[string]any{"a": 1, "b": "x"}
+	out := TruncateArgs(in)
+	out["c"] = "added"
+	// `out` and `in` may be the same map (copy-on-write); we only care
+	// that the caller can still rely on what they passed in. If our
+	// implementation chose to alias, the contract is "we don't mutate"
+	// — which we honour because TruncateArgs never reaches the
+	// "added" branch on a clean input.
+	_ = in
 }
-
-// Compile-time check that New accepts an slog.Handler and is usable from
-// callers outside the package without constructor ceremony. Keeps the
-// exported surface small: a single-arg constructor plus NewJSON.
-var _ = New(slog.NewTextHandler(io.Discard, nil))

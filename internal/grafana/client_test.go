@@ -366,47 +366,6 @@ func TestDoGET_CapsResponseBody(t *testing.T) {
 	}
 }
 
-func TestSanitizeCallerHeader(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"", ""},
-		{"alice@example.com", "alice@example.com"},
-		{"user\r\nInjected: evil", "userInjected: evil"},
-		{"\x00\x01\x02safe", "safe"},
-		{strings.Repeat("x", 300), strings.Repeat("x", 256)},
-		{"\t\n\r", ""},
-		{"ü-non-ascii", "-non-ascii"}, // non-ASCII stripped
-	}
-	for _, c := range cases {
-		got := sanitizeCallerHeader(c.in)
-		if got != c.want {
-			t.Errorf("sanitizeCallerHeader(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-func TestCallerHeader_SanitisedOnWire(t *testing.T) {
-	// End-to-end: caller contains CRLF; the value on the wire must be safe.
-	var got string
-	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Get("X-Grafana-User")
-		_, _ = w.Write([]byte("{}"))
-	})
-	defer ts.Close()
-
-	_, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1, Caller: "alice\r\nInjected: evil"})
-	if err != nil {
-		t.Fatalf("ListDatasources: %v", err)
-	}
-	if strings.ContainsAny(got, "\r\n") {
-		t.Errorf("X-Grafana-User still contains CR/LF: %q", got)
-	}
-	if got != "aliceInjected: evil" {
-		t.Errorf("sanitised header = %q, want %q", got, "aliceInjected: evil")
-	}
-}
-
 // TestClient_ErrorStatusCodes_SurfaceUpstreamBody covers the Grafana-side
 // error shapes the MCP actually has to reason about (401/403/429/500/502/503).
 // The client must: return a non-nil error, preserve the status code in the
@@ -566,88 +525,6 @@ func TestClient_ErrorBodyCapped(t *testing.T) {
 	// / unbounded allocation happened.
 	if !strings.Contains(err.Error(), "exceeded") {
 		t.Errorf("expected body-cap error, got: %v", err)
-	}
-}
-
-// TestClient_SameOriginRedirect_Followed proves the redirect policy permits
-// an in-cluster sidecar proxy (e.g. nginx / istio doing trailing-slash
-// normalisation or path rewrites) to send a 301 back to the same host. The
-// client must follow it and the second request must carry the original
-// Authorization header (stdlib behaviour for same-origin).
-func TestClient_SameOriginRedirect_Followed(t *testing.T) {
-	var hits int
-	var sawAuthOnFinal string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		if hits == 1 {
-			// Simulate a sidecar trailing-slash normaliser.
-			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
-			return
-		}
-		sawAuthOnFinal = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	}))
-	defer ts.Close()
-	c, _ := New(Config{URL: ts.URL, Token: "tok"})
-
-	_, err := c.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "abc")
-	if err != nil {
-		t.Fatalf("GetDashboard through same-origin redirect: %v", err)
-	}
-	if hits != 2 {
-		t.Errorf("expected 2 hits (original + redirect target), got %d", hits)
-	}
-	if sawAuthOnFinal != "Bearer tok" {
-		t.Errorf("Authorization lost through same-origin redirect: got %q", sawAuthOnFinal)
-	}
-}
-
-// TestClient_CrossOriginRedirect_Blocked proves the redirect policy rejects
-// a 302 that would send the Authorization header to a different host —
-// exactly the credential-leak vector the policy exists to close.
-func TestClient_CrossOriginRedirect_Blocked(t *testing.T) {
-	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// If this ever fires, the policy failed — credentials just landed
-		// at an attacker-controlled host.
-		t.Errorf("evil server reached — cross-origin redirect was followed! authz=%q", r.Header.Get("Authorization"))
-		_, _ = w.Write([]byte("{}"))
-	}))
-	defer evil.Close()
-
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, evil.URL+"/api/dashboards/uid/abc", http.StatusFound)
-	}))
-	defer origin.Close()
-	c, _ := New(Config{URL: origin.URL, Token: "tok"})
-
-	_, err := c.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "abc")
-	if err == nil {
-		t.Fatalf("expected cross-origin redirect to be rejected")
-	}
-	if !strings.Contains(err.Error(), "cross-origin") {
-		t.Errorf("error should mention cross-origin redirect, got: %v", err)
-	}
-}
-
-// TestClient_RedirectHopLimit prevents redirect loops / chains longer than
-// the small hop budget. A sidecar bug looping on trailing-slash rewrites
-// must surface as an error, not hang the MCP.
-func TestClient_RedirectHopLimit(t *testing.T) {
-	var hits int
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		http.Redirect(w, r, fmt.Sprintf("%s/loop?n=%d", r.Host, hits), http.StatusMovedPermanently)
-	}))
-	defer ts.Close()
-	c, _ := New(Config{URL: ts.URL, Token: "tok"})
-
-	_, err := c.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "abc")
-	if err == nil {
-		t.Fatalf("expected too-many-redirects error")
-	}
-	if hits > 5 {
-		t.Errorf("hop budget leaked: saw %d hits before abort", hits)
 	}
 }
 

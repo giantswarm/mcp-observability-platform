@@ -52,12 +52,12 @@ func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Ha
 	)
 }
 
-// buildObsMux wires /healthz, /readyz, /healthz/detailed, and /metrics on
-// a single mux that the observability HTTP server serves.
-func buildObsMux(version, dexIssuerURL string, gf grafana.Client, listOrgs func(context.Context) (int, error), cacheAlive *atomic.Bool) http.Handler {
+// buildObsMux wires /healthz, /readyz, and /metrics on a single mux that
+// the observability HTTP server serves.
+func buildObsMux(dexIssuerURL string, gf grafana.Client, listOrgs func(context.Context) (int, error), cacheAlive *atomic.Bool) http.Handler {
 	mux := http.NewServeMux()
-	health := setupHealth(version, dexIssuerURL, gf, listOrgs, cacheAlive)
-	health.RegisterHandlers(mux)
+	health := setupHealth(dexIssuerURL, gf, listOrgs, cacheAlive)
+	health.Mount(mux)
 	mux.Handle("/metrics", observability.MetricsHandler())
 	return mux
 }

@@ -2,31 +2,31 @@ package middleware
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-// Instrument is the composite observability middleware: one OTEL span, one
-// metric pair, one audit record per tool invocation.
+// Instrument is the composite observability middleware: one OTEL span,
+// one metric pair, one slog-based audit record per tool invocation.
+// Classify(res, err) is computed once and fanned out so the span
+// status, metric label, and audit outcome stay in lockstep.
 //
-// Collapsed from the previous Tracing/Metrics/Audit trio so `Classify(res,err)`
-// is computed exactly once. Earlier each middleware classified the outcome
-// independently — three call sites that had to stay in lockstep. Drift
-// between them would have silently desynced the metric label, span status,
-// and audit outcome.
+// auditLogger is a dedicated *slog.Logger (typically JSON to stderr) so
+// audit records can be routed independently of the app's main log
+// stream. nil disables the audit emission while keeping span + metric.
 //
-// The handler error is propagated unchanged. A nil auditor makes the audit
-// side-effect a no-op (via Logger.Record's nil-receiver guard), so callers
-// without an audit sink can wire Instrument(nil) without a branch.
-func Instrument(auditor *audit.Logger) server.ToolHandlerMiddleware {
+// The handler error is propagated unchanged.
+func Instrument(auditLogger *slog.Logger) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			name := req.Params.Name
@@ -51,18 +51,25 @@ func Instrument(auditor *audit.Logger) server.ToolHandlerMiddleware {
 			observability.ToolCallTotal.WithLabelValues(name, outcome).Inc()
 			observability.ToolCallDuration.WithLabelValues(name, outcome).Observe(duration.Seconds())
 
-			// Audit: structured record on the audit sink. Logger.Record is
-			// nil-safe so a nil auditor short-circuits without a branch here.
-			auditor.Record(ctx, audit.Record{
-				Timestamp:   start,
-				Caller:      authz.CallerSubject(ctx),
-				TokenSource: authz.CallerTokenSource(ctx),
-				Tool:        name,
-				Args:        req.GetArguments(),
-				Outcome:     outcome,
-				Duration:    duration,
-				Error:       auditErrorMessage(err, res),
-			})
+			// Audit: structured slog record on the dedicated audit
+			// stream. Emit happens inside this middleware (not in a
+			// dedicated audit package wrapper) so the schema lives
+			// alongside the metric/span — three signals, one place.
+			if auditLogger != nil {
+				traceID, spanID := traceIDs(ctx)
+				auditLogger.LogAttrs(ctx, slog.LevelInfo, "tool_call",
+					slog.Time("timestamp", start),
+					slog.String("caller", authz.CallerSubject(ctx)),
+					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
+					slog.String("tool", name),
+					slog.Any("args", audit.TruncateArgs(req.GetArguments())),
+					slog.String("outcome", outcome),
+					slog.Int64("duration_ms", duration.Milliseconds()),
+					slog.String("error", auditErrorMessage(err, res)),
+					slog.String("trace_id", traceID),
+					slog.String("span_id", spanID),
+				)
+			}
 
 			return res, err
 		}
@@ -85,4 +92,15 @@ func auditErrorMessage(err error, res *mcp.CallToolResult) string {
 		}
 	}
 	return "tool returned isError with no text content"
+}
+
+// traceIDs returns the trace + span IDs from any active span on ctx,
+// or empty strings when no span is set. Stable schema: every audit
+// record carries both fields.
+func traceIDs(ctx context.Context) (string, string) {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return "", ""
+	}
+	return sc.TraceID().String(), sc.SpanID().String()
 }

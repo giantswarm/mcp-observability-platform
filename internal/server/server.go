@@ -8,7 +8,6 @@ import (
 
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
@@ -25,9 +24,10 @@ type Config struct {
 	// handlers. Required.
 	Bridge  *upstream.Bridge
 	Version string
-	// Audit sinks one Record per tool call. Nil is allowed — the audit
-	// middleware then degrades to a pass-through.
-	Audit *audit.Logger
+	// AuditLogger is the dedicated slog stream for tool-call audit
+	// records (typically JSON to stderr). Nil disables audit emission
+	// while keeping span + metric.
+	AuditLogger *slog.Logger
 	// ToolTimeout is the per-tool-handler context deadline. 0 disables
 	// per-handler timeouts (ctx passes through unchanged). Callers
 	// typically feed middleware.ToolTimeoutFromEnv() here.
@@ -61,17 +61,9 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		cfg.Version = "dev"
 	}
 
-	// Only `WithToolCapabilities` is advertised — this MCP exposes tools,
-	// not resources or prompts. Rationale + explicit scope: see
-	// docs/roadmap.md "Out of scope".
-	//
-	// listChanged is false because the tool set is built once at startup.
-	// Flip to true only when a feature actually emits
-	// notifications/tools/list_changed.
-	//
 	// Middleware stack (outermost first):
 	//   1. WithRecovery()                   — panic guard (mcp-go).
-	//   2. middleware.Instrument(cfg.Audit) — span + metric + audit per call.
+	//   2. middleware.Instrument(cfg.AuditLogger) — span + metric + audit per call.
 	//                                         Classify(res,err) is computed
 	//                                         once and fanned out so span
 	//                                         status, metric label, and audit
@@ -90,9 +82,11 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
-		mcpsrv.WithToolCapabilities(false),
+		mcpsrv.WithToolCapabilities(true),
+		mcpsrv.WithResourceCapabilities(true, true),
+		mcpsrv.WithPromptCapabilities(true),
 		mcpsrv.WithRecovery(),
-		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Audit)),
+		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.AuditLogger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
 		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap(cfg.MaxResponseBytes)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),

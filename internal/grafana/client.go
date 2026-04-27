@@ -145,14 +145,6 @@ func New(cfg Config) (Client, error) {
 					return "grafana " + r.Method + " " + r.URL.Path
 				}),
 			),
-			// Redirect policy: permit same-origin redirects (a sidecar proxy
-			// — nginx, istio, oauth2-proxy — may 301 for trailing-slash
-			// normalisation or intra-host path rewriting) up to a small hop
-			// limit, and reject anything cross-origin. Stdlib already strips
-			// Authorization on cross-origin redirects since Go 1.7; rejecting
-			// the redirect outright is belt-and-braces against a compromised
-			// or misconfigured Grafana bouncing us to an attacker-chosen host.
-			CheckRedirect: sameOriginRedirectPolicy(u, 3),
 		}
 	}
 	authHeader := redactedHeader("Bearer " + cfg.Token)
@@ -213,8 +205,8 @@ func (c *client) fetch(ctx context.Context, method, path string, query url.Value
 	if opts.OrgID > 0 {
 		req.Header.Set("X-Grafana-Org-Id", strconv.FormatInt(opts.OrgID, 10))
 	}
-	if caller := sanitizeCallerHeader(opts.Caller); caller != "" {
-		req.Header.Set("X-Grafana-User", caller)
+	if opts.Caller != "" {
+		req.Header.Set("X-Grafana-User", opts.Caller)
 	}
 
 	resp, err := c.http.Do(req)
@@ -551,9 +543,11 @@ func detectPromError(body []byte) error {
 	return fmt.Errorf("upstream error: %s", peek.Error)
 }
 
-// validateDatasourceProxyPath is defence-in-depth against a future caller
-// forgetting to url.PathEscape its input. Iterative unescape catches
-// multiply-encoded inputs ("%252e%252e") that a single decode would miss.
+// validateDatasourceProxyPath is defence-in-depth against a future
+// caller forgetting to url.PathEscape its input before passing the
+// path to DatasourceProxy. Single-pass unescape: Grafana doesn't
+// double-decode, so multi-encoded inputs like %252e%252e arrive at
+// Grafana as %2e%2e (literal) which is harmless.
 func validateDatasourceProxyPath(p string) error {
 	if p == "" {
 		return fmt.Errorf("%w: empty", errInvalidDatasourceProxyPath)
@@ -564,7 +558,7 @@ func validateDatasourceProxyPath(p string) error {
 	if strings.HasPrefix(p, "/") {
 		return fmt.Errorf("%w: leading slash", errInvalidDatasourceProxyPath)
 	}
-	decoded, err := iterativePathUnescape(p, maxDecodeHops)
+	decoded, err := url.PathUnescape(p)
 	if err != nil {
 		return fmt.Errorf("%w: invalid URL escape: %v", errInvalidDatasourceProxyPath, err)
 	}
@@ -572,24 +566,6 @@ func validateDatasourceProxyPath(p string) error {
 		return fmt.Errorf("%w: contains dot-dot traversal", errInvalidDatasourceProxyPath)
 	}
 	return nil
-}
-
-// maxDecodeHops bounds the iterative unescape loop so a pathological input
-// cannot burn unbounded CPU.
-const maxDecodeHops = 4
-
-func iterativePathUnescape(s string, maxHops int) (string, error) {
-	for range maxHops {
-		next, err := url.PathUnescape(s)
-		if err != nil {
-			return "", err
-		}
-		if next == s {
-			return next, nil
-		}
-		s = next
-	}
-	return s, nil
 }
 
 // readLimited caps per-response body reads at maxResponseBytes. Unbounded
@@ -607,62 +583,3 @@ func readLimited(resp *http.Response) ([]byte, error) {
 	return body, nil
 }
 
-// sameOriginRedirectPolicy allows up to maxHops same-origin redirects
-// (sidecar trailing-slash / path rewrites) and rejects cross-origin to
-// stop a compromised Grafana from bouncing the Authorization header to an
-// attacker-controlled host. Compares canonical host:port so default-port
-// omission and host casing don't bypass the check.
-func sameOriginRedirectPolicy(origin *url.URL, maxHops int) func(*http.Request, []*http.Request) error {
-	originScheme := strings.ToLower(origin.Scheme)
-	originHostPort := canonicalHostPort(origin)
-	return func(req *http.Request, via []*http.Request) error {
-		if len(via) >= maxHops {
-			return fmt.Errorf("grafana: stopped after %d redirects", len(via))
-		}
-		if strings.ToLower(req.URL.Scheme) != originScheme || canonicalHostPort(req.URL) != originHostPort {
-			return fmt.Errorf("grafana: cross-origin redirect to %s blocked (only %s://%s allowed)", req.URL.Redacted(), originScheme, originHostPort)
-		}
-		return nil
-	}
-}
-
-// canonicalHostPort lowercases the host (DNS is case-insensitive but
-// url.URL.Host is not) and fills in the default scheme port when omitted.
-func canonicalHostPort(u *url.URL) string {
-	host := strings.ToLower(u.Hostname())
-	port := u.Port()
-	if port == "" {
-		switch strings.ToLower(u.Scheme) {
-		case "http":
-			port = "80"
-		case "https":
-			port = "443"
-		}
-	}
-	return host + ":" + port
-}
-
-// sanitizeCallerHeader strips control characters and non-printable-ASCII from
-// the caller identity before it hits X-Grafana-User. Prevents header
-// injection (CRLF smuggling) and caps length at 256 bytes. Returns "" when
-// the input is empty or has no printable bytes.
-func sanitizeCallerHeader(s string) string {
-	if s == "" {
-		return ""
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		// Printable ASCII only. Drops CR, LF, TAB, NUL, DEL and everything
-		// non-ASCII. OIDC subjects / emails are ASCII in practice.
-		if c < 0x20 || c > 0x7e {
-			continue
-		}
-		b.WriteByte(c)
-		if b.Len() >= 256 {
-			break
-		}
-	}
-	return b.String()
-}

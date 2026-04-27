@@ -16,7 +16,6 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
@@ -122,25 +121,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	defer storeClose()
 
-	// Best-effort OTEL tracing/logs. No-op when no endpoint is configured.
-	// Defers stay in runServe so shutdown ordering is explicit.
+	// Best-effort OTEL tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is
+	// unset. The cluster log pipeline ships stderr to Loki; we don't run
+	// a separate OTLP-logs path.
 	shutdownOTEL, err := observability.InitTracing(shutdownCtx, "mcp-observability-platform", version)
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
 		defer shutdownWithTimeout(shutdownOTEL)
 	}
-	shutdownOTELLogs, otelLogHandler, err := observability.InitLogging(shutdownCtx, "mcp-observability-platform", version)
-	if err != nil {
-		logger.Warn("otel log init failed; continuing without OTLP logs", "error", err)
-	} else {
-		defer shutdownWithTimeout(shutdownOTELLogs)
-	}
-	if otelLogHandler != nil {
-		logger = slog.New(observability.FanoutHandler(logger.Handler(), otelLogHandler))
-	}
-	// Emit dev-mode opt-in warnings on the fanout-aware logger so they
-	// reach the OTLP log sink, not just stderr.
+
 	if cfg.OAuthAllowInsecureHTTP {
 		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
 	}
@@ -148,13 +138,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
-	// Audit trail: JSON-per-tool-call on stderr. Fans out to OTLP when wired
-	// so audit + span + metric signals correlate.
-	auditHandler := slog.Handler(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	if otelLogHandler != nil {
-		auditHandler = observability.FanoutHandler(auditHandler, otelLogHandler)
-	}
-	auditLogger := audit.New(auditHandler)
+	// Audit trail: JSON-per-tool-call on stderr. Dedicated *slog.Logger
+	// so audit can be routed to a separate sink later without touching
+	// the main app log.
+	auditLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	bridge, err := newUpstreamBridge(authorizer, grafanaClient, cfg)
 	if err != nil {
@@ -167,7 +154,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		Grafana:          grafanaClient,
 		Bridge:           bridge,
 		Version:          version,
-		Audit:            auditLogger,
+		AuditLogger:      auditLogger,
 		ToolTimeout:      cfg.ToolTimeout,
 		MaxResponseBytes: cfg.MaxResponseBytes,
 	})
@@ -184,7 +171,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 
 	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
-	obsMux := buildObsMux(version, cfg.DexIssuerURL, grafanaClient, listOrgCount(ctrlCache), cacheAlive)
+	obsMux := buildObsMux(cfg.DexIssuerURL, grafanaClient, listOrgCount(ctrlCache), cacheAlive)
 
 	startOrgCacheReporter(shutdownCtx, ctrlCache)
 

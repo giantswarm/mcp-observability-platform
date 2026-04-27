@@ -33,7 +33,6 @@ const (
 	// Datasource kind tokens, substring-matched against Grafana datasource
 	// names by the surviving local handlers in NameContains specs. Bridged
 	// tools use the typed authz.DatasourceKind enum instead.
-	dsKindMimir = "mimir"
 	dsKindLoki  = "loki"
 	dsKindTempo = "tempo"
 
@@ -59,7 +58,6 @@ const (
 // Local categories (no usable upstream equivalent — see plan/roadmap):
 //   - list_orgs (Giant-Swarm-specific GrafanaOrganization CR access)
 //   - Alertmanager v2 alerts (upstream covers OnCall, not Alertmanager)
-//   - Alertmanager silences
 //   - Tempo (upstream has no Tempo surface)
 //   - triage co-pilots (Sift requires Grafana Cloud; ours mimic against
 //     open-source primitives)
@@ -71,7 +69,6 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, br
 	registerAlertingTools(s, br)
 	registerTraceTools(s, az, gc)
 	registerAlertTools(s, az, gc)
-	registerSilenceTools(s, az, gc)
 	registerTriageTools(s, az, gc)
 }
 

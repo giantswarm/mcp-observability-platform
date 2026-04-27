@@ -62,54 +62,6 @@ func TestParseDurationOrDefault(t *testing.T) {
 	}
 }
 
-func TestParsePromInstantScalar(t *testing.T) {
-	cases := []struct {
-		name   string
-		body   string
-		wantN  int64
-		wantOK bool
-	}{
-		{
-			name:   "vector with one sample",
-			body:   `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"42"]}]}}`,
-			wantN:  42,
-			wantOK: true,
-		},
-		{
-			name:   "vector empty",
-			body:   `{"status":"success","data":{"resultType":"vector","result":[]}}`,
-			wantN:  0,
-			wantOK: true,
-		},
-		{
-			name:   "scalar",
-			body:   `{"status":"success","data":{"resultType":"scalar","result":[1700000000,"7"]}}`,
-			wantN:  7,
-			wantOK: true,
-		},
-		{
-			name:   "error status not parsed",
-			body:   `{"status":"error","errorType":"bad","error":"boom"}`,
-			wantN:  0,
-			wantOK: false,
-		},
-		{
-			name:   "unknown result type",
-			body:   `{"status":"success","data":{"resultType":"matrix","result":[]}}`,
-			wantN:  0,
-			wantOK: false,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			n, ok := parsePromInstantScalar([]byte(c.body))
-			if n != c.wantN || ok != c.wantOK {
-				t.Errorf("got (%d, %v), want (%d, %v)", n, ok, c.wantN, c.wantOK)
-			}
-		})
-	}
-}
-
 func TestHumanBytes(t *testing.T) {
 	cases := []struct {
 		n    int64
@@ -243,50 +195,3 @@ func TestHandler_FindSlowRequests(t *testing.T) {
 	}
 }
 
-func TestHandler_ExplainQuery(t *testing.T) {
-	var sawQuery string
-	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/api/v1/query") {
-			sawQuery = r.URL.Query().Get("query")
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"500"]}]}}`))
-			return
-		}
-		http.NotFound(w, r)
-	})
-	defer ts.Close()
-
-	res := callTool(t, wireHandlerTest(t, ts), "explain_query", map[string]any{
-		"org": "acme", "promql": `up{job="api"}`,
-	})
-	if res.IsError {
-		t.Fatalf("unexpected IsError: %s", resultText(res))
-	}
-	if !strings.HasPrefix(sawQuery, "count(") {
-		t.Errorf("count() wrap missing: %q", sawQuery)
-	}
-	body := resultText(res)
-	if !strings.Contains(body, `"series_count":500`) {
-		t.Errorf("response missing series_count=500: %s", body)
-	}
-	if strings.Contains(body, `"warning"`) {
-		t.Errorf("500 series shouldn't trigger warning, got %s", body)
-	}
-}
-
-func TestHandler_ExplainQuery_LargeWarn(t *testing.T) {
-	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"50000"]}]}}`))
-	})
-	defer ts.Close()
-
-	res := callTool(t, wireHandlerTest(t, ts), "explain_query", map[string]any{
-		"org": "acme", "promql": "up",
-	})
-	body := resultText(res)
-	if !strings.Contains(body, `"series_count":50000`) {
-		t.Errorf("series_count missing: %s", body)
-	}
-	if !strings.Contains(body, `"warning"`) {
-		t.Errorf("50k series should trigger warning: %s", body)
-	}
-}
