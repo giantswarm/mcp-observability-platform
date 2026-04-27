@@ -191,4 +191,3 @@ func TestHandler_Authz_RejectsMissingOrgArgument(t *testing.T) {
 		t.Errorf("error should name the missing arg; got %q", resultText(res))
 	}
 }
-

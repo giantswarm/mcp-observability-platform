@@ -72,8 +72,3 @@ networkPolicy:
 runtime:
   # Tighter response cap in prod to protect LLM context budget under load.
   maxResponseBytes: 65536
-  # Reasonable rate limits once PR 9 wires them in.
-  rateLimit:
-    perCaller: 10
-    perOrg: 100
-    global: 500

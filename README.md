@@ -18,6 +18,9 @@ TTL); shorter TTLs for negative results (caller-not-yet-provisioned).
 See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization plan
 and [`docs/upstream-contributions.md`](./docs/upstream-contributions.md)
 for the parallel `grafana/mcp-grafana` contribution lane.
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) is the orientation
+doc: request flow, package layout, threat model, and where to add a new
+tool.
 
 ## MCP surface
 
@@ -299,10 +302,10 @@ Example overlays live under `helm/mcp-observability-platform/values-*.yaml`:
 | `values-rbac-minimal.yaml` | Externally-managed ServiceAccount + ClusterRoleBinding.          |
 | `values-autoscaling.yaml`  | HPA + VPA (Initial) + PDB + NetworkPolicy (ingress + egress).    |
 
-Runtime tunables (timeouts, response cap, rate-limit thresholds, OAuth
-refresh window) live under `runtime:` in `values.yaml` and are delivered
-through a ConfigMap mounted via `envFrom`. A `checksum/config` annotation
-on the pod template rolls the deployment whenever those change.
+Runtime tunables (tool timeout, response cap, OAuth trust config) live
+under `runtime:` / `oauth:` in `values.yaml` and are delivered through a
+ConfigMap mounted via `envFrom`. A `checksum/config` annotation on the
+pod template rolls the deployment whenever those change.
 
 ## Run locally (without Kubernetes)
 
@@ -314,21 +317,8 @@ make build
 
 ## Layout
 
-```
-cmd/                               Cobra CLI (serve, version)
-internal/
-  authz/                           GrafanaOrganization CR cache + role resolver
-  grafana/                         Grafana HTTP client (server-admin SA + X-Grafana-Org-Id)
-  identity/                        Caller identity plumbing (OIDC UserInfo on ctx)
-  observability/                   Prometheus metrics + OTEL tracing setup
-  server/                          mcp-go transport wiring
-    middleware/                    Tracing + Metrics runtime interceptors
-  tools/                           MCP tool surface (32 tools) + shared tool helpers
-helm/mcp-observability-platform/   Helm chart
-  templates/                       Deployment, Service, ClusterRole(Binding), ConfigMap, NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, NOTES
-  tests/                           helm-unittest specs (configmap, deployment, hpa, networkpolicy, pdb, servicemonitor, vpa)
-  values-{memory,valkey,rbac-minimal,autoscaling}.yaml   Opinionated overlays
-```
+See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for the package
+layout table and what each package is responsible for.
 
 ## Related
 
