@@ -9,7 +9,9 @@ per-caller tenant and role scoping derived from `GrafanaOrganization` CRs.
 
 One MCP per Grafana instance. Authentication via MCP OAuth (Dex as IdP).
 Authorization resolved from the caller's OIDC groups against
-`GrafanaOrganization.spec.rbac.{admins,editors,viewers}`.
+`GrafanaOrganization.spec.rbac.{admins,editors,viewers}`. Role and org-
+membership changes propagate within ~30s (the resolver's positive cache
+TTL); shorter TTLs for negative results (caller-not-yet-provisioned).
 
 ## Roadmap
 
@@ -219,8 +221,8 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | Env var                                     | Required       | Purpose                                                  |
 | ------------------------------------------- | -------------- | -------------------------------------------------------- |
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
-| `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below)            |
-| `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin, as an alternative to `GRAFANA_SA_TOKEN` when SA promotion is unavailable |
+| `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
+| `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
 | `GRAFANA_PUBLIC_URL`                        | no             | Human-facing Grafana URL for deeplinks; defaults to `GRAFANA_URL` |
 | `DEX_ISSUER_URL`                            | yes            | Dex issuer                                               |
 | `DEX_CLIENT_ID`                             | yes            | Dex OAuth client                                         |

@@ -134,6 +134,9 @@ func loadConfig() (*config, error) {
 	if c.GrafanaSAToken == "" && c.GrafanaBasicAuth == "" {
 		missing = append(missing, "GRAFANA_SA_TOKEN or GRAFANA_BASIC_AUTH")
 	}
+	if c.GrafanaSAToken != "" && c.GrafanaBasicAuth != "" {
+		return nil, fmt.Errorf("GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH are mutually exclusive — set one and unset the other")
+	}
 	if c.OAuthStorage == "valkey" && c.ValkeyAddr == "" {
 		missing = append(missing, "VALKEY_ADDR (required when OAUTH_STORAGE=valkey)")
 	}

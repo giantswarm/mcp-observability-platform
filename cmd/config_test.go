@@ -58,6 +58,18 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_RejectsBothSATokenAndBasicAuth(t *testing.T) {
+	// SA tokens and basic auth are mutually exclusive — supplying both
+	// hides which the Grafana client would pick and risks a credential
+	// leak via the unintended path. Startup must fail loudly.
+	setMinimalValid(t)
+	t.Setenv("GRAFANA_BASIC_AUTH", "user:pass")
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected mutually-exclusive error, got: %v", err)
+	}
+}
+
 func TestLoadConfig_ValkeyStorageNeedsAddr(t *testing.T) {
 	setMinimalValid(t)
 	t.Setenv("OAUTH_STORAGE", "valkey")
