@@ -1,153 +1,88 @@
-// Package tools — orgs.go: org + datasource list/read tools (list_orgs, list_datasources, get_datasource).
+// Package tools — orgs.go: org + datasource tools.
+//
+// list_orgs is permanently local — it surfaces our GrafanaOrganization CR
+// access matrix (name, displayName, orgID, role, tenantTypes) and has no
+// upstream equivalent. list_datasources / get_datasource delegate to
+// upstream grafana/mcp-grafana via the bridge.
 package tools
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strings"
 
+	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafanatools "github.com/grafana/mcp-grafana/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
+func registerOrgTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
 		),
-		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			access, err := az.ListOrgs(ctx)
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
-			}
-			// Minimal projection keeps list_orgs well under the response cap
-			// even for callers with 50+ orgs. Full datasource info is
-			// available per-org via list_datasources + get_datasource.
-			type item struct {
-				Name        string   `json:"name"`
-				DisplayName string   `json:"displayName"`
-				OrgID       int64    `json:"orgID"`
-				Role        string   `json:"role"`
-				TenantTypes []string `json:"tenantTypes"`
-			}
-			out := make([]item, 0, len(access))
-			for _, a := range access {
-				tt := map[string]struct{}{}
-				for _, tenant := range a.Tenants {
-					for _, t := range tenant.Types {
-						tt[string(t)] = struct{}{}
-					}
-				}
-				types := make([]string, 0, len(tt))
-				for t := range tt {
-					types = append(types, t)
-				}
-				sort.Strings(types)
-				out = append(out, item{
-					Name:        a.Name,
-					DisplayName: a.DisplayName,
-					OrgID:       a.OrgID,
-					Role:        a.Role.String(),
-					TenantTypes: types,
-				})
-			}
-			sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName) })
-			return mcp.NewToolResultJSON(struct {
-				Orgs []item `json:"orgs"`
-			}{Orgs: out})
-		},
+		listOrgsHandler(br.Authorizer),
 	)
 
-	s.AddTool(
-		mcp.NewTool("list_datasources",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("List the Grafana datasources visible in an org, with name/type/uid. Tools like query_prometheus pick a datasource by name substring; use this to see the full list if a selection fails."),
-			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			raw, err := gc.ListDatasources(ctx, grafanaOpts(ctx, org.OrgID))
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("grafana /api/datasources failed", err), nil
-			}
-			// Grafana returns ~20 fields per datasource; we project down to
-			// the fields the MCP surface actually needs. Cuts the payload
-			// from ~2KB/DS to ~200B/DS.
-			type raw_ struct {
-				ID        int64  `json:"id"`
-				UID       string `json:"uid"`
-				Name      string `json:"name"`
-				Type      string `json:"type"`
-				Access    string `json:"access"`
-				URL       string `json:"url"`
-				IsDefault bool   `json:"isDefault"`
-			}
-			var in []raw_
-			if err := json.Unmarshal(raw, &in); err != nil {
-				return mcp.NewToolResultErrorFromErr("parse datasources", err), nil
-			}
-			type item struct {
-				ID        int64  `json:"id"`
-				UID       string `json:"uid"`
-				Name      string `json:"name"`
-				Type      string `json:"type"`
-				IsDefault bool   `json:"isDefault,omitempty"`
-			}
-			out := make([]item, 0, len(in))
-			for _, d := range in {
-				out = append(out, item{ID: d.ID, UID: d.UID, Name: d.Name, Type: d.Type, IsDefault: d.IsDefault})
-			}
-			sort.Slice(out, func(i, j int) bool {
-				if out[i].Type != out[j].Type {
-					return out[i].Type < out[j].Type
+	// Datasource tools delegate to upstream verbatim. We add only the
+	// `org` argument; upstream defines everything else (limit, type
+	// filter, uid, etc.) on its own schema.
+	for _, t := range []mcpgrafana.Tool{
+		mcpgrafanatools.ListDatasources,
+		mcpgrafanatools.GetDatasource,
+	} {
+		s.AddTool(upstream.WithOrg(t.Tool), br.Wrap(authz.RoleViewer, t))
+	}
+}
+
+// listOrgsHandler returns the local handler for list_orgs. Stays local
+// because the access matrix is sourced from GrafanaOrganization CRs,
+// not from Grafana.
+func listOrgsHandler(az authz.Authorizer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		access, err := az.ListOrgs(ctx)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
+		}
+		// Minimal projection keeps list_orgs well under the response cap
+		// even for callers with 50+ orgs. Full datasource info is
+		// available per-org via list_datasources + get_datasource.
+		type item struct {
+			Name        string   `json:"name"`
+			DisplayName string   `json:"displayName"`
+			OrgID       int64    `json:"orgID"`
+			Role        string   `json:"role"`
+			TenantTypes []string `json:"tenantTypes"`
+		}
+		out := make([]item, 0, len(access))
+		for _, a := range access {
+			tt := map[string]struct{}{}
+			for _, tenant := range a.Tenants {
+				for _, t := range tenant.Types {
+					tt[string(t)] = struct{}{}
 				}
-				return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+			}
+			types := make([]string, 0, len(tt))
+			for t := range tt {
+				types = append(types, t)
+			}
+			sort.Strings(types)
+			out = append(out, item{
+				Name:        a.Name,
+				DisplayName: a.DisplayName,
+				OrgID:       a.OrgID,
+				Role:        a.Role.String(),
+				TenantTypes: types,
 			})
-			return mcp.NewToolResultJSON(struct {
-				Org         string `json:"org"`
-				Total       int    `json:"total"`
-				Datasources []item `json:"datasources"`
-			}{Org: orgRef, Total: len(out), Datasources: out})
-		},
-	)
-
-	s.AddTool(
-		mcp.NewTool("get_datasource",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("Return full Grafana datasource details by UID. Use after list_datasources to inspect access mode, JSON settings, etc."),
-			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
-			mcp.WithString("uid", mcp.Required(), mcp.Description("Datasource UID. See list_datasources.")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			uid, err := req.RequireString("uid")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			body, err := gc.GetDatasource(ctx, grafanaOpts(ctx, org.OrgID), uid)
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("grafana datasource", err), nil
-			}
-			return mcp.NewToolResultText(string(body)), nil
-		},
-	)
+		}
+		sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName) })
+		return mcp.NewToolResultJSON(struct {
+			Orgs []item `json:"orgs"`
+		}{Orgs: out})
+	}
 }

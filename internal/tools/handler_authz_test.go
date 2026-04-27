@@ -20,6 +20,7 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // staticOrgRegistry returns a fixed list of orgs. Implements
@@ -104,8 +105,9 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		t.Fatalf("grafana.New: %v", err)
 	}
 
+	br := &upstream.Bridge{Authorizer: az, GrafanaURL: ts.URL, APIKey: "test-token"}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	RegisterAll(s, az, gf)
+	RegisterAll(s, az, gf, br)
 	return s, ts.Close
 }
 

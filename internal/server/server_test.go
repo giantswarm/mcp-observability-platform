@@ -10,7 +10,15 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
+
+// stubBridge is a minimal *upstream.Bridge that's enough for server.New's
+// non-nil check. The bridge is never actually exercised by these tests —
+// they don't invoke tool handlers.
+func stubBridge(az authz.Authorizer) *upstream.Bridge {
+	return &upstream.Bridge{Authorizer: az, GrafanaURL: "http://grafana.local", APIKey: "stub"}
+}
 
 // stubResolver is an authz.Authorizer implementation that's enough to pass
 // server.New's non-nil check. Methods are never actually invoked in these
@@ -78,14 +86,16 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 	var resolver authz.Authorizer = stubResolver{}
 	gf := stubGrafana{} // ditto
 
+	br := stubBridge(resolver)
 	cases := []struct {
 		name    string
 		cfg     Config
 		wantErr string
 	}{
-		{"no logger", Config{Authorizer: resolver, Grafana: gf}, "Logger is required"},
-		{"no authorizer", Config{Logger: log, Grafana: gf}, "Authorizer is required"},
-		{"no grafana", Config{Logger: log, Authorizer: resolver}, "Grafana is required"},
+		{"no logger", Config{Authorizer: resolver, Grafana: gf, Bridge: br}, "Logger is required"},
+		{"no authorizer", Config{Logger: log, Grafana: gf, Bridge: br}, "Authorizer is required"},
+		{"no grafana", Config{Logger: log, Authorizer: resolver, Bridge: br}, "Grafana is required"},
+		{"no bridge", Config{Logger: log, Authorizer: resolver, Grafana: gf}, "Bridge is required"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -104,10 +114,12 @@ func TestNew_DefaultsVersion(t *testing.T) {
 	// When Version is empty, New should still succeed and default to "dev".
 	// We can't easily inspect the mcp-go server's stored version, but we can
 	// at least confirm construction doesn't fail on the default path.
+	az := stubResolver{}
 	_, err := New(Config{
 		Logger:     slog.Default(),
-		Authorizer: stubResolver{},
+		Authorizer: az,
 		Grafana:    stubGrafana{},
+		Bridge:     stubBridge(az),
 	})
 	if err != nil {
 		t.Fatalf("New with empty Version: %v", err)
