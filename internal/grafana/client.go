@@ -61,6 +61,16 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
+// User is Grafana's projection of one user account, as returned by
+// /api/users/lookup. Only the fields the MCP surface actually reads are
+// carried — extending later is a single source-edit instead of every
+// fake re-typing an anonymous struct.
+type User struct {
+	ID    int64  `json:"id"`
+	Email string `json:"email"`
+	Login string `json:"login"`
+}
+
 // Client is the consumer-facing port onto Grafana. The concrete
 // implementation (the unexported `client` struct below) is built by New;
 // tests pass a fake implementing this interface.
@@ -69,11 +79,8 @@ type Client interface {
 	VerifyServerAdmin(ctx context.Context) error
 	BaseURL() *url.URL
 	HasImageRenderer(ctx context.Context) (bool, error)
-	LookupUser(ctx context.Context, loginOrEmail string) (*struct {
-		ID    int64  `json:"id"`
-		Email string `json:"email"`
-		Login string `json:"login"`
-	}, error)
+	LookupUser(ctx context.Context, loginOrEmail string) (*User, error)
+	LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error)
 	UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error)
 	GetDashboard(ctx context.Context, opts RequestOpts, uid string) (json.RawMessage, error)
 	SearchDashboards(ctx context.Context, opts RequestOpts, query string, limit int) (json.RawMessage, error)
@@ -359,11 +366,7 @@ func (c *client) GetAnnotationTags(ctx context.Context, opts RequestOpts, q url.
 // Returns (nil, nil) with no error when the user doesn't exist yet — Grafana
 // only provisions users on first login, so a never-seen caller is a valid
 // state. Needs a server-admin credential.
-func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
-	ID    int64  `json:"id"`
-	Email string `json:"email"`
-	Login string `json:"login"`
-}, error) {
+func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*User, error) {
 	if loginOrEmail == "" {
 		return nil, errors.New("grafana: loginOrEmail is required")
 	}
@@ -378,15 +381,42 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*struct {
 	if status >= 300 {
 		return nil, fmt.Errorf("grafana: lookup %q: status %d: %s", loginOrEmail, status, string(body))
 	}
-	var out struct {
-		ID    int64  `json:"id"`
-		Email string `json:"email"`
-		Login string `json:"login"`
-	}
+	var out User
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("grafana: lookup unmarshal: %w", err)
 	}
 	return &out, nil
+}
+
+// LookupDatasourceUIDByID fetches the datasource UID for a numeric ID,
+// in the given org. One GET /api/datasources/{id}.
+//
+// Used by the upstream-tool bridge to translate our int64 ID (sourced
+// from GrafanaOrganization CRs today) into the UID upstream tools
+// require as their datasourceUid argument.
+//
+// TODO(uid-publish): once observability-operator publishes datasource
+// UIDs in GrafanaOrganization.status.datasources[].uid the bridge will
+// read uid directly from the Datasource model and this lookup goes
+// away. Tracked in docs/roadmap.md.
+func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error) {
+	if id <= 0 {
+		return "", errors.New("grafana: datasource id must be positive")
+	}
+	body, err := c.fetchJSON(ctx, http.MethodGet, fmt.Sprintf("/api/datasources/%d", id), nil, nil, opts)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		UID string `json:"uid"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("grafana: datasource %d: %w", id, err)
+	}
+	if out.UID == "" {
+		return "", fmt.Errorf("grafana: datasource %d has no uid", id)
+	}
+	return out.UID, nil
 }
 
 // UserOrgs returns the org memberships Grafana has computed for the given

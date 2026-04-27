@@ -30,6 +30,14 @@ All tools require `role: viewer` on the target org (via the caller's OIDC
 groups intersected with `GrafanaOrganization.spec.rbac`). Write operations
 are intentionally out of scope for this MCP.
 
+Most tool handlers are bridged to upstream
+[`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
+synthetic `org` argument and the bridge resolves it to the org's
+OrgID + datasource UID before delegating. Categories without a usable
+upstream equivalent (Tempo, Alertmanager v2 alerts, silences,
+`list_orgs`, triage co-pilots, `explain_query`) stay local. See
+`internal/tools/doc.go` for the per-category rationale.
+
 **Orgs & datasources**
 
 | Tool               | Backend     | Notes                                                          |
@@ -64,8 +72,7 @@ are intentionally out of scope for this MCP.
 | `list_prometheus_label_names`        | `api/v1/labels`                                 |
 | `list_prometheus_label_values`       | `api/v1/label/{label}/values`                   |
 | `list_prometheus_metric_metadata`    | `api/v1/metadata`                               |
-| `list_alert_rules`                   | `api/v1/rules` — filter by type / state / name  |
-| `get_alert_rule`                     | `api/v1/rules` — single rule by name + group    |
+| `alerting_manage_rules`              | `api/v1/rules` — read-only meta-tool covering list / get / versions over Mimir-backed alert + recording rules |
 
 **Logs (Loki)**
 

@@ -31,7 +31,8 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 // []string{...} literals and switch arms cleanly.
 const (
 	// Datasource kind tokens, substring-matched against Grafana datasource
-	// names in NameContains specs.
+	// names by the surviving local handlers in NameContains specs. Bridged
+	// tools use the typed authz.DatasourceKind enum instead.
 	dsKindMimir = "mimir"
 	dsKindLoki  = "loki"
 	dsKindTempo = "tempo"
@@ -40,29 +41,34 @@ const (
 	// /alerts URL-parameter name (which happens to be the same literal).
 	amActive = "active"
 
-	// Generic "match everything" filter token used across alerts, silences,
-	// and Prometheus-rule type/state filters.
+	// Generic "match everything" filter token used across alerts and
+	// silences filters.
 	filterAll = "all"
-
-	// Prometheus rule types as returned by Mimir's /api/v1/rules (after our
-	// projection) and accepted by list_alert_rules / get_alert_rule.
-	ruleTypeAlert  = "alert"
-	ruleTypeRecord = "record"
 )
 
 // RegisterAll wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding per-category file.
 //
-// Org-only tools (dashboards, datasources, annotations, deeplinks, panel
-// rendering) delegate to upstream grafana/mcp-grafana via br.Wrap.
-// Tools that resolve a specific datasource by tenant + name match
-// (Mimir/Loki/Tempo/Alertmanager queries, triage co-pilots) stay local
-// for now — upstream takes a datasourceUid which we don't surface yet.
+// Bridged categories (delegated to upstream grafana/mcp-grafana with
+// our org→OrgID + datasource-UID resolution applied):
+//   - dashboards, datasources, annotations, deeplinks, panel rendering
+//   - Mimir Prometheus tools (metrics.go)
+//   - Loki tools (logs.go)
+//   - alert-rule reads via alerting_manage_rules (alerting.go)
+//
+// Local categories (no usable upstream equivalent — see plan/roadmap):
+//   - list_orgs (Giant-Swarm-specific GrafanaOrganization CR access)
+//   - Alertmanager v2 alerts (upstream covers OnCall, not Alertmanager)
+//   - Alertmanager silences
+//   - Tempo (upstream has no Tempo surface)
+//   - triage co-pilots (Sift requires Grafana Cloud; ours mimic against
+//     open-source primitives)
 func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, br *upstream.Bridge) {
-	registerOrgTools(s, br)
+	registerOrgTools(s, az, br)
 	registerDashboardTools(s, br)
-	registerMetricsTools(s, az, gc)
-	registerLogTools(s, az, gc)
+	registerMetricsTools(s, br)
+	registerLogTools(s, br)
+	registerAlertingTools(s, br)
 	registerTraceTools(s, az, gc)
 	registerAlertTools(s, az, gc)
 	registerSilenceTools(s, az, gc)

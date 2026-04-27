@@ -20,13 +20,13 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
+func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bridge) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
 		),
-		listOrgsHandler(br.Authorizer),
+		listOrgsHandler(az),
 	)
 
 	// Datasource tools delegate to upstream verbatim. We add only the

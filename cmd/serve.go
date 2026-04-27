@@ -156,7 +156,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	auditLogger := audit.New(auditHandler)
 
-	bridge, err := newUpstreamBridge(authorizer, cfg)
+	bridge, err := newUpstreamBridge(authorizer, grafanaClient, cfg)
 	if err != nil {
 		return fmt.Errorf("upstream bridge: %w", err)
 	}
@@ -234,21 +234,25 @@ func guardStdioInCluster(transport string) error {
 
 // newUpstreamBridge constructs the upstream-mcp-grafana bridge from
 // runtime config. APIKey vs BasicAuth are mutually exclusive at config-
-// load time (see cmd/config.go) so exactly one of the two will be set.
-func newUpstreamBridge(az authz.Authorizer, cfg *config) (*upstream.Bridge, error) {
-	br := &upstream.Bridge{
-		Authorizer: az,
-		GrafanaURL: cfg.GrafanaURL,
-		APIKey:     cfg.GrafanaSAToken,
-	}
+// load time (see cmd/config.go) so exactly one of the two will be set;
+// upstream.NewBridge enforces the same invariant in code.
+func newUpstreamBridge(az authz.Authorizer, gc grafana.Client, cfg *config) (*upstream.Bridge, error) {
+	var basicAuth *url.Userinfo
 	if cfg.GrafanaBasicAuth != "" {
 		user, pass, ok := strings.Cut(cfg.GrafanaBasicAuth, ":")
 		if !ok || user == "" {
 			return nil, fmt.Errorf("GRAFANA_BASIC_AUTH must be in the form user:password")
 		}
-		br.BasicAuth = url.UserPassword(user, pass)
+		basicAuth = url.UserPassword(user, pass)
 	}
-	return br, nil
+	apiKey := cfg.GrafanaSAToken
+	if basicAuth != nil {
+		// NewBridge requires exactly one of APIKey / BasicAuth, so when
+		// BasicAuth is set blank the token here. Same invariant the
+		// loader enforces, expressed at construction.
+		apiKey = ""
+	}
+	return upstream.NewBridge(az, gc, cfg.GrafanaURL, apiKey, basicAuth)
 }
 
 // shutdownWithTimeout invokes a provider's Shutdown with a fresh 5s

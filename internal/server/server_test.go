@@ -17,7 +17,11 @@ import (
 // non-nil check. The bridge is never actually exercised by these tests —
 // they don't invoke tool handlers.
 func stubBridge(az authz.Authorizer) *upstream.Bridge {
-	return &upstream.Bridge{Authorizer: az, GrafanaURL: "http://grafana.local", APIKey: "stub"}
+	br, err := upstream.NewBridge(az, stubGrafana{}, "http://grafana.local", "stub", nil)
+	if err != nil {
+		panic(err)
+	}
+	return br
 }
 
 // stubResolver is an authz.Authorizer implementation that's enough to pass
@@ -42,12 +46,11 @@ func (stubGrafana) BaseURL() *url.URL                       { return nil }
 func (stubGrafana) HasImageRenderer(context.Context) (bool, error) {
 	return false, nil
 }
-func (stubGrafana) LookupUser(context.Context, string) (*struct {
-	ID    int64  `json:"id"`
-	Email string `json:"email"`
-	Login string `json:"login"`
-}, error) {
+func (stubGrafana) LookupUser(context.Context, string) (*grafana.User, error) {
 	return nil, nil
+}
+func (stubGrafana) LookupDatasourceUIDByID(context.Context, grafana.RequestOpts, int64) (string, error) {
+	return "", nil
 }
 func (stubGrafana) UserOrgs(context.Context, int64) ([]grafana.UserOrgMembership, error) {
 	return nil, nil

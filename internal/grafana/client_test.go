@@ -484,6 +484,68 @@ func TestClient_LookupUser_ErrorPaths(t *testing.T) {
 	}
 }
 
+// TestClient_LookupDatasourceUIDByID covers the GET /api/datasources/{id}
+// flow used by the upstream-tool bridge to resolve a numeric ID into the
+// UID upstream tools require. Three branches matter: happy path returns
+// uid; an empty uid in the response is rejected; a 404 propagates as
+// error (not silently empty — a missing datasource at lookup time is a
+// real failure for the tool call).
+func TestClient_LookupDatasourceUIDByID(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		wantUID string
+		wantErr string
+	}{
+		{"happy", http.StatusOK, `{"uid":"abc-123","name":"mimir"}`, "abc-123", ""},
+		{"missing_uid", http.StatusOK, `{"name":"mimir"}`, "", "no uid"},
+		{"not_found", http.StatusNotFound, `{"message":"not found"}`, "", "404"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var gotPath string
+			ts, client := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(c.body))
+			})
+			defer ts.Close()
+
+			uid, err := client.LookupDatasourceUIDByID(context.Background(), RequestOpts{OrgID: 7}, 42)
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %v, want substring %q", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if uid != c.wantUID {
+				t.Errorf("uid = %q, want %q", uid, c.wantUID)
+			}
+			if gotPath != "/api/datasources/42" {
+				t.Errorf("path = %q, want /api/datasources/42", gotPath)
+			}
+		})
+	}
+}
+
+// TestClient_LookupDatasourceUIDByID_RejectsBadID guards the cheap input
+// validation: a non-positive ID would otherwise produce /api/datasources/0
+// or /api/datasources/-1, both of which Grafana 404s on, but the error
+// would be confusing.
+func TestClient_LookupDatasourceUIDByID_RejectsBadID(t *testing.T) {
+	c, _ := New(Config{URL: "http://x", Token: "t"})
+	if _, err := c.LookupDatasourceUIDByID(context.Background(), RequestOpts{}, 0); err == nil {
+		t.Fatal("expected error for id=0")
+	}
+	if _, err := c.LookupDatasourceUIDByID(context.Background(), RequestOpts{}, -5); err == nil {
+		t.Fatal("expected error for id=-5")
+	}
+}
+
 // TestClient_ErrorBodyCapped proves the error-path readLimited call obeys
 // the body cap. A compromised or misbehaving upstream returning a multi-GiB
 // error response must not OOM the MCP.
