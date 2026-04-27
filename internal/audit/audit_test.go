@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 const testOrg = "acme"
@@ -39,10 +41,14 @@ func TestLogger_Record_EmitsStableSchema(t *testing.T) {
 	})
 
 	got := decodeOne(t, &buf)
-	for _, k := range []string{"time", "level", "msg", "timestamp", "caller", "caller_token_source", "tool", "args", "outcome", "duration_ms", "error"} {
+	for _, k := range []string{"time", "level", "msg", "timestamp", "caller", "caller_token_source", "tool", "args", "outcome", "duration_ms", "error", "trace_id", "span_id"} {
 		if _, ok := got[k]; !ok {
 			t.Errorf("missing field %q in %+v", k, got)
 		}
+	}
+	// No active span — both ID fields must be present but empty (stable schema).
+	if got["trace_id"] != "" || got["span_id"] != "" {
+		t.Errorf("expected empty trace_id/span_id without active span, got trace_id=%v span_id=%v", got["trace_id"], got["span_id"])
 	}
 	if got["tool"] != "list_orgs" || got["caller"] != "alice@example.com" || got["outcome"] != "ok" {
 		t.Errorf("unexpected values: tool=%v caller=%v outcome=%v", got["tool"], got["caller"], got["outcome"])
@@ -157,6 +163,65 @@ func TestLogger_Record_TruncatesTotalArgsOverCap(t *testing.T) {
 	// Caller's map must not be mutated even when we swap it out.
 	if len(args) != 10 {
 		t.Errorf("caller's map mutated: len=%d", len(args))
+	}
+}
+
+func TestLogger_Record_TruncatesNestedLargeString(t *testing.T) {
+	// Per-value cap must reach into nested map / slice values, not only
+	// top-level keys. Otherwise a tool with structured arguments could
+	// emit oversized lines that only the total-cap fallback catches.
+	var buf bytes.Buffer
+	l := NewJSON(&buf)
+	bigQuery := strings.Repeat("Z", maxArgStringBytes+250)
+	l.Record(context.Background(), Record{
+		Tool: "query",
+		Args: map[string]any{
+			"org": testOrg,
+			"options": map[string]any{
+				"query": bigQuery,
+				"limit": 100,
+			},
+			"tags": []any{"keep", strings.Repeat("Y", maxArgStringBytes+100)},
+		},
+	})
+	got := decodeOne(t, &buf)
+	args := got["args"].(map[string]any)
+	opts := args["options"].(map[string]any)
+	s, ok := opts["query"].(string)
+	if !ok || !strings.HasSuffix(s, "truncated 250 bytes]") {
+		t.Errorf("nested map string not truncated: %q", s)
+	}
+	if opts["limit"].(float64) != 100 {
+		t.Errorf("nested non-string sibling lost: %+v", opts)
+	}
+	tags := args["tags"].([]any)
+	if tags[0] != "keep" {
+		t.Errorf("slice non-truncated entry mutated: %+v", tags)
+	}
+	bigTag, _ := tags[1].(string)
+	if !strings.HasSuffix(bigTag, "truncated 100 bytes]") {
+		t.Errorf("slice string not truncated: %q", bigTag)
+	}
+}
+
+func TestLogger_Record_EmitsTraceAndSpanIDsFromContext(t *testing.T) {
+	// Stitch a SpanContext onto ctx without spinning up the OTEL SDK.
+	traceID, _ := trace.TraceIDFromHex("0102030405060708090a0b0c0d0e0f10")
+	spanID, _ := trace.SpanIDFromHex("1112131415161718")
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    traceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), sc)
+
+	var buf bytes.Buffer
+	l := NewJSON(&buf)
+	l.Record(ctx, Record{Tool: "query", Outcome: "ok"})
+
+	got := decodeOne(t, &buf)
+	if got["trace_id"] != traceID.String() || got["span_id"] != spanID.String() {
+		t.Errorf("trace_id=%v span_id=%v, want %s / %s", got["trace_id"], got["span_id"], traceID, spanID)
 	}
 }
 

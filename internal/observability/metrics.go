@@ -35,26 +35,22 @@ var registry = func() *prometheus.Registry {
 }()
 
 // ToolCallTotal counts every MCP tool invocation by name and outcome.
-// Outcome is one of "ok" | "err". Cardinality is bounded by the number of
-// registered tools.
+// Outcome bucketing lives in middleware.Classify.
 var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "tool_call_total",
-		Help:      "Number of MCP tool calls, labeled by tool name and outcome (ok|err).",
+		Help:      "Number of MCP tool calls, labeled by tool name and outcome (ok|user_error|system_error).",
 	},
 	[]string{"tool", "outcome"},
 )
 
-// ToolCallDuration measures per-tool handler latency. Buckets cover the
-// real handler range: cached CR lookups (~50 ms) up to panel renders and
-// broad LogQL (~60 s), so p99 stays measurable across the full range.
 var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "tool_call_duration_seconds",
 		Help:      "Duration of MCP tool handlers, by tool name and outcome.",
-		Buckets:   []float64{0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+		Buckets:   prometheus.DefBuckets,
 	},
 	[]string{"tool", "outcome"},
 )

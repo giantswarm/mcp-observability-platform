@@ -19,11 +19,15 @@
 //
 // # Size cap
 //
-// Large tool arguments (a pasted 1 MB LogQL query, a multi-MB JSON payload)
-// would otherwise emit audit lines far above Loki's 256 KiB default ingest
-// limit and blow up the audit stream. Every string value >4 KiB is
-// replaced with "<prefix>…[truncated N bytes]"; if the serialised args
-// still exceed 16 KiB total, the whole map is replaced with
-// {"truncated": true, "bytes": N}. Thresholds are constants, not
-// env-tunable — stable SIEM ingest beats per-deployment knobs.
+// Each string value >4 KiB is replaced with "<prefix>…[truncated N bytes]"
+// (recursing into nested map[string]any / []any). If the marshaled args
+// still exceed 16 KiB the whole map is replaced with
+// {"truncated": true, "bytes": N}. Thresholds are constants — stable SIEM
+// ingest beats per-deployment knobs.
+//
+// # Trace correlation
+//
+// Each record carries trace_id + span_id from ctx (empty strings when no
+// span is active) so audit lines join back to their span without needing
+// the OTLP log bridge to be wired.
 package audit

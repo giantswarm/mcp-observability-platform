@@ -94,7 +94,7 @@ func newOAuthStore(cfg *config, logger *slog.Logger) (
 			Logger:   logger,
 		}
 		if cfg.ValkeyTLS {
-			vcfg.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
+			vcfg.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
 		}
 		s, err := valkey.New(vcfg)
 		if err != nil {

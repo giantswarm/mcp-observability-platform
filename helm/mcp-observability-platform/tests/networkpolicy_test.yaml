@@ -2,15 +2,7 @@ suite: networkpolicy
 templates:
   - templates/networkpolicy.yaml
 tests:
-  - it: not rendered by default
-    asserts:
-      - hasDocuments:
-          count: 0
-
-  - it: ingress-only when enabled without egressTo
-    set:
-      networkPolicy:
-        enabled: true
+  - it: rendered by default — pod holds a Grafana SA token, deny-by-default ingress is the floor
     asserts:
       - isKind:
           of: NetworkPolicy
@@ -18,14 +10,67 @@ tests:
           path: spec.policyTypes
           value:
             - Ingress
-      - isNull:
-          path: spec.egress
 
-  - it: adds Egress + DNS rule when egressTo non-empty
+  - it: opt-out when a cluster-wide CNI policy already covers the surface
     set:
       networkPolicy:
-        enabled: true
-        egressTo:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: split ingress rules — /mcp port 8080 vs metrics port 9091
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: mcp
+      - equal:
+          path: spec.ingress[1].ports[0].port
+          value: metrics
+
+  - it: ingress is toYaml'd verbatim — operators can lock down with from selectors
+    set:
+      networkPolicy:
+        ingress:
+          - ports:
+              - port: mcp
+                protocol: TCP
+            from:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: ingress
+          - ports:
+              - port: metrics
+                protocol: TCP
+            from:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ingress
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+
+  - it: egress is toYaml'd verbatim when supplied — operator owns DNS and peer rules
+    set:
+      networkPolicy:
+        policyTypes:
+          - Ingress
+          - Egress
+        egress:
+          - to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: kube-system
+                podSelector:
+                  matchLabels:
+                    k8s-app: kube-dns
+            ports:
+              - port: 53
+                protocol: UDP
           - to:
               - namespaceSelector:
                   matchLabels:
@@ -37,11 +82,9 @@ tests:
       - contains:
           path: spec.policyTypes
           content: Egress
-      # First egress rule is always kube-dns.
       - equal:
           path: spec.egress[0].to[0].podSelector.matchLabels.k8s-app
           value: kube-dns
-      # User-supplied rule follows.
       - equal:
           path: spec.egress[1].ports[0].port
           value: 3000

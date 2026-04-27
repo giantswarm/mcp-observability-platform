@@ -13,10 +13,16 @@ import (
 	"testing"
 )
 
-// newTestServer returns an httptest.Server whose handler records the
-// received request and replies with a caller-provided body/status.
+// newTestServer wraps handler with a default Content-Type: application/json
+// so individual tests don't have to thread the header. Handlers that want
+// to assert non-JSON behaviour set Content-Type before writing.
 func newTestServer(handler http.HandlerFunc) (*httptest.Server, Client) {
-	ts := httptest.NewServer(handler)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		handler(w, r)
+	}))
 	c, _ := New(Config{URL: ts.URL, Token: "test-token"})
 	return ts, c
 }
@@ -42,6 +48,7 @@ func TestClient_AuthHeader_Basic(t *testing.T) {
 	var gotAuth string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("{}"))
 	}))
 	defer ts.Close()
@@ -516,6 +523,7 @@ func TestClient_SameOriginRedirect_Followed(t *testing.T) {
 			return
 		}
 		sawAuthOnFinal = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("{}"))
 	}))
 	defer ts.Close()

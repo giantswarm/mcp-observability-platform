@@ -9,9 +9,9 @@ RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X github.com/giantswarm/mcp-observability-platform/cmd.version=${VERSION}" \
     -o /out/mcp-observability-platform .
 
-FROM gsoci.azurecr.io/giantswarm/alpine:3.20.3-giantswarm
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /out/mcp-observability-platform /usr/local/bin/mcp-observability-platform
-USER 1000:1000
+USER nonroot:nonroot
 EXPOSE 8080 9091
 ENTRYPOINT ["/usr/local/bin/mcp-observability-platform"]
 CMD ["serve"]

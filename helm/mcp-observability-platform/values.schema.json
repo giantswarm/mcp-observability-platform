@@ -129,13 +129,16 @@
         "networkPolicy": {
             "type": "object",
             "properties": {
-                "egressTo": {
+                "egress": {
                     "type": "array"
                 },
                 "enabled": {
                     "type": "boolean"
                 },
-                "ingressFrom": {
+                "ingress": {
+                    "type": "array"
+                },
+                "policyTypes": {
                     "type": "array"
                 }
             }

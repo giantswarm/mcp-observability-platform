@@ -62,19 +62,31 @@ podDisruptionBudget:
   minAvailable: 1
   # maxUnavailable: 1  # set one of minAvailable / maxUnavailable
 
-# NetworkPolicy restricting ingress (and optionally egress) to the pod.
+# NetworkPolicy. Default-on because the pod holds a Grafana server-admin
+# token, a Dex client secret, OAuth-state credentials and verifies JWKS;
+# disable only when a cluster-wide CNI policy (Cilium / Calico) already
+# covers this surface.
 #
-# Egress is off by default — when you supply `egressTo`, the policy switches
-# to Ingress+Egress and DNS to kube-system/kube-dns is added automatically so
-# outbound lookups for Grafana/Dex/OTLP still resolve. Each egressTo entry is
-# a raw NetworkPolicyEgressRule (to + ports). See values-autoscaling.yaml
-# for a worked example.
+# `policyTypes`, `ingress`, and `egress` are toYaml'd straight into the
+# NetworkPolicySpec — paste any shape the K8s API accepts. The chart owns
+# only the podSelector (it has to match the deployment labels).
+#
+# Default ingress allows both ports from any pod; tighten with from:
+# selectors per the upstream NetworkPolicySpec. Egress is unrestricted
+# unless you add Egress to policyTypes and supply egress rules — remember
+# to allow kube-dns + your Grafana / Dex / OTLP peers.
 networkPolicy:
-  enabled: false
-  # List of NetworkPolicyPeer objects permitted to reach the MCP.
-  ingressFrom: []
-  # List of {to: [...], ports: [...]} egress rules. Empty = egress unrestricted.
-  egressTo: []
+  enabled: true
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: mcp
+          protocol: TCP
+    - ports:
+        - port: metrics
+          protocol: TCP
+  egress: []
 
 # --- Runtime tunables (ConfigMap-backed) ---
 # All fields here surface as env vars on the deployment via envFrom.

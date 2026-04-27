@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"maps"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Per-value and total size caps on serialised args. Kept as unexported
@@ -49,14 +51,15 @@ func NewJSON(w io.Writer) *Logger {
 	return New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
 
-// Record emits the audit entry. Nil receiver is a deliberate no-op so that
-// callers can stash a *Logger in a struct without nil-checking every call
-// site; production code always passes a real logger.
+// Record emits the audit entry. Nil receiver is a deliberate no-op so
+// callers don't need to nil-check every call site. trace_id and span_id
+// are emitted as empty strings when no span is active on ctx.
 func (l *Logger) Record(ctx context.Context, r Record) {
 	if l == nil {
 		return
 	}
 	args := capArgs(r.Args)
+	traceID, spanID := traceIDs(ctx)
 	l.slog.LogAttrs(ctx, slog.LevelInfo, "tool_call",
 		slog.Time("timestamp", r.Timestamp),
 		slog.String("caller", r.Caller),
@@ -66,42 +69,87 @@ func (l *Logger) Record(ctx context.Context, r Record) {
 		slog.String("outcome", r.Outcome),
 		slog.Int64("duration_ms", r.Duration.Milliseconds()),
 		slog.String("error", r.Error),
+		slog.String("trace_id", traceID),
+		slog.String("span_id", spanID),
 	)
 }
 
+func traceIDs(ctx context.Context) (string, string) {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return "", ""
+	}
+	return sc.TraceID().String(), sc.SpanID().String()
+}
+
 // capArgs enforces the per-value and total size caps on serialised args.
-// Per-value cap runs first (truncate strings >4 KiB in place on a lazy
-// copy); total cap runs second (marshal + check — if the whole map still
-// exceeds the total cap, replace with a short "truncated" marker).
-//
-// Returns the input unchanged when nothing exceeded the cap. Makes a copy
-// only when a mutation is actually required, so the common small-args
-// path stays allocation-free beyond what slog itself does.
+// Per-value cap recurses into nested map[string]any / []any. Total cap
+// replaces the whole map with a "truncated" marker when the marshaled
+// result still exceeds maxArgTotalBytes.
 func capArgs(args map[string]any) map[string]any {
 	if args == nil {
 		return nil
 	}
-	copied := false
-	for k, v := range args {
-		s, ok := v.(string)
-		if !ok || len(s) <= maxArgStringBytes {
-			continue
-		}
-		if !copied {
-			cp := make(map[string]any, len(args))
-			maps.Copy(cp, args)
-			args = cp
-			copied = true
-		}
-		args[k] = fmt.Sprintf("%s…[truncated %d bytes]", s[:maxArgStringBytes], len(s)-maxArgStringBytes)
-	}
+	capped, _ := capValue(args)
+	out, _ := capped.(map[string]any)
 	// Total-size cap — marshaled length is the source of truth (matches
 	// what the JSON handler will serialise). Errors here can only happen
 	// for unsupported types; treat them as "don't cap" and let slog surface
 	// the real error downstream.
-	b, err := json.Marshal(args)
+	b, err := json.Marshal(out)
 	if err != nil || len(b) <= maxArgTotalBytes {
-		return args
+		return out
 	}
 	return map[string]any{"truncated": true, "bytes": len(b)}
+}
+
+// capValue copies-on-write: containers are cloned only when a nested
+// truncation forces a change, so the caller's args map is never mutated.
+// Returns (newValue, changed) — `changed` lets callers skip allocating a
+// copy when nothing in this branch needed truncation. == on `any` panics
+// for map/slice values, so we propagate `changed` explicitly instead.
+func capValue(v any) (any, bool) {
+	switch x := v.(type) {
+	case string:
+		if len(x) <= maxArgStringBytes {
+			return x, false
+		}
+		return fmt.Sprintf("%s…[truncated %d bytes]", x[:maxArgStringBytes], len(x)-maxArgStringBytes), true
+	case map[string]any:
+		var out map[string]any
+		for k, val := range x {
+			newVal, changed := capValue(val)
+			if !changed {
+				continue
+			}
+			if out == nil {
+				out = make(map[string]any, len(x))
+				maps.Copy(out, x)
+			}
+			out[k] = newVal
+		}
+		if out == nil {
+			return x, false
+		}
+		return out, true
+	case []any:
+		var out []any
+		for i, val := range x {
+			newVal, changed := capValue(val)
+			if !changed {
+				continue
+			}
+			if out == nil {
+				out = make([]any, len(x))
+				copy(out, x)
+			}
+			out[i] = newVal
+		}
+		if out == nil {
+			return x, false
+		}
+		return out, true
+	default:
+		return v, false
+	}
 }

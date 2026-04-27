@@ -156,6 +156,12 @@ func loadConfig() (*config, error) {
 		}
 		c.OAuthEncryptionKey = key
 	}
+	// Valkey-backed OAuth state (tokens, codes, PKCE state) persists across
+	// pod restarts and may live on a shared instance. Refuse to start without
+	// encryption-at-rest; OAUTH_ALLOW_INSECURE_HTTP=true overrides for dev.
+	if c.OAuthStorage == "valkey" && c.OAuthEncryptionKey == nil && !c.OAuthAllowInsecureHTTP {
+		return nil, fmt.Errorf("OAUTH_STORAGE=valkey requires OAUTH_ENCRYPTION_KEY (set OAUTH_ALLOW_INSECURE_HTTP=true to override for dev)")
+	}
 
 	// Trusted audiences + redirect schemes. Audience list is delegated to
 	// `dex.ValidateAudiences` (same max-count + charset rules as muster /

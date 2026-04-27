@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -75,14 +76,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	if err := guardStdioInCluster(flagTransport); err != nil {
+		return err
+	}
 	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
 	logger := newLogger(cfg.Debug || flagDebug, cfg.LogFormat)
-	if cfg.OAuthAllowInsecureHTTP {
-		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
-	}
-	if cfg.OAuthAllowPublicClientRegistration {
-		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
-	}
 
 	ctrlCache, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
 	if err != nil {
@@ -137,6 +135,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	if otelLogHandler != nil {
 		logger = slog.New(observability.FanoutHandler(logger.Handler(), otelLogHandler))
+	}
+	// Emit dev-mode opt-in warnings on the fanout-aware logger so they
+	// reach the OTLP log sink, not just stderr.
+	if cfg.OAuthAllowInsecureHTTP {
+		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
+	}
+	if cfg.OAuthAllowPublicClientRegistration {
+		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
 	// Audit trail: JSON-per-tool-call on stderr. Fans out to OTLP when wired
@@ -199,11 +205,26 @@ func runServe(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// guardStdioInCluster refuses MCP_TRANSPORT=stdio when KUBERNETES_SERVICE_HOST
+// is set, because stdio bypasses OAuth and a misconfigured Deployment would
+// silently run auth-free. MCP_ALLOW_STDIO_IN_CLUSTER=true overrides for
+// in-cluster integration tests.
+func guardStdioInCluster(transport string) error {
+	if transport != transportStdio {
+		return nil
+	}
+	if os.Getenv("KUBERNETES_SERVICE_HOST") == "" {
+		return nil
+	}
+	allow, _ := strconv.ParseBool(os.Getenv("MCP_ALLOW_STDIO_IN_CLUSTER"))
+	if allow {
+		return nil
+	}
+	return fmt.Errorf("MCP_TRANSPORT=stdio refused inside Kubernetes (stdio bypasses OAuth); use streamable-http or set MCP_ALLOW_STDIO_IN_CLUSTER=true to override")
+}
+
 // shutdownWithTimeout invokes a provider's Shutdown with a fresh 5s
-// background context. Used as the body of OTEL teardown defers so each
-// provider gets the same hard cap regardless of how shutdownCtx is faring.
-// Errors are intentionally swallowed: shutdown is best-effort and the
-// process is about to exit anyway.
+// background context. Errors are swallowed: shutdown is best-effort.
 func shutdownWithTimeout(fn func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

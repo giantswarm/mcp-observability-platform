@@ -173,6 +173,7 @@ spec:
               port: metrics
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
             httpGet:
@@ -180,6 +181,9 @@ spec:
               port: metrics
             initialDelaySeconds: 2
             periodSeconds: 10
+            # Per-check budget inside the process is 2s; give kubelet 3s
+            # so the response always renders within the probe window.
+            timeoutSeconds: 3
             failureThreshold: 6
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

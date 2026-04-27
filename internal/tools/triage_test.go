@@ -2,7 +2,6 @@ package tools
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -141,7 +140,7 @@ func TestHandler_FindErrorPatternLogs(t *testing.T) {
 		sawStatsHit bool
 		sawRangeHit bool
 	)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/loki/api/v1/label/"):
 			parts := strings.Split(r.URL.Path, "/")
@@ -162,7 +161,7 @@ func TestHandler_FindErrorPatternLogs(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "find_error_pattern_logs", map[string]any{
@@ -192,7 +191,7 @@ func TestHandler_FindErrorPatternLogs(t *testing.T) {
 // fire query_range when stats exceeds the 256 MiB cap.
 func TestHandler_FindErrorPatternLogs_TooLarge(t *testing.T) {
 	var sawRange bool
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/loki/api/v1/label/"):
 			_, _ = w.Write([]byte(`{"status":"success","data":["api"]}`))
@@ -204,7 +203,7 @@ func TestHandler_FindErrorPatternLogs_TooLarge(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "find_error_pattern_logs", map[string]any{
@@ -220,14 +219,14 @@ func TestHandler_FindErrorPatternLogs_TooLarge(t *testing.T) {
 
 func TestHandler_FindSlowRequests(t *testing.T) {
 	var sawQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/api/search") {
 			sawQuery = r.URL.Query().Get("q")
 			_, _ = w.Write([]byte(`{"traces":[]}`))
 			return
 		}
 		http.NotFound(w, r)
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "find_slow_requests", map[string]any{
@@ -246,14 +245,14 @@ func TestHandler_FindSlowRequests(t *testing.T) {
 
 func TestHandler_ExplainQuery(t *testing.T) {
 	var sawQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/api/v1/query") {
 			sawQuery = r.URL.Query().Get("query")
 			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"500"]}]}}`))
 			return
 		}
 		http.NotFound(w, r)
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "explain_query", map[string]any{
@@ -275,9 +274,9 @@ func TestHandler_ExplainQuery(t *testing.T) {
 }
 
 func TestHandler_ExplainQuery_LargeWarn(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1700000000,"50000"]}]}}`))
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "explain_query", map[string]any{

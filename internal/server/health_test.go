@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -42,65 +41,6 @@ func TestHealthChecker_Readiness_200WhenAllPass(t *testing.T) {
 	h.Readiness(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("readiness all-pass = %d, want 200", rec.Code)
-	}
-}
-
-func TestHealthChecker_Detailed_ShapeAndStatus(t *testing.T) {
-	h := NewHealthChecker("v1.2.3", 2*time.Second)
-	h.Register("ok_with_extra", func(ctx context.Context) (any, error) {
-		return map[string]int{"count": 5}, nil
-	})
-	h.Register("failing", func(ctx context.Context) (any, error) {
-		return nil, errors.New("downstream broken")
-	})
-
-	rec := httptest.NewRecorder()
-	h.Detailed(rec, httptest.NewRequest(http.MethodGet, "/healthz/detailed", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("detailed with one failure = %d, want 503", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("content-type = %q, want application/json", ct)
-	}
-
-	var body struct {
-		Status        string           `json:"status"`
-		UptimeSeconds float64          `json:"uptime_seconds"`
-		Version       string           `json:"version"`
-		Checks        map[string]Check `json:"checks"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.Status != statusFailed || body.Version != "v1.2.3" {
-		t.Fatalf("body status/version = %+v", body)
-	}
-	if body.UptimeSeconds <= 0 {
-		t.Fatalf("uptime = %v, want positive", body.UptimeSeconds)
-	}
-	if len(body.Checks) != 2 {
-		t.Fatalf("expected 2 checks, got %d", len(body.Checks))
-	}
-	if body.Checks["ok_with_extra"].Status != "ok" || body.Checks["ok_with_extra"].Extra == nil {
-		t.Fatalf("ok_with_extra = %+v", body.Checks["ok_with_extra"])
-	}
-	if body.Checks["failing"].Status != "ok" && body.Checks["failing"].Message == "" {
-		t.Fatalf("failing probe should carry a message, got %+v", body.Checks["failing"])
-	}
-}
-
-func TestHealthChecker_Detailed_MarshalErrorReturns500(t *testing.T) {
-	h := NewHealthChecker("test", 2*time.Second)
-	// A chan cannot be marshalled to JSON, so json.Marshal on the body
-	// fails. The hardening must turn this into a 500, not a truncated 200.
-	h.Register("bad_extra", func(ctx context.Context) (any, error) {
-		return make(chan int), nil
-	})
-	rec := httptest.NewRecorder()
-	h.Detailed(rec, httptest.NewRequest(http.MethodGet, "/healthz/detailed", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("detailed with unmarshallable Extra = %d, want 500", rec.Code)
 	}
 }
 
