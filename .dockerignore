@@ -1,0 +1,21 @@
+# Anything not needed by the build context — keeps image builds fast and
+# minimises the surface that ships with the build.
+.git
+.github
+.circleci
+.cursor
+.claude
+.abs
+helm
+docs
+*.md
+LICENSE
+DCO
+SECURITY.md
+CODEOWNERS
+Makefile
+Makefile.*
+.pre-commit-config.yaml
+.gitignore
+.nancy-ignore.generated
+renovate.json5

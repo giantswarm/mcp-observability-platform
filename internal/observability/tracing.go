@@ -12,7 +12,9 @@ package observability
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -85,17 +87,16 @@ func buildExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
 }
 
 // buildResource composes service identity + auto-detected K8s attrs +
-// anything in OTEL_RESOURCE_ATTRIBUTES (resource.New picks up the env var).
+// anything in OTEL_RESOURCE_ATTRIBUTES. Treats resource.ErrPartialResource
+// as warn-and-continue so a single failed detector (e.g. WithContainer on
+// a cgroupv2 host) doesn't block startup.
 func buildResource(ctx context.Context, serviceName, serviceVersion string) (*resource.Resource, error) {
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(serviceName),
 		semconv.ServiceVersion(serviceVersion),
 		attribute.String("service.namespace", "giantswarm.observability"),
 	}
-	// Downward-API populated K8s resource attrs — typical mount via
-	//   env:
-	//     - name: POD_NAME
-	//       valueFrom: { fieldRef: { fieldPath: metadata.name } }
+	// Downward-API populated K8s resource attrs.
 	if v := os.Getenv("POD_NAME"); v != "" {
 		attrs = append(attrs, semconv.K8SPodName(v))
 	}
@@ -105,11 +106,19 @@ func buildResource(ctx context.Context, serviceName, serviceVersion string) (*re
 	if v := os.Getenv("NODE_NAME"); v != "" {
 		attrs = append(attrs, semconv.K8SNodeName(v))
 	}
-	return resource.New(ctx,
+	res, err := resource.New(ctx,
 		resource.WithFromEnv(),   // honours OTEL_RESOURCE_ATTRIBUTES
 		resource.WithProcess(),   // pid + executable
 		resource.WithOS(),        // os.type, os.version
 		resource.WithContainer(), // best-effort container.id
 		resource.WithAttributes(attrs...),
 	)
+	if err != nil {
+		if errors.Is(err, resource.ErrPartialResource) && res != nil {
+			slog.Default().Warn("otel resource: partial detection — continuing with what was detected", "error", err)
+			return res, nil
+		}
+		return nil, err
+	}
+	return res, nil
 }

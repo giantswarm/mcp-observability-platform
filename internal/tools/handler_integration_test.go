@@ -20,6 +20,19 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
+// newGrafanaJSONServer wraps handler with a default Content-Type:
+// application/json so the production fetchJSON content-type guard is
+// satisfied. Handlers that want to assert non-JSON responses set the
+// Content-Type before writing.
+func newGrafanaJSONServer(handler http.HandlerFunc) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		handler(w, r)
+	}))
+}
+
 // fakeAuthz is a stand-in Authorizer for handler-integration tests. It
 // bypasses the Grafana user/org lookup (covered by authz tests) and hands
 // every caller the same fully-populated Organization — so tests can focus
@@ -124,7 +137,7 @@ func callToolWithCtx(t *testing.T, ctx context.Context, s *mcpsrv.MCPServer, nam
 // to the LLM.
 func TestHandler_SearchDashboards(t *testing.T) {
 	var sawPath, sawOrgID string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
 		sawOrgID = r.Header.Get("X-Grafana-Org-Id")
 		_, _ = w.Write([]byte(`[
@@ -132,7 +145,7 @@ func TestHandler_SearchDashboards(t *testing.T) {
 			{"uid":"def","title":"Nodes","folderTitle":"Kubernetes","url":"/d/def/nodes"},
 			{"uid":"ghi","title":"Root","folderTitle":"","url":"/d/ghi/root"}
 		]`))
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "search_dashboards", map[string]any{"org": "acme"})
@@ -158,10 +171,10 @@ func TestHandler_SearchDashboards(t *testing.T) {
 // or org-header forwarding would first surface in.
 func TestHandler_GetDashboardByUID(t *testing.T) {
 	var sawPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
 		_, _ = w.Write([]byte(`{"dashboard":{"uid":"abc","title":"T","panels":[]}}`))
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "get_dashboard_by_uid", map[string]any{
@@ -186,11 +199,11 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 // PromQL — this test catches that class of regression.
 func TestHandler_QueryPrometheusHistogram(t *testing.T) {
 	var sawPath, sawQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
 		sawQuery = r.URL.Query().Get("query")
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "query_prometheus_histogram", map[string]any{
@@ -242,7 +255,7 @@ func TestHandler_RunPanelQuery(t *testing.T) {
 	}`
 
 	var sawProxyQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/api/dashboards/uid/"):
 			_, _ = w.Write([]byte(dashboard))
@@ -252,7 +265,7 @@ func TestHandler_RunPanelQuery(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "run_panel_query", map[string]any{
@@ -274,7 +287,7 @@ func TestHandler_RunPanelQuery(t *testing.T) {
 // readable string form.
 func TestHandler_ListSilences(t *testing.T) {
 	var sawPath string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		sawPath = r.URL.Path
 		_, _ = w.Write([]byte(`[
 			{
@@ -296,7 +309,7 @@ func TestHandler_ListSilences(t *testing.T) {
 				"matchers":[]
 			}
 		]`))
-	}))
+	})
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "list_silences", map[string]any{"org": "acme"})

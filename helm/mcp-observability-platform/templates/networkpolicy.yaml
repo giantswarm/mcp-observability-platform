@@ -12,39 +12,13 @@ spec:
     matchLabels:
       {{- include "mcp-observability-platform.selectorLabels" . | nindent 6 }}
   policyTypes:
-    - Ingress
-    {{- if $np.egressTo }}
-    - Egress
-    {{- end }}
+    {{- toYaml $np.policyTypes | nindent 4 }}
+  {{- with $np.ingress }}
   ingress:
-    - ports:
-        - port: mcp
-          protocol: TCP
-        - port: metrics
-          protocol: TCP
-      {{- with $np.ingressFrom }}
-      from:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-  {{- if $np.egressTo }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $np.egress }}
   egress:
-    # Always allow DNS (CoreDNS in kube-system). Without this every outbound
-    # hostname lookup fails and the pod can't reach Grafana/Dex/OTLP by name.
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    # User-configured peers (Grafana, K8s API, Dex, OTLP collector, …).
-    {{- range $np.egressTo }}
-    - {{- toYaml . | nindent 6 }}
-    {{- end }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}

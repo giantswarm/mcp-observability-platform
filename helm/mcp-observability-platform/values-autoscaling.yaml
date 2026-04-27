@@ -38,9 +38,40 @@ autoscaling:
 
 networkPolicy:
   enabled: true
-  # Example egress allow-list: Grafana + Dex + OTLP collector.
-  # Adjust namespace/port to match your cluster topology.
-  egressTo:
+  policyTypes:
+    - Ingress
+    - Egress
+  # Example: lock /mcp behind the ingress controller, /metrics behind
+  # the Prometheus scraper. Adjust selectors to match your cluster.
+  ingress:
+    - ports:
+        - port: mcp
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress
+    - ports:
+        - port: metrics
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+  egress:
+    # DNS — required for hostname lookups (Grafana / Dex / OTLP).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
     - to:
         - namespaceSelector:
             matchLabels:

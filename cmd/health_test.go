@@ -31,10 +31,10 @@ func dexStub(t *testing.T) *httptest.Server {
 	}))
 }
 
-// runHealth wires setupHealth into a mux and returns both the readyz
-// status code and the detailed-endpoint body (readyz itself returns no
-// body by design; /healthz/detailed carries per-probe status + error).
-func runHealth(t *testing.T, gf grafana.Client, orgs orgLister, alive *atomic.Bool) (readyzCode int, detailedBody string) {
+// runHealth wires setupHealth and returns both the readyz status code and
+// a flat string of per-probe statuses + error messages so tests can assert
+// on which probe failed without parsing JSON over HTTP.
+func runHealth(t *testing.T, gf grafana.Client, orgs orgLister, alive *atomic.Bool) (readyzCode int, probesSummary string) {
 	t.Helper()
 	dex := dexStub(t)
 	defer dex.Close()
@@ -45,10 +45,18 @@ func runHealth(t *testing.T, gf grafana.Client, orgs orgLister, alive *atomic.Bo
 	readyz := httptest.NewRecorder()
 	mux.ServeHTTP(readyz, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
-	detailed := httptest.NewRecorder()
-	mux.ServeHTTP(detailed, httptest.NewRequest(http.MethodGet, "/healthz/detailed", nil))
-
-	return readyz.Code, detailed.Body.String()
+	var b strings.Builder
+	for name, c := range h.Snapshot(context.Background()) {
+		_, _ = b.WriteString(name)
+		_, _ = b.WriteString("=")
+		_, _ = b.WriteString(c.Status)
+		if c.Message != "" {
+			_, _ = b.WriteString(":")
+			_, _ = b.WriteString(c.Message)
+		}
+		_, _ = b.WriteString(" ")
+	}
+	return readyz.Code, b.String()
 }
 
 func TestSetupHealth_AllProbesOK(t *testing.T) {
