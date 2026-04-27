@@ -26,16 +26,6 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 	})
 }
 
-// Deps bundles the handler-scoped dependencies so tool registration stays
-// concise. Exported so the server package can build one and hand it off to
-// RegisterAll. The fields are interfaces declared in their producer
-// packages (`authz.Authorizer`, `grafana.Client`) so tests can supply mocks
-// without re-declaring method sets here.
-type Deps struct {
-	Authorizer authz.Authorizer
-	Grafana    grafana.Client
-}
-
 // Package-wide string tokens. Kept as untyped constants so they drop into
 // []string{...} literals and switch arms cleanly.
 const (
@@ -64,15 +54,15 @@ const (
 
 // RegisterAll wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding per-category file.
-func RegisterAll(s *mcpsrv.MCPServer, d *Deps) {
-	registerOrgTools(s, d)
-	registerDashboardTools(s, d)
-	registerMetricsTools(s, d)
-	registerLogTools(s, d)
-	registerTraceTools(s, d)
-	registerAlertTools(s, d)
-	registerSilenceTools(s, d)
-	registerTriageTools(s, d)
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
+	registerOrgTools(s, az, gc)
+	registerDashboardTools(s, az, gc)
+	registerMetricsTools(s, az, gc)
+	registerLogTools(s, az, gc)
+	registerTraceTools(s, az, gc)
+	registerAlertTools(s, az, gc)
+	registerSilenceTools(s, az, gc)
+	registerTriageTools(s, az, gc)
 }
 
 // withToolTimeout returns a derived context that enforces a per-tool handler

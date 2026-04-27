@@ -52,11 +52,6 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		cfg.Version = "dev"
 	}
 
-	deps := &tools.Deps{
-		Authorizer: cfg.Authorizer,
-		Grafana:    cfg.Grafana,
-	}
-
 	// Only `WithToolCapabilities` is advertised — this MCP exposes tools,
 	// not resources or prompts. Rationale + explicit scope: see
 	// docs/roadmap.md "Out of scope".
@@ -94,7 +89,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
-	tools.RegisterAll(mcp, deps)
+	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana)
 
 	return mcp, nil
 }

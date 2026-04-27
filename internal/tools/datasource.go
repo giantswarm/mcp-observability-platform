@@ -26,8 +26,8 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 // required tenant type (empty = skip), and a datasource whose name contains
 // all nameContains substrings (case-insensitive) must exist. Errors are
 // caller-ready strings so handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, d *Deps, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
-	org, err := d.Authorizer.RequireOrg(ctx, orgRef, role)
+func resolveDatasource(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
+	org, err := az.RequireOrg(ctx, orgRef, role)
 	if err != nil {
 		return authz.Organization{}, 0, err
 	}
@@ -77,7 +77,7 @@ type datasourceInvocation struct {
 // reads its invocation from the request; tools that synthesise an invocation
 // (run_panel_query, query_prometheus_histogram) call runDatasourceProxy
 // directly with their own datasourceInvocation.
-func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func datasourceProxyHandler(az authz.Authorizer, gc grafana.Client, spec datasourceSpec) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if _, err := req.RequireString("org"); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -92,7 +92,7 @@ func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, 
 		if spec.ExtraArg != "" {
 			inv.ExtraInt = req.GetInt(spec.ExtraArg, 0)
 		}
-		return runDatasourceProxy(ctx, d, spec, inv)
+		return runDatasourceProxy(ctx, az, gc, spec, inv)
 	}
 }
 
@@ -106,11 +106,11 @@ func datasourceProxyHandler(d *Deps, spec datasourceSpec) func(context.Context, 
 // default to last-hour) is the caller's responsibility — see dashboards.go
 // run_panel_query Loki branch. Keeping defaulting out of here means this
 // function's only conditional is "instant vs range path".
-func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv datasourceInvocation) (*mcp.CallToolResult, error) {
+func runDatasourceProxy(ctx context.Context, az authz.Authorizer, gc grafana.Client, spec datasourceSpec, inv datasourceInvocation) (*mcp.CallToolResult, error) {
 	if inv.Org == "" {
 		return mcp.NewToolResultError("missing required argument \"org\""), nil
 	}
-	org, dsID, err := resolveDatasource(ctx, d, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
+	org, dsID, err := resolveDatasource(ctx, az, gc, inv.Org, spec.Role, spec.NeedTenant, spec.NameContains...)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -162,7 +162,7 @@ func runDatasourceProxy(ctx context.Context, d *Deps, spec datasourceSpec, inv d
 		}
 		observability.GrafanaProxyDuration.WithLabelValues(spec.InstantPath, status).Observe(time.Since(dsStart).Seconds())
 	}()
-	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
+	body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		proxyErr = err
 		return mcp.NewToolResultErrorFromErr("grafana datasource proxy failed", err), nil

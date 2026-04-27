@@ -59,7 +59,7 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 		},
 	}}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	RegisterAll(s, &Deps{Authorizer: az, Grafana: gf})
+	RegisterAll(s, az, gf)
 	return s
 }
 

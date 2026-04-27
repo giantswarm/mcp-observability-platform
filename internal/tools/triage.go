@@ -18,6 +18,7 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
@@ -33,7 +34,7 @@ const (
 var serviceLabelCandidates = []string{"service_name", "service", "job"}
 
 // registerTriageTools wires the three triage tools into s.
-func registerTriageTools(s *mcpsrv.MCPServer, d *Deps) {
+func registerTriageTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("find_error_pattern_logs",
 			ReadOnlyAnnotation(),
@@ -42,7 +43,7 @@ func registerTriageTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("service", mcp.Required(), mcp.Description("Service identifier as it appears in service_name / service / job.")),
 			mcp.WithString("lookback", mcp.Description("Go duration; default 15m (e.g. '5m', '1h').")),
 		),
-		findErrorPatternLogsHandler(d),
+		findErrorPatternLogsHandler(az, gc),
 	)
 
 	s.AddTool(
@@ -55,7 +56,7 @@ func registerTriageTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("min_duration", mcp.Description("Go duration; default 1s (e.g. '500ms', '2s').")),
 			mcp.WithBoolean("errors_only", mcp.Description("If true, filter to status=error spans only.")),
 		),
-		findSlowRequestsHandler(d),
+		findSlowRequestsHandler(az, gc),
 	)
 
 	s.AddTool(
@@ -65,14 +66,14 @@ func registerTriageTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
 			mcp.WithString("promql", mcp.Required(), mcp.Description("PromQL expression to estimate.")),
 		),
-		explainQueryHandler(d),
+		explainQueryHandler(az, gc),
 	)
 }
 
 // findErrorPatternLogsHandler implements find_error_pattern_logs: probe a
 // service label, build an error-keyword regex selector, size-check via Loki
 // stats, then run query_range with limit=100.
-func findErrorPatternLogsHandler(d *Deps) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func findErrorPatternLogsHandler(az authz.Authorizer, gc grafana.Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		orgRef, err := req.RequireString("org")
 		if err != nil {
@@ -87,7 +88,7 @@ func findErrorPatternLogsHandler(d *Deps) func(context.Context, mcp.CallToolRequ
 			return mcp.NewToolResultError(fmt.Sprintf("lookback: %v", err)), nil
 		}
 
-		org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
+		org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindLoki)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -99,7 +100,7 @@ func findErrorPatternLogsHandler(d *Deps) func(context.Context, mcp.CallToolRequ
 		startNs := strconv.FormatInt(start.UnixNano(), 10)
 		endNs := strconv.FormatInt(end.UnixNano(), 10)
 
-		label, err := pickServiceLabel(ctx, d, org.OrgID, dsID, service, startNs, endNs)
+		label, err := pickServiceLabel(ctx, az, gc, org.OrgID, dsID, service, startNs, endNs)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("loki label probe", err), nil
 		}
@@ -114,7 +115,7 @@ func findErrorPatternLogsHandler(d *Deps) func(context.Context, mcp.CallToolRequ
 		statsQ.Set("start", startNs)
 		statsQ.Set("end", endNs)
 		observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/index/stats").Inc()
-		statsBody, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/index/stats", statsQ)
+		statsBody, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/index/stats", statsQ)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("loki stats", err), nil
 		}
@@ -149,7 +150,7 @@ func findErrorPatternLogsHandler(d *Deps) func(context.Context, mcp.CallToolRequ
 		rangeQ.Set("limit", "100")
 		rangeQ.Set("direction", "backward")
 		observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/query_range").Inc()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/query_range", rangeQ)
+		body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "loki/api/v1/query_range", rangeQ)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("loki query_range", err), nil
 		}
@@ -170,7 +171,7 @@ func findErrorPatternLogsHandler(d *Deps) func(context.Context, mcp.CallToolRequ
 // findSlowRequestsHandler implements find_slow_requests: build a TraceQL
 // expression filtering on resource.service.name + duration (+ status=error
 // when errors_only), then call Tempo /api/search.
-func findSlowRequestsHandler(d *Deps) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func findSlowRequestsHandler(az authz.Authorizer, gc grafana.Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		orgRef, err := req.RequireString("org")
 		if err != nil {
@@ -190,7 +191,7 @@ func findSlowRequestsHandler(d *Deps) func(context.Context, mcp.CallToolRequest)
 		}
 		errorsOnly := req.GetBool("errors_only", false)
 
-		org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
+		org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -206,7 +207,7 @@ func findSlowRequestsHandler(d *Deps) func(context.Context, mcp.CallToolRequest)
 		q.Set("end", strconv.FormatInt(end.Unix(), 10))
 		q.Set("limit", "20")
 		observability.GrafanaProxyTotal.WithLabelValues("api/search").Inc()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/search", q)
+		body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/search", q)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("tempo search", err), nil
 		}
@@ -221,7 +222,7 @@ func findSlowRequestsHandler(d *Deps) func(context.Context, mcp.CallToolRequest)
 // explainQueryHandler implements explain_query: wrap promql in count(...)
 // and run an instant query against Mimir, returning the series count and
 // a warning when it exceeds explainQuerySeriesWarn.
-func explainQueryHandler(d *Deps) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func explainQueryHandler(az authz.Authorizer, gc grafana.Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		orgRef, err := req.RequireString("org")
 		if err != nil {
@@ -236,7 +237,7 @@ func explainQueryHandler(d *Deps) func(context.Context, mcp.CallToolRequest) (*m
 			return mcp.NewToolResultError("promql must not be empty"), nil
 		}
 
-		org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
+		org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -247,7 +248,7 @@ func explainQueryHandler(d *Deps) func(context.Context, mcp.CallToolRequest) (*m
 		q := url.Values{}
 		q.Set("query", countQuery)
 		observability.GrafanaProxyTotal.WithLabelValues("api/v1/query").Inc()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v1/query", q)
+		body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v1/query", q)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("explain_query", err), nil
 		}
@@ -277,7 +278,7 @@ func explainQueryHandler(d *Deps) func(context.Context, mcp.CallToolRequest) (*m
 // pickServiceLabel returns the first label in serviceLabelCandidates whose
 // values list contains service. Returns ("", nil) when none match,
 // ("", err) only if every candidate's HTTP/JSON probe failed.
-func pickServiceLabel(ctx context.Context, d *Deps, orgID, dsID int64, service, start, end string) (string, error) {
+func pickServiceLabel(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgID, dsID int64, service, start, end string) (string, error) {
 	var lastErr error
 	for _, label := range serviceLabelCandidates {
 		q := url.Values{}
@@ -285,7 +286,7 @@ func pickServiceLabel(ctx context.Context, d *Deps, orgID, dsID int64, service, 
 		q.Set("end", end)
 		path := "loki/api/v1/label/" + url.PathEscape(label) + "/values"
 		observability.GrafanaProxyTotal.WithLabelValues("loki/api/v1/label/:name/values").Inc()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, path, q)
+		body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, path, q)
 		if err != nil {
 			lastErr = err
 			continue

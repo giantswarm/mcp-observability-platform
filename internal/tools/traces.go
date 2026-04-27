@@ -14,10 +14,11 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
+func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	// query_traces — Tempo TraceQL search.
 	s.AddTool(
 		mcp.NewTool("query_traces",
@@ -29,7 +30,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithString("end", mcp.Description("RFC3339 or unix seconds")),
 			mcp.WithNumber("limit", mcp.Description("Max traces (default 20)")),
 		),
-		datasourceProxyHandler(d, datasourceSpec{
+		datasourceProxyHandler(az, gc, datasourceSpec{
 			Role:         authz.RoleViewer,
 			NeedTenant:   authz.TenantTypeData,
 			NameContains: []string{dsKindTempo},
@@ -59,7 +60,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
+			org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -73,7 +74,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 				q.Set("step", step)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("api/metrics/query_range").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/metrics/query_range", q)
+			body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/metrics/query_range", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("tempo metrics", err), nil
 			}
@@ -95,7 +96,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			names, err := fetchTempoTags(ctx, d, orgRef, "", req)
+			names, err := fetchTempoTags(ctx, az, gc, orgRef, "", req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -124,7 +125,7 @@ func registerTraceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			values, err := fetchTempoTags(ctx, d, orgRef, tag, req)
+			values, err := fetchTempoTags(ctx, az, gc, orgRef, tag, req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -161,8 +162,8 @@ func qualifyTempoTag(scope, tag string) string {
 // /api/v2/search/tag/{tag}/values. Tempo's v2 API returns a single-level
 // {scopes:[{name, tags:[...]}]} structure for tag names and
 // {tagValues:[{type, value}]} for values; we flatten both to a []string.
-func fetchTempoTags(ctx context.Context, d *Deps, orgRef, tag string, req mcp.CallToolRequest) ([]string, error) {
-	org, dsID, err := resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
+func fetchTempoTags(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef, tag string, req mcp.CallToolRequest) ([]string, error) {
+	org, dsID, err := resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +178,7 @@ func fetchTempoTags(ctx context.Context, d *Deps, orgRef, tag string, req mcp.Ca
 
 	if tag == "" {
 		observability.GrafanaProxyTotal.WithLabelValues("api/v2/search/tags").Inc()
-		body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v2/search/tags", q)
+		body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v2/search/tags", q)
 		if err != nil {
 			return nil, fmt.Errorf("tempo tags: %w", err)
 		}
@@ -218,7 +219,7 @@ func fetchTempoTags(ctx context.Context, d *Deps, orgRef, tag string, req mcp.Ca
 	// never in the "path" Prom label (bounded cardinality).
 	path := "api/v2/search/tag/" + url.PathEscape(tag) + "/values"
 	observability.GrafanaProxyTotal.WithLabelValues("api/v2/search/tag/:name/values").Inc()
-	body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
+	body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, q)
 	if err != nil {
 		return nil, fmt.Errorf("tempo tag values: %w", err)
 	}
