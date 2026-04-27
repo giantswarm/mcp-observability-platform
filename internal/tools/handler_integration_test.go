@@ -96,6 +96,28 @@ func resultText(res *mcp.CallToolResult) string {
 	return b.String()
 }
 
+// callToolWithCtx is the variant of callTool that lets the caller supply a
+// context — useful for the authz-non-bypass tests below, where the
+// integration test must put a UserInfo on the context so the real
+// Authorizer can derive the caller (the framework-level RequireCaller
+// middleware otherwise blocks the call before the handler runs).
+func callToolWithCtx(t *testing.T, ctx context.Context, s *mcpsrv.MCPServer, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	tool := s.GetTool(name)
+	if tool == nil {
+		t.Fatalf("tool %q not registered", name)
+	}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: args}}
+	res, err := tool.Handler(ctx, req)
+	if err != nil {
+		t.Fatalf("tool %q handler returned Go error: %v", name, err)
+	}
+	if res == nil {
+		t.Fatalf("tool %q returned nil result", name)
+	}
+	return res
+}
+
 // TestHandler_SearchDashboards wires the search_dashboards tool end-to-end:
 // asserts the right Grafana path is hit with the caller's org-id header,
 // and that the JSON response is grouped by folder before being handed back
