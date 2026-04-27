@@ -27,6 +27,13 @@ landed. For what's already shipped:
 | Observability + audit hardening + OTLP logs | Tracing / Metrics / Audit collapsed into one composite `middleware.Instrument` so `Classify()` is computed once and span / metric / audit outcomes can't drift. Metric namespace `mcp_observability_platform_*` → `mcp_*` with realistic latency buckets (25 ms → 60 s for tool calls, `DefBuckets` for Grafana proxy). Audit records gain `caller_token_source` (oauth / sso) and a 4 KiB per-value / 16 KiB total args size cap. OTLP logs via `otelslog` bridge fan out slog records (operator + audit) with `trace_id` / `span_id` correlation when `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is set. `firstNonEmpty` → `cmp.Or` | #25 |
 | `cmd/serve` polish (PR 11b) | `OAUTH_ENCRYPTION_KEY` tightened to hex-64 / base64-44 (raw-32 dropped); `MCP_OAUTH_*` → `OAUTH_*` rename across cmd/, helm/, README; `envBool`/`envInt`/`envDuration` return errors so a malformed `DEBUG=yes` fails startup instead of silently defaulting; HTTP `IdleTimeout` 60s on both servers + `WriteTimeout` 10s on obs server only; JSON logs when `KUBERNETES_SERVICE_HOST` set with `LOG_FORMAT=json\|text` override; `/healthz/detailed` marshals to buffer first; `HTTPProbe` rejects non-2xx. Helper `KeyFromHex`/`KeyToHex` upstreamed to `mcp-oauth/security`. | #34 |
 | YAGNI sweep + dep fix | Deleted `cmd/audit.go` (the redactor was a no-op on every current tool — no arg name matched the denylist). Dropped the `HasImageRenderer` 5-min in-process cache: one probe per `get_panel_image` call (human-rate, sub-ms in-cluster Grafana) didn't justify the staleness + the cache-poisoning bug class. Shallow-copied `BaseURL()` instead of round-tripping through `url.Parse`. Inlined `durationToMillis` / `durationToSeconds` (silent fallbacks for inputs callers always sanitised). Pinned `k8s.io/*` back to v0.35.4 to match `controller-runtime` v0.23.3 (PR #31 had bumped to 0.36 and broken the build) + `go` directive 1.26 → 1.25.5. | #37 |
+| Triage co-pilot tools | Three composites: `find_error_pattern_logs` (Loki size-guarded error regex), `find_slow_requests` (TraceQL min-duration filter via Tempo `api/search`), `explain_query` (PromQL `count(...)` preflight, warns >10k series). Mirror `grafana/mcp-grafana`'s Sift surface where applicable, OSS-only — no Grafana Cloud Sift backend required. | #38 |
+| `cmd/serve` split | `runServe` (354 lines) refactored into per-concern builders: `cmd/oauth.go`, `cmd/orgregistry.go`, `cmd/mux.go`. `runServe` becomes ~155 lines of orchestration. Zero behaviour change. | #40 |
+| Drop unused Redactor extension point | `internal/audit.Redactor` had no caller since #37 removed `cmd/audit.go`. Interface, field, option, and the redact branch in `Record` deleted. New design rule documented in package doc: tools must not accept secret arguments — look credentials up server-side from the caller identity. -176 lines. | #41 |
+| RequireCaller middleware + authz/tools cleanup | Fail-closed authentication middleware (`internal/server/middleware/require_caller.go`) wired between Instrument and ResponseCap so denials still emit metrics + audit. `Authorizer.RequireOrg` / `ListOrgs` derive the caller from `ctx` (drops the explicit `Caller` arg from ~40 call sites). `panels.go` folded into `dashboards.go` (single tool, dashboard-context). `Deps` struct removed; each `register*` takes `(authz.Authorizer, grafana.Client)` directly. | #42 |
+| Correctness + defence-in-depth bundle | `validateDatasourceProxyPath` URL-decodes before the dot-dot check (catches `%2e%2e`). `MaxConnsPerHost: 32` on the Grafana HTTP transport. `shutdownWithTimeout` helper deduplicates the OTEL teardown closures. Startup rejects `GRAFANA_SA_TOKEN` + `GRAFANA_BASIC_AUTH` set together (mutually exclusive). README labels `BASIC_AUTH` as dev/bootstrap-only with the production path called out; ~30s authz-cache-lag callout added in the orgs section. | #43 |
+| Test backfill | `TrustedAudiences` CSV-parsing locked in (5 cases). New `handler_authz_test.go` wires the **real** `Authorizer` against a fake `OrgRegistry` + minimal Grafana stub; drives 5 representative tools and asserts each denies an unauthorized caller. The downstream Grafana `httptest.Server` fails the test on any request — proves authz fires before any proxy call. Race detector was already in `make check` via `test-vet`. | #44 |
+| `docs/ARCHITECTURE.md` + roadmap status sync | One-page architecture doc with request-flow diagram, package layout, threat model, and "where to add a new tool" cheat sheet. Roadmap status caught up with what's actually merged. | #45 |
 
 ## Orientation — pre-release cleanup
 
@@ -45,30 +52,10 @@ Glossary of jargon used in Tier 1:
 
 ## Tier 1 — ship next (before v0.1.0)
 
-### PR 12 — Triage co-pilot tools — IN FLIGHT (#38)
-
-Three composites that synthesise common SRE-triage questions, mirroring
-grafana/mcp-grafana's Sift surface where an upstream equivalent exists
-(no Grafana Cloud Sift backend required — composes existing primitives):
-
-- **`find_error_pattern_logs(org, service, lookback?)`** — probes
-  service_name → service → job to pick the right Loki label, runs the
-  size-estimate first, refuses when bytes > 256 MiB, otherwise
-  `query_range` with an error-keyword regex.
-- **`find_slow_requests(org, service, lookback?, min_duration?, errors_only?)`**
-  — TraceQL `{ resource.service.name = "X" && duration > Y [&& status = error] }`
-  via Tempo `api/search`.
-- **`explain_query(org, promql)`** — series-count preflight via
-  `count(<expr>)`. Warns when count > 10 000. No upstream equivalent.
-
-### `cmd/serve` split — IN FLIGHT
-
-Refactor of `runServe` (354 lines) into focused builders living in
-per-concern files: `cmd/oauth.go` (dex provider + storage backend +
-mcp-oauth server + handler), `cmd/orgregistry.go` (controller-runtime
-cache + `authz.OrgRegistry` adapter + gauge reporter), `cmd/mux.go`
-(MCP and observability muxes + two-phase shutdown). `runServe` itself
-becomes ~155 lines of orchestration. Zero behaviour change.
+Tier 1 is empty: the items previously listed here (PR 12 triage co-pilots,
+`cmd/serve` split, RequireCaller middleware + authz/tools cleanup,
+correctness/security bundle, test backfill, ARCHITECTURE.md) all merged
+as #38, #40, #41–#45.
 
 ### Items dropped from the previous plan
 
@@ -91,20 +78,6 @@ becomes ~155 lines of orchestration. Zero behaviour change.
   correctness gain.
 - **`GrafanaOrgLookup` → `OrgMembershipLookup` rename.** The interface
   landed as `OrgRegistry` directly during PR 11a; superseded.
-
-## Tier 2 — follow-up (doesn't block v0.1.0)
-
-### Grafana client hardening
-
-All items from the original list landed (LimitReader 16 MiB,
-`X-Grafana-User` sanitisation, SSRF on `DatasourceProxy`, redacted
-`authHeader`, `%w` wrapping, bounded `detectPromError` in #26;
-`HasImageRenderer` cache + `BaseURL()` simplification in #37).
-
-The previously-listed jittered retry + `sony/gobreaker` circuit
-breaker is dropped: in-cluster Grafana sub-ms latency, 30–60s
-rolling-upgrade windows, and LLM-client-side retry-on-error already
-cover the failure modes. Reconsider only if real incidents demand it.
 
 ## Tier 3 — post-release features
 
@@ -153,8 +126,16 @@ subscriptions.
   that stops `$cluster` corrupting `$cluster_id`. Table test.
 - `internal/tools/dashboards.go#readJSONPointer` — RFC 6901 edge cases
   (`~0` / `~1` escapes, array indexing, non-container traversal).
+- **OAuth audience-validation contract test.** Asserts that a token
+  with an untrusted `aud` claim is rejected by `mcp-oauth.ValidateToken`.
+  Needs `mcp-oauth` to expose a usable test hook (or upstreamed test
+  helpers); skip-with-issue-link is the fallback.
+- **End-to-end OAuth flow integration test.** `httptest`-backed walk
+  through `authorize → callback → token → MCP tool call → 401-on-expiry`.
+  Currently `cmd/oauth_test.go` only covers storage configs.
 
-Backfill independently if/when the helpers are touched.
+Backfill independently if/when the helpers are touched, or once the
+upstream hook surface allows clean coverage of the OAuth flow.
 
 ## Deferred from landed PRs
 
@@ -168,8 +149,6 @@ Backfill independently if/when the helpers are touched.
 - **Standalone Go binaries via goreleaser** (from #6) — useful once
   local stdio deployments become a supported use case. Container image
   is the only distribution today.
-- **`ARCHITECTURE.md`** (from #4) — onboarding doc with hex diagram,
-  "where to add X" cheat sheet, threat model.
 
 ## Out of scope (explicitly not doing)
 
@@ -192,12 +171,42 @@ Backfill independently if/when the helpers are touched.
 ## Upstream contribution lane
 
 Parallel, non-blocking. Tracked in
-[`docs/upstream-contributions.md`](./upstream-contributions.md):
+[`docs/upstream-contributions.md`](./upstream-contributions.md). All
+three issues filed against `grafana/mcp-grafana`:
 
-- **US-1** — Per-request `X-Grafana-User` / `X-Grafana-Org-Id`
-  pass-through.
-- **US-2** — Mimir + Loki recording-rule tools.
-- **US-3** — Dedicated Tempo toolset.
+- [#794](https://github.com/grafana/mcp-grafana/issues/794) — context-
+  aware RoundTrippers (per-request `X-Grafana-User` / `X-Grafana-Org-Id`
+  via `req.Context()` instead of frozen-at-construction config).
+  Reframed from the original "header pass-through" once we discovered
+  upstream's existing `GRAFANA_FORWARD_HEADERS` covers the gateway case.
+- [#795](https://github.com/grafana/mcp-grafana/issues/795) — Mimir +
+  Loki recording-rule tools.
+- [#796](https://github.com/grafana/mcp-grafana/issues/796) — dedicated
+  Tempo toolset (TraceQL search, tag discovery, metrics).
+
+If #794 lands, evaluate dropping `internal/grafana/client.go` in favour
+of `mcpgrafana.NewGrafanaClient` and importing upstream's tool registrations
+as a v0.2 effort. See the v0.2 spike note below.
+
+### v0.2 spike — depend on `grafana/mcp-grafana`
+
+Once #794 lands upstream and exposes the per-request context override,
+prototype replacing our local `internal/grafana/client.go` and the
+duplicated tool registrations (`search_dashboards`, `query_prometheus*`,
+`query_loki*`, etc.) with imports. The local code base shrinks to the
+GS-specific layer: authz, audit, multi-tenant org awareness, OSS triage
+co-pilots, middleware composition.
+
+Blockers before this is worth doing:
+
+1. #794 (context-aware RoundTrippers) merges and ships.
+2. Upstream registration functions (`AddDashboardTools`,
+   `AddPrometheusTools`, etc.) cover the categories we use.
+3. We accept Cloud-only transitive deps (`incident-go`,
+   `amixr-api-go-client`) in our binary — small bloat, no security
+   issue.
+
+If those align, the migration is ~3 PRs of mechanical wrapping.
 
 ### Candidates to propose back to `mcp-kubernetes`
 

@@ -18,6 +18,9 @@ TTL); shorter TTLs for negative results (caller-not-yet-provisioned).
 See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization plan
 and [`docs/upstream-contributions.md`](./docs/upstream-contributions.md)
 for the parallel `grafana/mcp-grafana` contribution lane.
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) is the orientation
+doc: request flow, package layout, threat model, and where to add a new
+tool.
 
 ## MCP surface
 
