@@ -31,42 +31,22 @@ type Record struct {
 	Error       string // empty when Outcome=ok; handler error text or IsError result text
 }
 
-// Redactor optionally mutates args before they are emitted. Return a new map
-// or the same map mutated in place; the Logger does not share the map with
-// the caller after Record returns.
-type Redactor func(args map[string]any) map[string]any
-
 // Logger wraps an slog.Logger dedicated to the audit stream.
 type Logger struct {
-	slog   *slog.Logger
-	redact Redactor
-}
-
-// Option configures a Logger.
-type Option func(*Logger)
-
-// WithRedactor installs a Redactor applied to Record.Args before each emit.
-// Use this when a tool accepts a sensitive argument (a bearer token, an
-// API key, a password) that should never appear in the audit stream.
-func WithRedactor(r Redactor) Option {
-	return func(l *Logger) { l.redact = r }
+	slog *slog.Logger
 }
 
 // New builds a Logger backed by an slog.Handler. Production typically uses a
 // JSON handler targeting stderr or a dedicated file; tests can pass a
 // discard handler.
-func New(h slog.Handler, opts ...Option) *Logger {
-	l := &Logger{slog: slog.New(h)}
-	for _, opt := range opts {
-		opt(l)
-	}
-	return l
+func New(h slog.Handler) *Logger {
+	return &Logger{slog: slog.New(h)}
 }
 
 // NewJSON builds a Logger writing JSON records to w at info level. Convenience
 // wrapper for the common "JSON to stderr" shape; use New for custom handlers.
-func NewJSON(w io.Writer, opts ...Option) *Logger {
-	return New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}), opts...)
+func NewJSON(w io.Writer) *Logger {
+	return New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
 
 // Record emits the audit entry. Nil receiver is a deliberate no-op so that
@@ -76,16 +56,7 @@ func (l *Logger) Record(ctx context.Context, r Record) {
 	if l == nil {
 		return
 	}
-	args := r.Args
-	if l.redact != nil && args != nil {
-		// Pass a defensive copy to the redactor so handler-side maps aren't
-		// mutated by audit-side logic. Cheaper than cloning on every call-
-		// site and keeps the contract simple.
-		cp := make(map[string]any, len(args))
-		maps.Copy(cp, args)
-		args = l.redact(cp)
-	}
-	args = capArgs(args)
+	args := capArgs(r.Args)
 	l.slog.LogAttrs(ctx, slog.LevelInfo, "tool_call",
 		slog.Time("timestamp", r.Timestamp),
 		slog.String("caller", r.Caller),
