@@ -26,19 +26,22 @@ import (
 // casing rules on our side.
 //
 // All returned Organizations are deep-cloned; handler mutations cannot
-// escape into any internal cache. An empty Caller (no Email, no Subject)
-// returns ErrNoCallerIdentity.
+// escape into any internal cache. The caller is derived from ctx via
+// CallerFromContext; an empty Caller (no Email, no Subject) returns
+// ErrNoCallerIdentity. The framework-level RequireCaller middleware
+// blocks calls without a caller before any handler runs, so this guard
+// is belt-and-braces.
 type Authorizer interface {
 	// RequireOrg returns the caller's Organization access to orgRef (matched
 	// case-insensitively against Organization.Name or .DisplayName), or an
 	// error classifying why access was denied: ErrNoCallerIdentity,
 	// ErrOrgNotFound, ErrNotAuthorised, or ErrInsufficientRole.
-	RequireOrg(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error)
+	RequireOrg(ctx context.Context, orgRef string, minRole Role) (Organization, error)
 
 	// ListOrgs returns every org the caller has a non-None role on, keyed
 	// by Organization.Name. Empty map + nil error means "authenticated but
 	// no accessible orgs".
-	ListOrgs(ctx context.Context, caller Caller) (map[string]Organization, error)
+	ListOrgs(ctx context.Context) (map[string]Organization, error)
 }
 
 // authorizer answers "what can this caller do?" by asking Grafana for the
@@ -94,9 +97,10 @@ func NewAuthorizer(registry OrgRegistry, grafana grafana.Client, log *slog.Logge
 
 // ListOrgs returns the caller's authorised orgs + role by asking Grafana and
 // enriching with registry metadata. The returned map is deep-cloned so
-// handler mutations cannot escape into the cache.
-func (r *authorizer) ListOrgs(ctx context.Context, caller Caller) (map[string]Organization, error) {
-	entry, err := r.resolveWithOrgs(ctx, caller)
+// handler mutations cannot escape into the cache. Caller identity is read
+// from ctx via CallerFromContext.
+func (r *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, error) {
+	entry, err := r.resolveWithOrgs(ctx, CallerFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -108,10 +112,11 @@ func (r *authorizer) ListOrgs(ctx context.Context, caller Caller) (map[string]Or
 // (ErrNotAuthorised), or their role is below minRole.
 //
 // orgRef may be either the registry name or the displayName
-// (case-insensitive). The returned Organization is deep-cloned so handler
+// (case-insensitive). Caller identity is read from ctx via
+// CallerFromContext. The returned Organization is deep-cloned so handler
 // mutations cannot escape into the cache.
-func (r *authorizer) RequireOrg(ctx context.Context, caller Caller, orgRef string, minRole Role) (Organization, error) {
-	entry, err := r.resolveWithOrgs(ctx, caller)
+func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role) (Organization, error) {
+	entry, err := r.resolveWithOrgs(ctx, CallerFromContext(ctx))
 	if err != nil {
 		return Organization{}, err
 	}

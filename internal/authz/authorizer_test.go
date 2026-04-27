@@ -8,8 +8,19 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/giantswarm/mcp-oauth/providers"
+
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
+
+// ctxWithCaller builds a context carrying the given caller via the
+// production withCaller path, so tests exercise the same context-
+// propagation as runtime callers. Authorizer methods derive the caller
+// from ctx via CallerFromContext, with the framework-level RequireCaller
+// middleware already filtering out empty callers before any handler runs.
+func ctxWithCaller(c Caller) context.Context {
+	return withCaller(context.Background(), &providers.UserInfo{Email: c.Email, ID: c.Subject})
+}
 
 // newOrg builds an Organization fixture. tenantTypes populates the single
 // tenant's Types; Datasources include Mimir/Loki entries named after the org
@@ -108,7 +119,7 @@ func TestAuthorizer_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha, beta), g, -1)
 
-	got, err := r.ListOrgs(context.Background(), Caller{Email: "u@example.com"})
+	got, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@example.com"}))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -134,7 +145,7 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
-	got, _ := r.ListOrgs(context.Background(), Caller{Email: "u@e.com"})
+	got, _ := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
 	if len(got) != 0 {
 		t.Errorf("expected empty access, got %v", got)
 	}
@@ -146,7 +157,7 @@ func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
 	r := mustNewAuthorizer(t, registry(), g, -1)
 
-	got, err := r.ListOrgs(context.Background(), Caller{Email: "new@e.com"})
+	got, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,9 +174,9 @@ func TestAuthorizer_Resolve_Cache(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
-	_, _ = r.ListOrgs(context.Background(), Caller{Email: "u@e.com"})
-	_, _ = r.ListOrgs(context.Background(), Caller{Email: "u@e.com"})
-	_, _ = r.ListOrgs(context.Background(), Caller{Email: "u@e.com"})
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
 		t.Errorf("expected 1 lookup + 1 userOrgs call, got %d/%d", g.calls.lookup, g.calls.userOrgs)
 	}
@@ -179,7 +190,7 @@ func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
-	_, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleAdmin)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleAdmin)
 	if err == nil {
 		t.Fatalf("expected insufficient-role error, got nil")
 	}
@@ -193,7 +204,7 @@ func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
-	_, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleViewer)
 	if err == nil {
 		t.Fatalf("expected not-authorised error, got nil")
 	}
@@ -207,7 +218,7 @@ func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
-	org, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com"}, "ALPHA TEAM", RoleAdmin)
+	org, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "ALPHA TEAM", RoleAdmin)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
@@ -350,7 +361,7 @@ func TestAuthorizer_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
 		go func() {
 			defer done.Done()
 			started.Done()
-			_, err := r.ListOrgs(context.Background(), Caller{Email: "u@e.com", Subject: "sub-1"})
+			_, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com", Subject: "sub-1"}))
 			if err != nil {
 				t.Errorf("Resolve: %v", err)
 			}
@@ -383,8 +394,8 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
 	// Same subject, different emails — second call should hit cache.
-	_, _ = r.ListOrgs(context.Background(), Caller{Email: "u@old.com", Subject: "sub-1"})
-	_, _ = r.ListOrgs(context.Background(), Caller{Email: "u@new.com", Subject: "sub-1"})
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@old.com", Subject: "sub-1"}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: "sub-1"}))
 	if g.calls.lookup != 1 {
 		t.Errorf("LookupUserID calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
 	}
@@ -401,14 +412,14 @@ func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
-	oa1, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
+	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
 	// Mutation simulating a handler that appends to the datasource list.
 	oa1.Datasources = append(oa1.Datasources, Datasource{ID: 999, Name: "poisoned"})
 
-	oa2, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
+	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("second Require: %v", err)
 	}
@@ -430,13 +441,13 @@ func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g, 100)
 
-	oa1, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
+	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
 	oa1.Tenants[0].Types = append(oa1.Tenants[0].Types, TenantTypeAlerting)
 
-	oa2, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com", Subject: "s"}, "alpha", RoleViewer)
+	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("second Require: %v", err)
 	}
@@ -458,7 +469,7 @@ func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	r := mustNewAuthorizer(t, registry(alpha), g, -1)
 
 	// alpha exists but the caller isn't a member → ErrNotAuthorised.
-	_, err := r.RequireOrg(context.Background(), Caller{Email: "u@e.com"}, "alpha", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleViewer)
 	if err == nil {
 		t.Fatal("expected error for known-org-but-no-access, got nil")
 	}
@@ -467,7 +478,7 @@ func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	}
 
 	// nonexistent has no descriptor → ErrOrgNotFound.
-	_, err = r.RequireOrg(context.Background(), Caller{Email: "u@e.com"}, "nonexistent", RoleViewer)
+	_, err = r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "nonexistent", RoleViewer)
 	if !errors.Is(err, ErrOrgNotFound) {
 		t.Errorf("err = %v, want wraps ErrOrgNotFound", err)
 	}
@@ -556,7 +567,7 @@ func TestAuthorizer_ConcurrentEviction_NoStaleAuthDecisions(t *testing.T) {
 					Email:   fmt.Sprintf("u%d@e.com", i),
 					Subject: fmt.Sprintf("sub-%d", i),
 				}
-				access, err := r.ListOrgs(context.Background(), caller)
+				access, err := r.ListOrgs(ctxWithCaller(caller))
 				if err != nil {
 					errs <- fmt.Errorf("worker %d round %d: Resolve(%s): %w", worker, round, caller.Email, err)
 					return

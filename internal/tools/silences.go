@@ -18,10 +18,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
+	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-func registerSilenceTools(s *mcpsrv.MCPServer, d *Deps) {
+func registerSilenceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("list_silences",
 			ReadOnlyAnnotation(),
@@ -37,7 +39,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveAlertmanagerDS(ctx, d, orgRef)
+			org, dsID, err := resolveAlertmanagerDS(ctx, az, gc, orgRef)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -54,7 +56,7 @@ func registerSilenceTools(s *mcpsrv.MCPServer, d *Deps) {
 				q.Set("filter", filter)
 			}
 			observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/silences").Inc()
-			body, err := d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "alertmanager/api/v2/silences", q)
+			body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "alertmanager/api/v2/silences", q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager silences", err), nil
 			}
