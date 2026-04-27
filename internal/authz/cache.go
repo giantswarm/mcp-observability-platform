@@ -20,17 +20,21 @@ const (
 	DefaultCacheSize = 10000
 )
 
-// cacheEntry is one authorizer-cache entry. It holds everything Require
-// needs so the authorised path never re-lists the registry: access gives
-// the caller's accessible orgs, and allOrgRefs is the name/displayname set
-// used to pick the right error when access misses.
+// cacheEntry is one authorizer-cache entry. It holds only the
+// Grafana-side data (user ID + per-org Role memberships) — the registry
+// join is recomputed from a fresh OrgRegistry.List on every RequireOrg /
+// ListOrgs call. The registry is in-memory (controller-runtime informer
+// cache) so the join is trivially cheap, and recomputing it means a
+// deleted org disappears from a caller's accessible set immediately
+// instead of hanging around for the rest of the cached caller's TTL.
 //
-// expiresAt is per-entry rather than global so positive and negative hits
-// can age out at different rates.
+// memberships nil means "user not yet provisioned in Grafana" (negative
+// entry, short TTL); empty non-nil means "user found, no org
+// memberships" (also negative). expiresAt is per-entry so positive and
+// negative entries can age out at different rates.
 type cacheEntry struct {
-	expiresAt  time.Time
-	orgs       map[string]Organization
-	allOrgRefs map[string]struct{} // lowercased Name + DisplayName
+	expiresAt   time.Time
+	memberships map[int64]Role
 }
 
 // cacheLookup returns the cached entry for key if one exists and is still
@@ -58,16 +62,12 @@ func (r *authorizer) cacheStore(key string, entry cacheEntry) {
 }
 
 // cacheKey returns the key under which Caller's access is cached. OIDC
-// subject is the stable, non-spoofable identifier and is always preferred.
-// When no subject is present (unauthenticated test paths, legacy callers)
-// we fall back to lowercased email so the authorizer still functions; these
-// paths shouldn't reach production because PromoteOAuthCaller populates
-// Subject for authenticated callers.
+// subject is the stable, non-spoofable identifier — and the only thing
+// the cache trusts. resolveWithOrgs guards against empty-subject callers
+// before this is reached (Caller.Empty() rejects them), so the key is
+// always non-empty here.
 func cacheKey(c Caller) string {
-	if c.Subject != "" {
-		return "sub:" + c.Subject
-	}
-	return "email:" + strings.ToLower(c.Email)
+	return "sub:" + c.Subject
 }
 
 // buildOrgRefSet returns the set of lowercased Name + DisplayName values,
@@ -87,18 +87,25 @@ func buildOrgRefSet(orgs []Organization) map[string]struct{} {
 // cloneOrganization returns a deep copy suitable for handing to external
 // callers. Tenants and Datasources are deep-copied so a handler that
 // appends to `org.Tenants[i].Types` (or swaps a Datasource entry) cannot
-// corrupt the cache. Strings and value-typed fields are copied by the
-// struct-copy idiom at the call site; only the slices need attention.
+// corrupt anything shared. Strings and value-typed fields are copied by
+// the struct-copy idiom at the call site; only the slices need
+// attention.
+//
+// Today the registry-side Organization values are read fresh per call
+// (the cache only holds Grafana-side memberships), so handler mutations
+// can no longer escape into the cache by definition. We still
+// deep-clone here so a single per-call OrgRegistry.List that gets
+// projected for two concurrent callers cannot be corrupted by either.
 func cloneOrganization(o Organization) Organization {
 	o.Tenants = cloneTenants(o.Tenants)
 	o.Datasources = cloneDatasources(o.Datasources)
 	return o
 }
 
-// cloneOrganizations deep-clones every Organization value in the map. Used
-// only by Resolve which returns the full map to external callers.
-// maps.Clone isn't a fit because it's shallow — we need cloneOrganization
-// on each value.
+// cloneOrganizations deep-clones every Organization value in the map.
+// Used by ListOrgs which returns the full per-caller projection.
+// maps.Clone isn't a fit — it's shallow, and an Organization carries
+// Tenants/Datasources slices.
 func cloneOrganizations(in map[string]Organization) map[string]Organization {
 	if in == nil {
 		return nil

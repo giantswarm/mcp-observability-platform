@@ -79,6 +79,13 @@ func (h *HealthChecker) Readiness(w http.ResponseWriter, r *http.Request) {
 // Snapshot runs every registered probe under the per-check timeout and
 // returns the per-probe results. Used by Readiness for the 503 decision
 // and by tests to assert on probe wiring without going through HTTP.
+//
+// A probe that ignores ctx and runs longer than the timeout has its
+// "deadline exceeded" entry recorded and Snapshot returns; the
+// goroutine running that probe leaks until the probe eventually
+// completes. Documented as the trade-off vs blocking the readiness
+// endpoint indefinitely on a misbehaving probe — probes SHOULD honour
+// ctx (HTTPProbe does).
 func (h *HealthChecker) Snapshot(parent context.Context) map[string]Check {
 	h.mu.RLock()
 	checks := make(map[string]CheckFn, len(h.checks))
@@ -112,15 +119,32 @@ func (h *HealthChecker) Snapshot(parent context.Context) map[string]Check {
 			mu.Unlock()
 		}(name, fn)
 	}
-	wg.Wait()
 
-	// Belt-and-braces: a probe that ignores ctx might not be in results.
+	// Wait for all probes OR the timeout — whichever comes first.
+	// Late-finishing probes still acquire the lock and write into
+	// `results`, but Snapshot returns a fresh `out` map so a late
+	// write doesn't race with the caller's read.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
+	out := make(map[string]Check, len(checks))
+	mu.Lock()
 	for name := range checks {
-		if _, ok := results[name]; !ok {
-			results[name] = Check{Status: statusFailed, Message: "deadline exceeded", DurationMs: h.timeout.Milliseconds()}
+		if c, ok := results[name]; ok {
+			out[name] = c
+		} else {
+			out[name] = Check{Status: statusFailed, Message: "deadline exceeded", DurationMs: h.timeout.Milliseconds()}
 		}
 	}
-	return results
+	mu.Unlock()
+	return out
 }
 
 // HTTPProbe returns a CheckFn that GETs url and reports ok on any 2xx.

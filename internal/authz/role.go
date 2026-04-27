@@ -40,12 +40,19 @@ func (r Role) MarshalJSON() ([]byte, error) { return json.Marshal(r.String()) }
 // contract that would break on a reorder.
 func (r Role) AtLeast(other Role) bool { return r >= other }
 
-// roleFromGrafana converts Grafana's role strings ("Admin", "Editor",
-// "Viewer", "None") into our enum. Unknown values map to RoleNone so
-// callers never get elevated by accident on a Grafana change.
+// roleFromGrafana converts Grafana's per-org role strings ("Admin",
+// "Editor", "Viewer", "None" — see the API reference for
+// /api/users/{id}/orgs) into our enum. Unknown values map to RoleNone
+// so callers never get elevated by accident on a Grafana change.
+//
+// Note: Grafana's server-admin status ("Grafana Admin") is NOT a
+// per-org role — it lives on /api/users/{id}.isGrafanaAdmin and is
+// orthogonal to org membership. We deliberately do not honour it here:
+// a server-admin SA may need full access to administer the system, but
+// callers SHOULD have an explicit per-org role to act through this MCP.
 func roleFromGrafana(s string) Role {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "admin", "grafana admin":
+	case "admin":
 		return RoleAdmin
 	case "editor":
 		return RoleEditor
