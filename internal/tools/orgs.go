@@ -11,16 +11,17 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
+func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			access, err := d.Authorizer.ListOrgs(ctx, authz.CallerFromContext(ctx))
+			access, err := az.ListOrgs(ctx)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
 			}
@@ -73,11 +74,11 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			raw, err := d.Grafana.ListDatasources(ctx, grafanaOpts(ctx, org.OrgID))
+			raw, err := gc.ListDatasources(ctx, grafanaOpts(ctx, org.OrgID))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana /api/datasources failed", err), nil
 			}
@@ -138,11 +139,11 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDatasource(ctx, grafanaOpts(ctx, org.OrgID), uid)
+			body, err := gc.GetDatasource(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana datasource", err), nil
 			}

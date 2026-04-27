@@ -1,13 +1,16 @@
 // Package tools — dashboards.go: registration of the Grafana dashboard
 // tools (search, summary, panel queries, JSON Pointer, annotations,
-// deeplinks, run-panel-query). Handler bodies are kept inline because each
-// is mostly argument-unpacking + a single helper call; the non-trivial
-// logic lives in dashboards_panels.go (panel/template/JSON Pointer) and
-// dashboards_summary.go (folder grouping, dashboard summarisation).
+// deeplinks, run-panel-query, panel-image rendering). Handler bodies
+// are kept inline because each is mostly argument-unpacking + a single
+// helper call; the non-trivial logic lives in dashboards_panels.go
+// (panel/template/JSON Pointer) and dashboards_summary.go (folder
+// grouping, dashboard summarisation).
 package tools
 
 import (
+	"cmp"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -18,9 +21,16 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
+// maxRenderedImageBytes caps the PNG payload returned by get_panel_image.
+// Large renders (2000x1000 with dense data) easily hit multi-MB sizes and
+// will blow past most LLM context windows even as base64. 4 MiB is a
+// reasonable upper bound for practical panels.
+const maxRenderedImageBytes = 4 * 1024 * 1024
+
+func registerDashboardTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("search_dashboards",
 			ReadOnlyAnnotation(),
@@ -37,11 +47,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.SearchDashboards(ctx, grafanaOpts(ctx, org.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
+			body, err := gc.SearchDashboards(ctx, grafanaOpts(ctx, org.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search failed", err), nil
 			}
@@ -69,11 +79,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
+			body, err := gc.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -97,11 +107,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
+			body, err := gc.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -131,11 +141,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
+			body, err := gc.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -165,11 +175,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			path := req.GetString("path", "")
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
+			body, err := gc.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -194,11 +204,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.SearchFolders(ctx, grafanaOpts(ctx, org.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
+			body, err := gc.SearchFolders(ctx, grafanaOpts(ctx, org.OrgID), req.GetString("query", ""), req.GetInt("limit", 0))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana search folders", err), nil
 			}
@@ -219,7 +229,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -230,7 +240,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if limit := req.GetInt("limit", 0); limit > 0 {
 				q.Set("limit", strconv.Itoa(limit))
 			}
-			body, err := d.Grafana.GetAnnotationTags(ctx, grafanaOpts(ctx, org.OrgID), q)
+			body, err := gc.GetAnnotationTags(ctx, grafanaOpts(ctx, org.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotation tags", err), nil
 			}
@@ -255,7 +265,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -283,7 +293,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			limit = clampInt(limit, 1, 1000)
 			q.Set("limit", strconv.Itoa(limit))
-			body, err := d.Grafana.GetAnnotations(ctx, grafanaOpts(ctx, org.OrgID), q)
+			body, err := gc.GetAnnotations(ctx, grafanaOpts(ctx, org.OrgID), q)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana annotations", err), nil
 			}
@@ -317,11 +327,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if panelID <= 0 {
 				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			body, err := d.Grafana.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
+			body, err := gc.GetDashboard(ctx, grafanaOpts(ctx, org.OrgID), uid)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("grafana get dashboard failed", err), nil
 			}
@@ -350,7 +360,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no PromQL expression", panel.ID)), nil
 				}
 				inv.Query = expanded(target.Expr)
-				return runDatasourceProxy(ctx, d, datasourceSpec{
+				return runDatasourceProxy(ctx, az, gc, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindMimir},
 					InstantPath: "api/v1/query", RangePath: "api/v1/query_range", QueryArg: "query", SupportsRange: true,
 				}, inv)
@@ -370,7 +380,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 				if inv.End == "" {
 					inv.End = strconv.FormatInt(time.Now().UnixNano(), 10)
 				}
-				return runDatasourceProxy(ctx, d, datasourceSpec{
+				return runDatasourceProxy(ctx, az, gc, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindLoki},
 					InstantPath: "loki/api/v1/query_range", RangePath: "loki/api/v1/query_range",
 					QueryArg: "query", SupportsRange: true, ExtraArg: "limit",
@@ -380,7 +390,7 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 					return mcp.NewToolResultError(fmt.Sprintf("panel %d target has no TraceQL query", panel.ID)), nil
 				}
 				inv.Query = expanded(target.Query)
-				return runDatasourceProxy(ctx, d, datasourceSpec{
+				return runDatasourceProxy(ctx, az, gc, datasourceSpec{
 					Role: authz.RoleViewer, NeedTenant: authz.TenantTypeData, NameContains: []string{dsKindTempo},
 					InstantPath: "api/search", QueryArg: "q", ExtraArg: "limit",
 				}, inv)
@@ -410,11 +420,11 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			base := d.Grafana.BaseURL()
+			base := gc.BaseURL()
 			from := req.GetString("from", "")
 			if from == "" {
 				from = "now-1h"
@@ -442,6 +452,108 @@ func registerDashboardTools(s *mcpsrv.MCPServer, d *Deps) {
 			return mcp.NewToolResultJSON(struct {
 				URL string `json:"url"`
 			}{URL: link.String()})
+		},
+	)
+
+	s.AddTool(
+		mcp.NewTool("get_panel_image",
+			ReadOnlyAnnotation(),
+			mcp.WithDescription(
+				"Render a Grafana dashboard panel as a PNG image and return it as an MCP image resource. "+
+					"Requires the 'grafana-image-renderer' plugin, or the standalone renderer service "+
+					"(grafana/grafana-image-renderer) wired to Grafana via GF_RENDERING_SERVER_URL + "+
+					"GF_RENDERING_CALLBACK_URL. Without the renderer, Grafana returns an HTML error and "+
+					"this tool returns an actionable error message."),
+			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
+			mcp.WithString("uid", mcp.Required(), mcp.Description("Dashboard UID.")),
+			mcp.WithNumber("panelId", mcp.Required(), mcp.Description("Panel ID (from get_dashboard_summary or get_dashboard_panel_queries).")),
+			mcp.WithString("from", mcp.Description("Grafana time (e.g. 'now-1h', unix ms, RFC3339). Default 'now-1h'.")),
+			mcp.WithString("to", mcp.Description("Grafana time. Default 'now'.")),
+			mcp.WithNumber("width", mcp.Description("Image width in px (default 1000).")),
+			mcp.WithNumber("height", mcp.Description("Image height in px (default 500).")),
+			mcp.WithString("theme", mcp.Description("'light' | 'dark' (default 'light').")),
+			mcp.WithString("tz", mcp.Description("IANA timezone for time axis, e.g. 'Europe/Paris'. Default: UTC.")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			orgRef, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			uid, err := req.RequireString("uid")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			panelID := req.GetInt("panelId", 0)
+			if panelID <= 0 {
+				return mcp.NewToolResultError("missing required argument 'panelId'"), nil
+			}
+			org, err := az.RequireOrg(ctx, orgRef, authz.RoleViewer)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			// Rendering is CPU-heavy on the renderer service; give it room.
+			ctx, cancel := withToolTimeout(ctx, 45*time.Second)
+			defer cancel()
+
+			// Short-circuit with a structured error when the plugin isn't
+			// installed — without this, Grafana returns a PNG of its own
+			// error message and the tool appears to succeed.
+			if present, err := gc.HasImageRenderer(ctx); err == nil && !present {
+				return mcp.NewToolResultJSON(struct {
+					Error string `json:"error"`
+					Hint  string `json:"hint"`
+					Docs  string `json:"docs"`
+				}{
+					Error: "image_renderer_not_installed",
+					Hint:  "ask your Grafana administrator to install the grafana-image-renderer plugin, or deploy the renderer service (grafana/grafana-image-renderer) and set GF_RENDERING_SERVER_URL + GF_RENDERING_CALLBACK_URL on Grafana",
+					Docs:  "https://grafana.com/grafana/plugins/grafana-image-renderer/",
+				})
+			}
+
+			q := url.Values{}
+			q.Set("from", cmp.Or(req.GetString("from", ""), "now-1h"))
+			q.Set("to", cmp.Or(req.GetString("to", ""), "now"))
+			width := req.GetInt("width", 0)
+			if width <= 0 {
+				width = 1000
+			}
+			height := req.GetInt("height", 0)
+			if height <= 0 {
+				height = 500
+			}
+			q.Set("width", strconv.Itoa(width))
+			q.Set("height", strconv.Itoa(height))
+			if theme := req.GetString("theme", ""); theme != "" {
+				q.Set("theme", theme)
+			}
+			if tz := req.GetString("tz", ""); tz != "" {
+				q.Set("tz", tz)
+			}
+			q.Set("orgId", strconv.FormatInt(org.OrgID, 10))
+
+			png, contentType, err := gc.RenderPanel(ctx, grafanaOpts(ctx, org.OrgID), uid, panelID, q)
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("render panel", err), nil
+			}
+			if len(png) > maxRenderedImageBytes {
+				return mcp.NewToolResultJSON(struct {
+					Error string `json:"error"`
+					Bytes int    `json:"bytes"`
+					Limit int    `json:"limit"`
+					Hint  string `json:"hint"`
+				}{
+					Error: "image_too_large",
+					Bytes: len(png),
+					Limit: maxRenderedImageBytes,
+					Hint:  "reduce width/height, narrow the time range, or use get_dashboard_panel_queries + query_prometheus to summarise numerically",
+				})
+			}
+			// MCP ImageContent uses base64-encoded data.
+			return mcp.NewToolResultImage(
+				"panel render: dashboard "+uid+" panel "+strconv.Itoa(panelID),
+				base64.StdEncoding.EncodeToString(png),
+				contentType,
+			), nil
 		},
 	)
 }

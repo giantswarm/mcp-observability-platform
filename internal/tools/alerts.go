@@ -14,11 +14,12 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
-	registerAlertDetailTool(s, d)
+func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
+	registerAlertDetailTool(s, az, gc)
 
 	s.AddTool(
 		mcp.NewTool("list_alerts",
@@ -35,7 +36,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveAlertmanagerDS(ctx, d, orgRef)
+			org, dsID, err := resolveAlertmanagerDS(ctx, az, gc, orgRef)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -49,7 +50,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 
-			body, err := fetchAlerts(ctx, d, org.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
+			body, err := fetchAlerts(ctx, az, gc, org.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
 			}
@@ -65,7 +66,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, d *Deps) {
 // registerAlertDetailTool exposes a per-alert read tool. Replaces the prior
 // alertmanager://org/{name}/alert/{fingerprint} resource (LLMs handle tools
 // far more reliably than resources).
-func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
+func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("get_alert",
 			ReadOnlyAnnotation(),
@@ -82,13 +83,13 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveAlertmanagerDS(ctx, d, orgRef)
+			org, dsID, err := resolveAlertmanagerDS(ctx, az, gc, orgRef)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
 			defer cancel()
-			body, err := fetchAlerts(ctx, d, org.OrgID, dsID, filterAll, "")
+			body, err := fetchAlerts(ctx, az, gc, org.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
 			}
@@ -107,14 +108,14 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, d *Deps) {
 // resolveAlertmanagerDS is the alertmanager-specific specialisation of
 // resolveDatasource, kept as its own name so call sites in resources.go read
 // at the same abstraction level as the tool handlers.
-func resolveAlertmanagerDS(ctx context.Context, d *Deps, orgRef string) (authz.Organization, int64, error) {
-	return resolveDatasource(ctx, d, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+func resolveAlertmanagerDS(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef string) (authz.Organization, int64, error) {
+	return resolveDatasource(ctx, az, gc, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 }
 
 // fetchAlerts calls Alertmanager's /api/v2/alerts through the Grafana
 // datasource proxy with the requested state/filter narrowing applied
 // server-side. Defaults state to "active" when empty.
-func fetchAlerts(ctx context.Context, d *Deps, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
+func fetchAlerts(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgID, dsID int64, state, filter string) (json.RawMessage, error) {
 	if state == "" {
 		state = amActive
 	}
@@ -141,7 +142,7 @@ func fetchAlerts(ctx context.Context, d *Deps, orgID, dsID int64, state, filter 
 		q.Set("filter", filter)
 	}
 	observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/alerts").Inc()
-	return d.Grafana.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, "alertmanager/api/v2/alerts", q)
+	return gc.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, "alertmanager/api/v2/alerts", q)
 }
 
 // amAlert is the subset of Alertmanager's /api/v2/alerts shape we consume.
