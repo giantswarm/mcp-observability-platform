@@ -15,10 +15,7 @@
 //
 // Args is the raw map the client sent. Today's read-only tool surface does
 // not take secrets (orgs, dashboard UIDs, PromQL/LogQL, time ranges), so
-// args are emitted verbatim. The design rule for future tools is to NOT
-// accept secret arguments — look credentials up server-side from the
-// caller identity instead. That keeps the audit stream clean by
-// construction and removes any need for per-argument redaction.
+// args are emitted verbatim.
 //
 // # Size cap
 //
