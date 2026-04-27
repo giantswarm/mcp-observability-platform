@@ -20,7 +20,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			access, err := d.Authorizer.ListOrgs(ctx, authz.CallerFromContext(ctx))
+			access, err := d.Authorizer.ListOrgs(ctx)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
 			}
@@ -73,7 +73,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -138,7 +138,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, d *Deps) {
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, err := d.Authorizer.RequireOrg(ctx, authz.CallerFromContext(ctx), orgRef, authz.RoleViewer)
+			org, err := d.Authorizer.RequireOrg(ctx, orgRef, authz.RoleViewer)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}

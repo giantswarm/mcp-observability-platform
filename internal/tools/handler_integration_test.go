@@ -26,11 +26,11 @@ import (
 // on the tool-handler side of the pipeline.
 type fakeAuthz struct{ org authz.Organization }
 
-func (f fakeAuthz) RequireOrg(_ context.Context, _ authz.Caller, _ string, _ authz.Role) (authz.Organization, error) {
+func (f fakeAuthz) RequireOrg(_ context.Context, _ string, _ authz.Role) (authz.Organization, error) {
 	return f.org, nil
 }
 
-func (f fakeAuthz) ListOrgs(_ context.Context, _ authz.Caller) (map[string]authz.Organization, error) {
+func (f fakeAuthz) ListOrgs(_ context.Context) (map[string]authz.Organization, error) {
 	return map[string]authz.Organization{f.org.Name: f.org}, nil
 }
 
