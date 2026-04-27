@@ -9,13 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Go MCP server with `streamable-http` (default), `sse`, and `stdio` transports.
-- OAuth 2.1 via `mcp-oauth` with Dex; authz derived from `GrafanaOrganization` CR membership.
-- 32+ read-only MCP tools across orgs, datasources, dashboards, Mimir PromQL, Loki, Tempo, Alertmanager, panel rendering, and annotations.
-- Uniform `response_too_large` payload (`TOOL_MAX_RESPONSE_BYTES`, default 128 KiB).
-- Prometheus metrics (`mcp_*` namespace), OTel tracing, and OTLP logs via the `otelslog` bridge for trace↔log correlation.
-- Structured audit stream with `caller_token_source`, a 4 KiB per-value / 16 KiB total args size cap, pluggable redactor.
-- Deep readiness (`/readyz` probes Grafana + Dex + K8s informer) and two-phase graceful shutdown.
-- Helm chart with runtime ConfigMap, NetworkPolicy, PDB, HPA/VPA, and four example overlays.
+- 37 read-only MCP tools across Grafana / Mimir / Loki / Tempo / Alertmanager, plus three SRE-triage co-pilots (`find_error_pattern_logs`, `find_slow_requests`, `explain_query`).
+- OAuth 2.1 via `mcp-oauth` (Dex IdP); multi-tenant authz derived from `GrafanaOrganization` CR membership; fail-closed `RequireCaller` middleware.
+- Three transports: `streamable-http` (default), `sse`, `stdio`. Per-tool timeout, response-size cap with structured `response_too_large` payload, structured per-call audit stream.
+- Prometheus metrics (`mcp_*` namespace), OTEL tracing, and OTLP logs with `trace_id`/`span_id` correlation.
+- Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and four example overlays.
 
 [Unreleased]: https://github.com/giantswarm/mcp-observability-platform/tree/main

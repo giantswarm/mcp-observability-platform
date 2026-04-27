@@ -77,22 +77,12 @@ networkPolicy:
   egressTo: []
 
 # --- Runtime tunables (ConfigMap-backed) ---
-# All fields here surface as env vars on the deployment via envFrom. Feature
-# PRs read them without needing to re-touch the chart.
+# All fields here surface as env vars on the deployment via envFrom.
 runtime:
   # Per-tool handler deadline.
   toolTimeout: 30s
   # Cap on tool response body size in bytes. 0 disables the cap.
   maxResponseBytes: 131072
-  # TTL for the per-caller org/role cache.
-  resolverCacheTTL: 30s
-  # Rate-limit thresholds in requests/sec (0 = disabled). Wired by PR 9.
-  rateLimit:
-    perCaller: 0
-    perOrg: 0
-    global: 0
-  # OAuth active-refresh window before token expiry. Wired by PR 9.
-  oauthRefreshAhead: 5m
 
 # --- Autoscaling (both opt-in, off by default) ---
 autoscaling:

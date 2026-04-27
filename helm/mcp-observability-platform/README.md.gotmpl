@@ -24,10 +24,10 @@ helm install mcp-observability-platform helm/mcp-observability-platform \
 
 ## Configuration
 
-See [`values.yaml`](values.yaml). All runtime tunables (timeouts, response
-cap, rate-limit thresholds, OAuth refresh window) live under `runtime:` and
-are delivered to the container via an `envFrom`-mounted ConfigMap so they
-can be changed without redeploying the chart.
+See [`values.yaml`](values.yaml). Runtime tunables (tool timeout, response
+cap, OAuth trust config) live under `runtime:` / `oauth:` and are delivered
+to the container via an `envFrom`-mounted ConfigMap so they can be changed
+without redeploying the chart.
 
 {{ template "chart.valuesSection" . }}
 

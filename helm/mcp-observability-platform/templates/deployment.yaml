@@ -158,9 +158,9 @@ spec:
             {{- end }}
 
           envFrom:
-            # Runtime tunables (timeouts, response cap, rate-limit thresholds,
-            # resolver cache TTL, OAuth refresh window). ConfigMap-backed so
-            # operators can tweak without redeploying the chart.
+            # Runtime tunables (tool timeout, response cap, OAuth trust
+            # config). ConfigMap-backed so operators can tweak without
+            # redeploying the chart.
             - configMapRef:
                 name: {{ include "mcp-observability-platform.fullname" . }}-runtime
             {{- with .Values.extraEnvFrom }}

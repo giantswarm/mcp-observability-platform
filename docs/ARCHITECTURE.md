@@ -1,9 +1,11 @@
 # Architecture
 
-One-page reference for contributors. The deeper "what's landed" log lives
-in [`roadmap.md`](./roadmap.md); the per-tool surface is in
-[`README.md`](../README.md). This file is for orientation: where things
-live, what the security boundaries are, and where to add a new tool.
+One-page reference for contributors. Forward-looking work plan lives in
+[`roadmap.md`](./roadmap.md); the per-tool surface and configuration
+reference are in [`README.md`](../README.md); per-release feature list is
+in [`CHANGELOG.md`](../CHANGELOG.md); `git log` is the authoritative
+history. This file is for orientation: where things live, what the
+security boundaries are, and where to add a new tool.
 
 ## Request flow
 
@@ -77,8 +79,8 @@ live, what the security boundaries are, and where to add a new tool.
 one Grafana service-account token with server-admin rights. Authz isolates
 *callers* per org (a viewer of org A can't query datasources in org B),
 but a process compromise gives the attacker every org. The Phase-2 fix
-(per-org SAs, Tier 3 in the roadmap) needs `observability-operator`
-coordination and is deferred past v0.1.0.
+(per-org SAs, listed under "Post-v0.1.0 priorities" in the roadmap)
+needs `observability-operator` coordination and is deferred past v0.1.0.
 
 **OAuth trust boundary.** Tokens are validated against `DEX_ISSUER_URL`
 (or an SSO forwarder when `OAUTH_TRUSTED_AUDIENCES` is configured). The
@@ -138,7 +140,7 @@ Canonical example: `internal/tools/orgs.go` `list_datasources`. Steps:
    )
    ```
 3. **For datasource-proxied tools** (Mimir / Loki / Tempo / Alertmanager),
-   reuse `datasourceProxyHandler(d, datasourceSpec{...})` instead of
+   reuse `datasourceProxyHandler(az, gc, datasourceSpec{...})` instead of
    hand-rolling — see `metrics.go` `query_prometheus` for the pattern.
 4. **Don't accept secret arguments.** Look credentials up server-side
    from the caller identity. The audit stream stays clean by

@@ -302,10 +302,10 @@ Example overlays live under `helm/mcp-observability-platform/values-*.yaml`:
 | `values-rbac-minimal.yaml` | Externally-managed ServiceAccount + ClusterRoleBinding.          |
 | `values-autoscaling.yaml`  | HPA + VPA (Initial) + PDB + NetworkPolicy (ingress + egress).    |
 
-Runtime tunables (timeouts, response cap, rate-limit thresholds, OAuth
-refresh window) live under `runtime:` in `values.yaml` and are delivered
-through a ConfigMap mounted via `envFrom`. A `checksum/config` annotation
-on the pod template rolls the deployment whenever those change.
+Runtime tunables (tool timeout, response cap, OAuth trust config) live
+under `runtime:` / `oauth:` in `values.yaml` and are delivered through a
+ConfigMap mounted via `envFrom`. A `checksum/config` annotation on the
+pod template rolls the deployment whenever those change.
 
 ## Run locally (without Kubernetes)
 
@@ -318,15 +318,19 @@ make build
 ## Layout
 
 ```
-cmd/                               Cobra CLI (serve, version)
+cmd/                               Cobra CLI + per-concern builders
+                                   (oauth.go, orgregistry.go, mux.go, serve.go)
 internal/
+  audit/                           Per-tool-call JSON records (size-capped)
   authz/                           GrafanaOrganization CR cache + role resolver
-  grafana/                         Grafana HTTP client (server-admin SA + X-Grafana-Org-Id)
-  identity/                        Caller identity plumbing (OIDC UserInfo on ctx)
-  observability/                   Prometheus metrics + OTEL tracing setup
-  server/                          mcp-go transport wiring
-    middleware/                    Tracing + Metrics runtime interceptors
-  tools/                           MCP tool surface (32 tools) + shared tool helpers
+                                   + caller identity (OIDC UserInfo on ctx)
+  grafana/                         Grafana HTTP client (server-admin SA + per-request
+                                   X-Grafana-Org-Id / X-Grafana-User)
+  observability/                   Prometheus metrics + OTEL tracing/logs setup
+  server/                          MCP server construction + transport wrappers
+    middleware/                    Instrument (span + metric + audit) + RequireCaller
+                                   + ResponseCap + ToolTimeout
+  tools/                           MCP tool surface (37 tools) + shared dispatch helpers
 helm/mcp-observability-platform/   Helm chart
   templates/                       Deployment, Service, ClusterRole(Binding), ConfigMap, NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, NOTES
   tests/                           helm-unittest specs (configmap, deployment, hpa, networkpolicy, pdb, servicemonitor, vpa)

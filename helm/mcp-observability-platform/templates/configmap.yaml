@@ -1,5 +1,4 @@
 {{- $rt := (default dict .Values.runtime) }}
-{{- $rl := (default dict $rt.rateLimit) }}
 {{- $oa := (default dict .Values.oauth) }}
 apiVersion: v1
 kind: ConfigMap
@@ -12,28 +11,11 @@ data:
   # --- tool dispatch ---
   # Per-tool handler deadline. Bounded so a pathological query can't hold the
   # MCP goroutine open until the downstream HTTP client times out.
-  MCP_TOOL_TIMEOUT: {{ $rt.toolTimeout | default "30s" | quote }}
+  TOOL_TIMEOUT: {{ $rt.toolTimeout | default "30s" | quote }}
   # Cap on tool response body size. 0 disables the cap. See response_cap.go.
   # `toString | default` (rather than `default 131072`) so an explicit 0 isn't
   # silently overridden back to the default — Go templates treat 0 as falsy.
   TOOL_MAX_RESPONSE_BYTES: {{ $rt.maxResponseBytes | toString | default "131072" | quote }}
-
-  # --- resolver cache ---
-  # TTL for the per-caller org/role cache. Lower = faster permission changes,
-  # higher = fewer Grafana lookups. Shadowed by PR 9 token-refresh behaviour.
-  MCP_RESOLVER_CACHE_TTL: {{ $rt.resolverCacheTTL | default "30s" | quote }}
-
-  # --- rate limiting (wired by PR 9) ---
-  # Per-caller token-bucket rate (requests/s). 0 = disabled.
-  MCP_RATE_LIMIT_PER_CALLER: {{ $rl.perCaller | default 0 | quote }}
-  # Per-org token-bucket rate (requests/s). 0 = disabled.
-  MCP_RATE_LIMIT_PER_ORG: {{ $rl.perOrg | default 0 | quote }}
-  # Global token-bucket rate (requests/s). 0 = disabled.
-  MCP_RATE_LIMIT_GLOBAL: {{ $rl.global | default 0 | quote }}
-
-  # --- OAuth token refresh (wired by PR 9) ---
-  # Active-refresh window before token expiry. 0 = disabled.
-  OAUTH_REFRESH_AHEAD: {{ $rt.oauthRefreshAhead | default "5m" | quote }}
 
   # --- OAuth trust config (SSO token forwarding + CLI client schemes) ---
   # CSV of OAuth client IDs whose tokens are accepted as if minted for this
