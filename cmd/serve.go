@@ -127,21 +127,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
-		defer func() {
-			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
-			defer c()
-			_ = shutdownOTEL(sc)
-		}()
+		defer shutdownWithTimeout(shutdownOTEL)
 	}
 	shutdownOTELLogs, otelLogHandler, err := observability.InitLogging(shutdownCtx, "mcp-observability-platform", version)
 	if err != nil {
 		logger.Warn("otel log init failed; continuing without OTLP logs", "error", err)
 	} else {
-		defer func() {
-			sc, c := context.WithTimeout(context.Background(), 5*time.Second)
-			defer c()
-			_ = shutdownOTELLogs(sc)
-		}()
+		defer shutdownWithTimeout(shutdownOTELLogs)
 	}
 	if otelLogHandler != nil {
 		logger = slog.New(observability.FanoutHandler(logger.Handler(), otelLogHandler))
@@ -205,6 +197,17 @@ func runServe(_ *cobra.Command, _ []string) error {
 	logger.Info("shutdown requested")
 	runTwoPhaseShutdown(logger, mcpServer, obsServer)
 	return nil
+}
+
+// shutdownWithTimeout invokes a provider's Shutdown with a fresh 5s
+// background context. Used as the body of OTEL teardown defers so each
+// provider gets the same hard cap regardless of how shutdownCtx is faring.
+// Errors are intentionally swallowed: shutdown is best-effort and the
+// process is about to exit anyway.
+func shutdownWithTimeout(fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = fn(ctx)
 }
 
 // newLogger builds the root slog logger. format is "json" or "text"; debug

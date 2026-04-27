@@ -122,7 +122,11 @@ func New(cfg Config) (Client, error) {
 		base := &http.Transport{
 			MaxIdleConns:        32,
 			MaxIdleConnsPerHost: 16,
-			IdleConnTimeout:     90 * time.Second,
+			// Cap concurrent connections per host so a tool-timeout storm
+			// can't fan out unbounded sockets at one Grafana. Mirrors the
+			// response-cap and tool-timeout disciplines elsewhere.
+			MaxConnsPerHost: 32,
+			IdleConnTimeout: 90 * time.Second,
 		}
 		// otelhttp.NewTransport emits a client span per request and injects the
 		// W3C traceparent header so downstream Grafana spans attach to our trace.
@@ -505,6 +509,10 @@ func detectPromError(body []byte) error {
 // live SSRF patch. Grafana's datasource proxy itself only reaches the
 // configured datasource URL — a traversal would at worst reach a different
 // read-only endpoint on that same datasource.
+//
+// URL-decoding before the dot-dot check catches "%2e%2e" and friends that
+// would otherwise pass the literal-substring guard but be unescaped by the
+// downstream HTTP path normalisation.
 func validateDatasourceProxyPath(p string) error {
 	if p == "" {
 		return fmt.Errorf("%w: empty", errInvalidDatasourceProxyPath)
@@ -515,7 +523,11 @@ func validateDatasourceProxyPath(p string) error {
 	if strings.HasPrefix(p, "/") {
 		return fmt.Errorf("%w: leading slash", errInvalidDatasourceProxyPath)
 	}
-	if strings.Contains(p, "..") {
+	decoded, err := url.PathUnescape(p)
+	if err != nil {
+		return fmt.Errorf("%w: invalid URL escape: %v", errInvalidDatasourceProxyPath, err)
+	}
+	if strings.Contains(decoded, "..") {
 		return fmt.Errorf("%w: contains dot-dot traversal", errInvalidDatasourceProxyPath)
 	}
 	return nil

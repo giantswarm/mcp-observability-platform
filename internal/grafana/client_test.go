@@ -298,6 +298,9 @@ func TestValidateDatasourceProxyPath(t *testing.T) {
 		{"leading slash", "/api/v1/query", true},
 		{"contains ..", "api/../admin", true},
 		{"double dots mid-path", "api/v1/../../etc/passwd", true},
+		{"url-encoded dot-dot", "api/v1/%2e%2e/admin", true},
+		{"url-encoded dot-dot uppercase", "api/v1/%2E%2E/admin", true},
+		{"invalid url escape", "api/v1/%zz", true},
 		{"too long", strings.Repeat("a", 1025), true},
 		{"just under limit", strings.Repeat("a", 1024), false},
 	}
