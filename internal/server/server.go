@@ -16,34 +16,26 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/tools"
 )
 
-// Config configures a new MCP HTTP server.
 type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	// GrafanaURL is the base URL the delegated tool handlers use to build
-	// per-request upstream GrafanaClients. Same value as the Grafana
-	// client's URL; threaded through here because the binder constructs
-	// upstream's client per-call.
-	GrafanaURL string
-	// GrafanaAPIKey and GrafanaBasicAuth are mutually exclusive; exactly
-	// one must be set. Threaded through for the binder's per-request
-	// upstream GrafanaClient construction.
+	// GrafanaURL / GrafanaAPIKey / GrafanaBasicAuth are forwarded to the
+	// gfBinder, which builds an upstream mcpgrafana client per call.
+	// APIKey and BasicAuth are mutually exclusive; exactly one must be set.
+	GrafanaURL       string
 	GrafanaAPIKey    string
 	GrafanaBasicAuth *url.Userinfo
 	Version          string
-	// ToolTimeout is the per-tool-handler context deadline. 0 disables
-	// per-handler timeouts (ctx passes through unchanged).
+	// ToolTimeout: 0 disables the per-handler deadline.
 	ToolTimeout time.Duration
-	// MaxResponseBytes caps each tool response's TextContent size. 0
-	// disables capping.
+	// MaxResponseBytes: 0 disables response capping.
 	MaxResponseBytes int
 }
 
-// New builds the core MCP server and registers the tool surface. This
-// MCP exposes only tools. Transport wrapping (streamable-HTTP, SSE, stdio)
-// is the caller's concern — use `StreamableHTTPHandler` / `SSEHandler`
-// or drive stdio via `mcpsrv.ServeStdio` directly.
+// New constructs the tools-only MCP server. Transport wrapping is the
+// caller's concern — use StreamableHTTPHandler / SSEHandler, or drive
+// stdio via mcpsrv.ServeStdio.
 func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Logger == nil {
 		return nil, errors.New("server: Logger is required")
@@ -58,21 +50,17 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		cfg.Version = "dev"
 	}
 
-	// Middleware stack (outermost first):
-	//   1. WithRecovery()                — panic guard (mcp-go).
-	//   2. middleware.Instrument(logger) — span + metric + structured
-	//                                      "tool_call" log line.
-	//   3. middleware.RequireCaller()    — fail-closed authentication.
-	//                                      Inside Instrument so denials still
-	//                                      emit metric + log.
-	//   4. middleware.ResponseCap()      — replace oversized text content
-	//                                      with a response_too_large payload.
-	//   5. middleware.ToolTimeout()      — per-handler context deadline.
-	//                                      Innermost so Instrument classifies
-	//                                      timeouts as system_error.
+	// Middleware order (outermost first): Recovery → Instrument →
+	// RequireCaller → ResponseCap → ToolTimeout. RequireCaller sits
+	// inside Instrument so denials still emit a metric + audit line;
+	// ToolTimeout sits innermost so its deadline-exceeded errors flow
+	// up through Instrument as a Go error (is_error=true).
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,
+		// WithToolCapabilities advertises the "tools" capability in the
+		// initialize handshake; required because we register tools but
+		// no resources/prompts.
 		mcpsrv.WithToolCapabilities(true),
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
@@ -88,10 +76,9 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	return mcp, nil
 }
 
-// StreamableHTTPHandler wraps an MCP server in mcp-go's streamable-HTTP
-// transport, mounted at `/mcp`. Caller is expected to gate the returned
-// handler behind mcp-oauth's ValidateToken middleware — the handler itself
-// trusts whatever identity the HTTP context carries.
+// StreamableHTTPHandler mounts the streamable-HTTP transport at /mcp.
+// The handler trusts the caller identity already on the request context,
+// so it MUST be gated behind mcp-oauth's ValidateToken.
 func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
@@ -100,10 +87,9 @@ func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
 	)
 }
 
-// SSEHandler wraps an MCP server in mcp-go's SSE transport. The SSE
-// protocol requires two endpoints (`/sse` for the event stream, `/message`
-// for client→server posts); both are served by the returned handler and
-// routed internally by mcp-go based on path. Caller gates with OAuth.
+// SSEHandler mounts the SSE transport. SSE needs both /sse (event
+// stream) and /message (client→server posts) on the same handler;
+// mcp-go routes between them by path. Caller gates with OAuth.
 func SSEHandler(mcp *mcpsrv.MCPServer) http.Handler {
 	return mcpsrv.NewSSEServer(
 		mcp,

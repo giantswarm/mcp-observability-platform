@@ -36,9 +36,8 @@ func TestResponseCap_ReplacesOversizedWithStructuredError(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if !res.IsError {
-		t.Errorf("IsError = false; over-limit response should be marked as error so the LLM sees an actionable failure")
+		t.Errorf("IsError = false; over-limit response should be marked as error")
 	}
-	// Body is the structured cap payload.
 	var got responseCapError
 	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &got); err != nil {
 		t.Fatalf("unmarshal cap payload: %v", err)
@@ -47,7 +46,7 @@ func TestResponseCap_ReplacesOversizedWithStructuredError(t *testing.T) {
 		t.Errorf("cap payload = %+v", got)
 	}
 	if got.Hint == "" {
-		t.Errorf("cap payload missing hint; LLM clients rely on this to narrow the query")
+		t.Errorf("cap payload missing hint")
 	}
 }
 

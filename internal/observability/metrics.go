@@ -34,25 +34,38 @@ var registry = func() *prometheus.Registry {
 	return r
 }()
 
-// ToolCallTotal counts every MCP tool invocation by name and outcome.
-// Outcome bucketing lives in middleware.Classify.
+// ToolCallTotal counts every MCP tool invocation by name. Pair with
+// ToolCallErrorsTotal for the RED-method error rate
+// (rate(errors_total) / rate(total)).
 var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "tool_call_total",
-		Help:      "Number of MCP tool calls, labeled by tool name and outcome (ok|user_error|system_error).",
+		Help:      "Number of MCP tool calls, labeled by tool name.",
 	},
-	[]string{"tool", "outcome"},
+	[]string{"tool"},
+)
+
+// ToolCallErrorsTotal counts the subset of tool invocations that returned
+// the mcp `IsError` flag, including handlers that returned a Go error
+// (which the middleware treats as is_error=true).
+var ToolCallErrorsTotal = promauto.With(registry).NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "tool_call_errors_total",
+		Help:      "Number of MCP tool calls that returned IsError, labeled by tool name.",
+	},
+	[]string{"tool"},
 )
 
 var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "tool_call_duration_seconds",
-		Help:      "Duration of MCP tool handlers, by tool name and outcome.",
+		Help:      "Duration of MCP tool handlers, by tool name.",
 		Buckets:   prometheus.DefBuckets,
 	},
-	[]string{"tool", "outcome"},
+	[]string{"tool"},
 )
 
 // GrafanaProxyTotal counts datasource-proxy calls by downstream path so we can
