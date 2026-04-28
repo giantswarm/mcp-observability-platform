@@ -21,11 +21,10 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// fakeGrafanaServer returns an httptest.Server that satisfies the few
-// endpoints upstream's GrafanaClient pings during construction
-// (frontend settings + a minimal health). Without this the bridge
-// tests do real DNS against "http://g" and slow each test by several
-// seconds.
+// fakeGrafanaServer satisfies the few endpoints upstream's GrafanaClient
+// pings during construction (frontend settings + a minimal health). Without
+// this the registrar tests do real DNS against "http://g" and slow each
+// test by several seconds.
 func fakeGrafanaServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -42,9 +41,9 @@ func fakeGrafanaServer(t *testing.T) *httptest.Server {
 	return ts
 }
 
-// fakeGrafana implements grafana.Client by embedding the interface (so
-// any method we don't override panics) plus a stub for the one method
-// the bridge calls.
+// fakeGrafana implements grafana.Client by embedding the interface (so any
+// method we don't override panics) plus a stub for the one method the
+// registrar calls.
 type fakeGrafana struct {
 	grafana.Client // embedded — unused methods nil-panic
 	uid            string
@@ -70,10 +69,9 @@ func callerCtx(sub, email string) context.Context {
 	return authz.PromoteOAuthCaller(context.Background(), r)
 }
 
-// stubTool builds a minimal mcpgrafana.Tool whose handler records what
-// it received from the bridge: the GrafanaConfig, the datasourceUid arg
-// (if any), and the request name. Returns a CallToolResult so the bridge
-// path doesn't blow up on nil.
+// stubTool builds a minimal mcpgrafana.Tool whose handler records what the
+// registrar passed in: the GrafanaConfig, the datasourceUid arg (if any),
+// and the request name.
 func stubTool(name string, required []string, captured *capturedCall) mcpgrafana.Tool {
 	t := mcp.NewTool(name, mcp.WithDescription("stub"))
 	t.InputSchema.Properties = map[string]any{
@@ -112,14 +110,14 @@ func orgWithDatasources() authz.Organization {
 	}
 }
 
-// ---------- WithOrg ----------
+// ---------- withOrg ----------
 
 func TestWithOrg_AddsRequiredOrgArg(t *testing.T) {
 	in := mcp.NewTool("foo", mcp.WithDescription("d"))
 	in.InputSchema.Properties = map[string]any{"x": map[string]any{"type": "number"}}
 	in.InputSchema.Required = []string{"x"}
 
-	out := WithOrg(in, "")
+	out := withOrg(in, "")
 
 	if _, ok := out.InputSchema.Properties["org"].(map[string]any); !ok {
 		t.Fatal("output missing 'org' in Properties")
@@ -129,10 +127,10 @@ func TestWithOrg_AddsRequiredOrgArg(t *testing.T) {
 	}
 	// Input must not have been mutated.
 	if _, ok := in.InputSchema.Properties["org"]; ok {
-		t.Error("WithOrg mutated input.Properties")
+		t.Error("withOrg mutated input.Properties")
 	}
 	if slices.Contains(in.InputSchema.Required, "org") {
-		t.Error("WithOrg mutated input.Required")
+		t.Error("withOrg mutated input.Required")
 	}
 }
 
@@ -145,7 +143,7 @@ func TestWithOrg_PanicsOnOrgCollision(t *testing.T) {
 			t.Fatal("expected panic on org-arg collision, got none")
 		}
 	}()
-	_ = WithOrg(in, "")
+	_ = withOrg(in, "")
 }
 
 func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
@@ -156,10 +154,10 @@ func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
 	}
 	in.InputSchema.Required = []string{"datasourceUid", "y"}
 
-	out := WithOrg(in, DatasourceUIDArg)
+	out := withOrg(in, DatasourceUIDArg)
 
 	if _, has := out.InputSchema.Properties["datasourceUid"]; has {
-		t.Error("output still exposes datasourceUid in Properties; bridge fills it server-side")
+		t.Error("output still exposes datasourceUid in Properties; registrar fills it server-side")
 	}
 	if slices.Contains(out.InputSchema.Required, "datasourceUid") {
 		t.Error("output still requires datasourceUid")
@@ -172,16 +170,16 @@ func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
 	}
 	// Input must not have been mutated.
 	if _, has := in.InputSchema.Properties["org"]; has {
-		t.Error("WithOrg mutated input.Properties")
+		t.Error("withOrg mutated input.Properties")
 	}
 	if !slices.Contains(in.InputSchema.Required, "datasourceUid") {
-		t.Error("WithOrg mutated input.Required")
+		t.Error("withOrg mutated input.Required")
 	}
 }
 
-// ---------- NewBridge ----------
+// ---------- NewRegistrar ----------
 
-func TestNewBridge_Validation(t *testing.T) {
+func TestNewRegistrar_Validation(t *testing.T) {
 	az := &authztest.Fake{}
 	gc := &fakeGrafana{}
 	cases := []struct {
@@ -203,7 +201,7 @@ func TestNewBridge_Validation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := NewBridge(c.az, c.gc, c.url, c.apiKey, c.basicAuth)
+			_, err := NewRegistrar(c.az, c.gc, c.url, c.apiKey, c.basicAuth)
 			if c.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -217,13 +215,13 @@ func TestNewBridge_Validation(t *testing.T) {
 	}
 }
 
-// ---------- Wrap ----------
+// ---------- Org / wrap (org-only path) ----------
 
-func TestBridge_Wrap_MissingOrg(t *testing.T) {
+func TestRegistrar_Wrap_MissingOrg(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	br, _ := NewBridge(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil)
+	r, _ := NewRegistrar(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	res, err := h(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -237,12 +235,12 @@ func TestBridge_Wrap_MissingOrg(t *testing.T) {
 	}
 }
 
-func TestBridge_Wrap_AuthzDenied(t *testing.T) {
+func TestRegistrar_Wrap_AuthzDenied(t *testing.T) {
 	az := &authztest.Fake{Err: errors.New("not authorised")}
 	ts := fakeGrafanaServer(t)
-	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -257,12 +255,12 @@ func TestBridge_Wrap_AuthzDenied(t *testing.T) {
 	}
 }
 
-func TestBridge_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
+func TestRegistrar_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	ts := fakeGrafanaServer(t)
-	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	ctx := callerCtx("sub-123", "alice@example.com")
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"org": "acme"}}}
@@ -284,12 +282,12 @@ func TestBridge_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	}
 }
 
-func TestBridge_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
+func TestRegistrar_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	ts := fakeGrafanaServer(t)
-	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	// No caller in ctx — CallerSubject returns "".
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
@@ -305,16 +303,16 @@ func TestBridge_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	}
 }
 
-// ---------- WrapDatasource ----------
+// ---------- Datasource path ----------
 
-func TestBridge_WrapDatasource_InjectsUID(t *testing.T) {
+func TestRegistrar_Datasource_InjectsUID(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	gc := &fakeGrafana{uid: "mimir-uid-xyz"}
-	br, _ := NewBridge(az, gc, ts.URL, "tok", nil)
+	r, _ := NewRegistrar(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg,
+	h := r.wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg,
 		stubTool("query_prometheus", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up"}}}
@@ -341,15 +339,15 @@ func TestBridge_WrapDatasource_InjectsUID(t *testing.T) {
 	}
 }
 
-func TestBridge_WrapDatasource_NoMatchingDatasource(t *testing.T) {
+func TestRegistrar_Datasource_NoMatchingDatasource(t *testing.T) {
 	org := orgWithDatasources()
 	org.Datasources = []authz.Datasource{{ID: 99, Name: "tempo-only"}} // no mimir
 	az := &authztest.Fake{Org: org}
 	ts := fakeGrafanaServer(t)
-	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := r.wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -364,13 +362,13 @@ func TestBridge_WrapDatasource_NoMatchingDatasource(t *testing.T) {
 	}
 }
 
-func TestBridge_WrapDatasource_UIDLookupFails(t *testing.T) {
+func TestRegistrar_Datasource_UIDLookupFails(t *testing.T) {
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	gc := &fakeGrafana{uidErr: errors.New("grafana down")}
-	br, _ := NewBridge(az, gc, "http://g", "tok", nil)
+	r, _ := NewRegistrar(az, gc, "http://g", "tok", nil)
 
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := r.wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)

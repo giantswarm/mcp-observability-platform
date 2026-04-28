@@ -48,10 +48,10 @@ security boundaries are, and where to add a new tool.
               │ Tool handler (internal/tools/*.go)                             │
               │                                                                │
               │ Bridged tools (most of the surface):                           │
-              │   internal/tools/upstream.Bridge.Wrap{,Datasource}             │
+              │   internal/tools/upstream.Registrar.{Org,Datasource}           │
               │     1. read "org" from CallToolRequest                         │
               │     2. az.RequireOrg(ctx, org, role) → Organization            │
-              │     3. WrapDatasource: pick DS by Kind, look up its UID via    │
+              │     3. Datasource path: pick DS by Kind, look up its UID via   │
               │        grafana.LookupDatasourceUIDByID, inject datasourceUid   │
               │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
               │     5. delegate to upstream grafana/mcp-grafana handler        │
@@ -79,7 +79,7 @@ security boundaries are, and where to add a new tool.
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgRegistry` is a domain port — the K8s informer adapter sits in `cmd/orgregistry.go`. |
 | `internal/grafana/` | Slim HTTP client — Ping, VerifyServerAdmin, LookupUser, UserOrgs, LookupDatasourceUIDByID, DatasourceProxy. Bridged tools talk to upstream's `mcpgrafana.GrafanaClient` instead. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
 | `internal/tools/` | One file per tool category. Bridged: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (and bridged datasource tools in `orgs.go`). Local: `orgs.go` (list_orgs), `alerts.go`, `traces.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`. |
-| `internal/tools/upstream/` | Bridge to upstream `grafana/mcp-grafana` tool handlers. `Bridge.Wrap` covers org-only tools; `Bridge.WrapDatasource` covers tools that need a datasource UID (resolves it via `grafana.LookupDatasourceUIDByID` and injects it server-side so the LLM keeps the simple `{org, ...}` shape). `WithOrg` / `WithOrgReplacingArg` rewrite the upstream input schema accordingly. |
+| `internal/tools/upstream/` | Registers upstream `grafana/mcp-grafana` tool handlers onto our MCP server. `Registrar.Org` covers org-only tools; `Registrar.Datasource` covers tools that need a datasource UID (resolves it via `grafana.LookupDatasourceUIDByID` and injects it server-side so the LLM keeps the simple `{org, …}` shape). |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -145,21 +145,17 @@ import (
     "github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
-t := mcpgrafanatools.QuerySomething
-s.AddTool(
-    upstream.WithOrgReplacingDatasource(t.Tool),
-    br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, t),
-)
+r.Datasource(s, authz.RoleViewer, authz.DSKindMimir,
+    upstream.DatasourceUIDArg, mcpgrafanatools.QuerySomething)
 ```
 
-The bridge resolves `org → OrgID + datasource UID` server-side, so
+The registrar resolves `org → OrgID + datasource UID` server-side, so
 the LLM-visible schema is upstream's verbatim minus `datasourceUid`,
 plus our `org`. Tools whose upstream arg name isn't `datasourceUid`
-(e.g. `alerting_manage_rules` uses `datasource_uid`) use the
-`WithOrgReplacingArg` / `WrapDatasourceArg` pair.
+(e.g. `alerting_manage_rules` uses `datasource_uid`) pass that string
+explicitly as the `argName` parameter.
 
-For org-only upstream tools (no datasource), use `upstream.WithOrg` +
-`br.Wrap`.
+For org-only upstream tools (no datasource), use `r.Org(s, role, t)`.
 
 ### Path B — local handler (only when upstream has no equivalent)
 
@@ -188,8 +184,9 @@ s.AddTool(
 )
 ```
 
-For datasource-proxied tools, reuse `datasourceProxyHandler(az, gc,
-datasourceSpec{...})` instead of hand-rolling.
+For datasource-proxied local tools, see `resolveDatasource` in
+`internal/tools/datasource.go` — it bundles the org→DS-ID lookup with the
+tenant-type and role checks the local handlers all need.
 
 ### Always
 

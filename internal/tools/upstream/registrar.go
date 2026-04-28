@@ -1,8 +1,7 @@
-// Package upstream bridges this MCP's tool surface to upstream
-// grafana/mcp-grafana tool handlers. The Bridge handles the parts that
-// are local-specific (org → OrgID resolution via authz, X-Grafana-User
-// caller attribution, datasource UID injection) and delegates the
-// actual Grafana interaction to upstream's tools so we track upstream
+// Package upstream registers tool handlers from grafana/mcp-grafana onto
+// our MCP server, applying our org→OrgID authz + datasource UID
+// resolution + X-Grafana-User caller attribution before delegating. The
+// upstream library does the actual Grafana interaction so we track its
 // changes for free.
 package upstream
 
@@ -31,28 +30,28 @@ const orgArgDescription = "Organization — either the GrafanaOrganization CR na
 // uses "datasource_uid" (snake_case) — pass that string explicitly.
 const DatasourceUIDArg = "datasourceUid"
 
-// Bridge wraps upstream tool handlers with our org → OrgID authz,
-// per-request Grafana context injection, and (for datasource-scoped
-// tools) datasourceUid resolution. Construct one with NewBridge at
-// startup, then call Wrap for each upstream tool you want to register.
+// Registrar registers upstream grafana/mcp-grafana tool handlers onto an
+// MCP server, wrapping each one with our org→OrgID authz, per-request
+// Grafana context injection, and (for datasource-scoped tools)
+// datasourceUid resolution. Construct one at startup, then call Org or
+// Datasource for each upstream tool you want to register.
 //
-// Per-call lifecycle:
+// Per-call lifecycle of a wrapped handler:
 //
-//  1. Read "org" from the request, resolve via Authorizer.RequireOrg
-//     to a fully-populated authorised Organization at >= role.
-//  2. (Datasource tools, kind != "") pick the Datasource on the org by
-//     kind, look up its UID via Grafana, and inject argName=uid into
-//     the request before delegation.
-//  3. Build mcpgrafana.GrafanaConfig with our base URL + APIKey,
-//     overlay the resolved OrgID + caller-derived X-Grafana-User
-//     header (skipped when caller subject is empty), and stash it in
-//     ctx via WithGrafanaConfig.
+//  1. Read "org" from the request, resolve via Authorizer.RequireOrg to
+//     a fully-populated authorised Organization at >= role.
+//  2. (Datasource only) pick the Datasource on the org by kind, look up
+//     its UID via Grafana, and inject argName=uid into the request
+//     before delegation.
+//  3. Build mcpgrafana.GrafanaConfig with our base URL + APIKey, overlay
+//     the resolved OrgID + caller-derived X-Grafana-User header (skipped
+//     when caller subject is empty), and stash it in ctx via
+//     WithGrafanaConfig.
 //  4. Construct a fresh upstream GrafanaClient and stash it in ctx.
-//     Per-request construction is required because upstream's
-//     RoundTrippers freeze OrgID at construction time
-//     (grafana/mcp-grafana#794).
+//     Per-request construction works around upstream's RoundTrippers
+//     freezing OrgID at construction time (grafana/mcp-grafana#794).
 //  5. Invoke the upstream Tool.Handler.
-type Bridge struct {
+type Registrar struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
 	url        string
@@ -60,10 +59,10 @@ type Bridge struct {
 	basicAuth  *url.Userinfo
 }
 
-// NewBridge constructs a Bridge after validating its dependencies.
+// NewRegistrar constructs a Registrar after validating its dependencies.
 // APIKey and BasicAuth are mutually exclusive; exactly one must be set.
 // Returns an error on misconfiguration so the failure is at startup.
-func NewBridge(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) (*Bridge, error) {
+func NewRegistrar(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) (*Registrar, error) {
 	if authorizer == nil {
 		return nil, errors.New("upstream: Authorizer is required")
 	}
@@ -78,7 +77,7 @@ func NewBridge(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKe
 	if hasKey == hasBasic {
 		return nil, errors.New("upstream: exactly one of APIKey or BasicAuth must be set")
 	}
-	return &Bridge{
+	return &Registrar{
 		authorizer: authorizer,
 		grafana:    gc,
 		url:        grafanaURL,
@@ -87,15 +86,33 @@ func NewBridge(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKe
 	}, nil
 }
 
-// WithOrg returns a copy of an upstream tool definition with an "org"
+// Org registers an upstream tool that needs only org→OrgID resolution.
+// The synthetic "org" argument is prepended to the LLM-visible schema;
+// every other arg passes through unchanged.
+func (r *Registrar) Org(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
+	s.AddTool(withOrg(t.Tool, ""), r.wrap(role, "", "", t))
+}
+
+// Datasource registers an upstream tool that needs a datasource UID.
+// Replaces upstream's argName in the schema with our "org"; resolves the
+// org's datasource of kind, looks its UID up via Grafana, and injects
+// argName=<uid> server-side so the LLM never sees a datasourceUid arg.
+//
+// Pass DatasourceUIDArg ("datasourceUid") for the typical case; pass
+// "datasource_uid" (snake_case) for alerting_manage_rules.
+func (r *Registrar) Datasource(s *server.MCPServer, role authz.Role, kind authz.DatasourceKind, argName string, t mcpgrafana.Tool) {
+	s.AddTool(withOrg(t.Tool, argName), r.wrap(role, kind, argName, t))
+}
+
+// withOrg returns a copy of an upstream tool definition with an "org"
 // argument prepended (string, required). When replaceArg is non-empty,
 // that argument is removed from the LLM-visible schema (Properties +
-// Required) — used for the datasource-uid arg that the bridge fills
+// Required) — used for the datasource-uid arg the registrar fills
 // server-side.
 //
-// Properties map and Required slice are deep-copied; the input is
-// never mutated. Panics if the upstream tool already declares "org".
-func WithOrg(t mcp.Tool, replaceArg string) mcp.Tool {
+// Properties map and Required slice are deep-copied; the input is never
+// mutated. Panics if the upstream tool already declares "org".
+func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 	out := t
 	props := make(map[string]any, len(t.InputSchema.Properties)+1)
 	maps.Copy(props, t.InputSchema.Properties)
@@ -103,7 +120,7 @@ func WithOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 		delete(props, replaceArg)
 	}
 	if _, collides := props["org"]; collides {
-		panic(fmt.Sprintf("upstream: tool %q already declares an 'org' argument; bridge cannot add its own", t.Name))
+		panic(fmt.Sprintf("upstream: tool %q already declares an 'org' argument; registrar cannot add its own", t.Name))
 	}
 	props["org"] = map[string]any{
 		"type":        "string",
@@ -123,25 +140,17 @@ func WithOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 	return out
 }
 
-// Wrap returns a tool-handler that performs our authz + context setup,
-// then delegates to upstream's tool handler. role is the minimum
-// authz.Role required on the requested org.
-//
-// When kind != "", the handler also resolves the datasource of that
-// kind on the org, looks up its UID via Grafana, and injects argName=uid
-// into the request. argName is conventionally DatasourceUIDArg
-// ("datasourceUid"); pair with WithOrg(t, argName) on the schema side.
-//
-// When kind == "", argName is ignored — pure org-scoped tools that
-// don't need a datasource (dashboards, list_datasources, etc.). Pair
-// with WithOrg(t, "") on the schema side.
-func (b *Bridge) Wrap(role authz.Role, kind authz.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
+// wrap builds the tool-handler that performs authz + context setup, then
+// delegates to upstream's tool handler. kind == "" skips the datasource
+// resolution branch; kind != "" requires argName to be the schema arg
+// the upstream handler reads the UID from.
+func (r *Registrar) wrap(role authz.Role, kind authz.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		orgRef, err := req.RequireString("org")
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("missing arg", err), nil
 		}
-		org, err := b.authorizer.RequireOrg(ctx, orgRef, role)
+		org, err := r.authorizer.RequireOrg(ctx, orgRef, role)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("authz", err), nil
 		}
@@ -153,25 +162,25 @@ func (b *Bridge) Wrap(role authz.Role, kind authz.DatasourceKind, argName string
 			// Round-trip ID→UID via Grafana — upstream tools take the
 			// UID, our CR carries the ID. See docs/roadmap.md
 			// (uid-publish) for the path to dropping this lookup.
-			uid, err := b.grafana.LookupDatasourceUIDByID(ctx, grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}, ds.ID)
+			uid, err := r.grafana.LookupDatasourceUIDByID(ctx, grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}, ds.ID)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("datasource lookup", err), nil
 			}
 			injectArg(&req, argName, uid)
 		}
-		return upstream.Handler(b.attachGrafana(ctx, org.OrgID), req)
+		return upstream.Handler(r.attachGrafana(ctx, org.OrgID), req)
 	}
 }
 
 // attachGrafana stashes our GrafanaConfig and a fresh upstream
 // GrafanaClient on ctx for upstream's handler to pick up. Per-request
-// construction works around upstream's OrgID-frozen RoundTripper
+// client construction works around upstream's OrgID-frozen RoundTripper
 // (grafana/mcp-grafana#794).
-func (b *Bridge) attachGrafana(ctx context.Context, orgID int64) context.Context {
+func (r *Registrar) attachGrafana(ctx context.Context, orgID int64) context.Context {
 	cfg := mcpgrafana.GrafanaConfig{
-		URL:       b.url,
-		APIKey:    b.apiKey,
-		BasicAuth: b.basicAuth,
+		URL:       r.url,
+		APIKey:    r.apiKey,
+		BasicAuth: r.basicAuth,
 		OrgID:     orgID,
 	}
 	if subj := authz.CallerSubject(ctx); subj != "" {
@@ -182,7 +191,7 @@ func (b *Bridge) attachGrafana(ctx context.Context, orgID int64) context.Context
 		}
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, b.url, b.apiKey, b.basicAuth))
+	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, r.url, r.apiKey, r.basicAuth))
 	return ctx
 }
 

@@ -15,9 +15,9 @@ import (
 )
 
 // registerLogTools wires the upstream Loki tools onto our MCP server.
-// All gate on RoleViewer; the bridge handles org→OrgID resolution,
+// All gate on RoleViewer; the registrar handles org→OrgID resolution,
 // datasource UID injection, and X-Grafana-User caller attribution.
-func registerLogTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
+func registerLogTools(s *mcpsrv.MCPServer, r *upstream.Registrar) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.QueryLokiLogs,
 		mcpgrafanatools.QueryLokiStats,
@@ -25,9 +25,6 @@ func registerLogTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.ListLokiLabelNames,
 		mcpgrafanatools.ListLokiLabelValues,
 	} {
-		s.AddTool(
-			upstream.WithOrg(t.Tool, upstream.DatasourceUIDArg),
-			br.Wrap(authz.RoleViewer, authz.DSKindLoki, upstream.DatasourceUIDArg, t),
-		)
+		r.Datasource(s, authz.RoleViewer, authz.DSKindLoki, upstream.DatasourceUIDArg, t)
 	}
 }

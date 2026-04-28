@@ -1,13 +1,13 @@
 // Package grafana is a thin HTTP client for the Grafana API used by
 // this MCP. The interface is deliberately minimal — most tools are
 // bridged to upstream grafana/mcp-grafana, which builds its own HTTP
-// client per call. This package covers what the bridge can't:
+// client per call. This package covers what the registrar can't:
 //
 //   - Authz lookups (LookupUser, UserOrgs)
-//   - Bridge ID→UID resolution (LookupDatasourceUIDByID)
+//   - Registrar ID→UID resolution (LookupDatasourceUIDByID)
 //   - Health-probe Ping + startup VerifyServerAdmin
 //   - DatasourceProxy for the surviving local tools (Tempo,
-//     Alertmanager v2, triage)
+//     Alertmanager v2)
 //
 // It assumes the caller provides a Grafana server-admin service-account
 // token (an SA granted the "Grafana Admin" server role), so that

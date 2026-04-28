@@ -16,15 +16,14 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
 
-// buildMux returns the single HTTP handler that serves everything: OAuth
-// flow + discovery routes, the MCP transport (`/mcp` or `/sse`),
-// /metrics, and /healthz + /readyz. Wrapped in otelhttp so inbound W3C
-// traceparents become server spans.
+// buildMux returns the single HTTP handler that serves OAuth flow +
+// discovery, the MCP transport (`/mcp` or `/sse`), /metrics, and
+// /healthz + /readyz. Wrapped in otelhttp so inbound W3C traceparents
+// become server spans.
 //
-// One mux instead of two-server-per-concern: at this scale the
-// "operational port separate from app port" split was overhead, not
-// safety. Kubernetes probes + Prometheus scraping work fine on the same
-// listener as the MCP traffic.
+// Single mux: ops endpoints (/metrics, /healthz, /readyz) and app
+// traffic share lifecycle and TLS config; the cluster network policy is
+// the trust boundary for the unauthenticated ops paths.
 func buildMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handler, dexIssuerURL string, gf grafana.Client, listOrgs func(context.Context) (int, error), cacheAlive *atomic.Bool) http.Handler {
 	mux := http.NewServeMux()
 

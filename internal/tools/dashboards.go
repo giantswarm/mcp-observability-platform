@@ -19,10 +19,10 @@ import (
 )
 
 // registerDashboardTools wires the upstream dashboard + navigation tools
-// onto our MCP server. All gate on RoleViewer; the bridge handles
+// onto our MCP server. All gate on RoleViewer; the registrar handles
 // org→OrgID resolution and X-Grafana-User caller attribution before
 // delegating.
-func registerDashboardTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
+func registerDashboardTools(s *mcpsrv.MCPServer, r *upstream.Registrar) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.SearchDashboards,
 		mcpgrafanatools.SearchFolders,
@@ -32,6 +32,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.GetDashboardProperty,
 		mcpgrafanatools.GenerateDeeplink,
 	} {
-		s.AddTool(upstream.WithOrg(t.Tool, ""), br.Wrap(authz.RoleViewer, "", "", t))
+		r.Org(s, authz.RoleViewer, t)
 	}
 }

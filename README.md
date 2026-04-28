@@ -32,11 +32,10 @@ are intentionally out of scope for this MCP.
 
 Most tool handlers are bridged to upstream
 [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
-synthetic `org` argument and the bridge resolves it to the org's
+synthetic `org` argument and the registrar resolves it to the org's
 OrgID + datasource UID before delegating. Categories without a usable
-upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`, triage
-co-pilots) stay local. See `internal/tools/doc.go` for the per-category
-rationale.
+upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`) stay
+local. See `internal/tools/doc.go` for the per-category rationale.
 
 **Orgs & datasources**
 
@@ -94,17 +93,6 @@ rationale.
 | -------------- | ---------------------------------------------------------- |
 | `list_alerts`  | `api/v2/alerts` — paged, severity-sorted                   |
 | `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
-
-**Triage co-pilots**
-
-Composite tools that synthesise common SRE-triage queries from a few inputs.
-Names mirror grafana/mcp-grafana's Sift surface where an upstream equivalent
-exists; OSS-only — no Grafana Cloud Sift backend required.
-
-| Tool                       | Composes                                                                         |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `find_error_pattern_logs`  | service-label probe → `loki/api/v1/index/stats` size guard → `query_range` with error-keyword regex |
-| `find_slow_requests`       | TraceQL builder (`resource.service.name` + `duration > min` + optional `status=error`) → Tempo `api/search` |
 
 ### Resources and prompts — deliberately not implemented
 

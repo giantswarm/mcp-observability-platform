@@ -42,12 +42,12 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 //   - list_orgs (Giant-Swarm-specific GrafanaOrganization CR access)
 //   - Alertmanager v2 alerts (upstream covers OnCall, not Alertmanager)
 //   - Tempo (upstream has no Tempo surface)
-func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, br *upstream.Bridge) {
-	registerOrgTools(s, az, br)
-	registerDashboardTools(s, br)
-	registerMetricsTools(s, br)
-	registerLogTools(s, br)
-	registerAlertingTools(s, br)
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, r *upstream.Registrar) {
+	registerOrgTools(s, az, r)
+	registerDashboardTools(s, r)
+	registerMetricsTools(s, r)
+	registerLogTools(s, r)
+	registerAlertingTools(s, r)
 	registerTraceTools(s, az, gc)
 	registerAlertTools(s, az, gc)
 }

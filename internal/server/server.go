@@ -20,10 +20,11 @@ type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	// Bridge delegates org-only tools to upstream grafana/mcp-grafana
-	// handlers. Required.
-	Bridge  *upstream.Bridge
-	Version string
+	// Registrar wires every upstream-delegated tool (both org-only and
+	// datasource-scoped) onto the MCP server with our authz +
+	// X-Grafana-User attribution applied. Required.
+	Registrar *upstream.Registrar
+	Version   string
 	// ToolTimeout is the per-tool-handler context deadline. 0 disables
 	// per-handler timeouts (ctx passes through unchanged).
 	ToolTimeout time.Duration
@@ -46,8 +47,8 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Grafana == nil {
 		return nil, errors.New("server: Grafana is required")
 	}
-	if cfg.Bridge == nil {
-		return nil, errors.New("server: Bridge is required")
+	if cfg.Registrar == nil {
+		return nil, errors.New("server: Registrar is required")
 	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
@@ -71,7 +72,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
-	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.Bridge)
+	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.Registrar)
 
 	return mcp, nil
 }

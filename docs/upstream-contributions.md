@@ -64,7 +64,6 @@ The proposal: four read-only tools wrapping Tempo's existing HTTP API:
 Shared patterns worth upstreaming to the sibling MCP:
 
 - Response-size cap helper + structured `response_too_large` payload.
-- `datasourceProxyHandler` + `datasourceSpec` dispatch-table pattern.
 - `paginateStrings` (and `Paginated[T]`).
 - Typed `Role` enum with `MarshalJSON`.
 - Controller-runtime-informer-backed authz resolver.

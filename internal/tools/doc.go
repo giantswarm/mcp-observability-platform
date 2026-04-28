@@ -11,11 +11,10 @@
 //	alerts.go      — local: Alertmanager v2 alerts (no upstream equivalent)
 //	traces.go      — local: query_traces + Tempo tag discovery (upstream has no Tempo surface)
 //
-// Bridging happens through internal/tools/upstream: WithOrg /
-// WithOrgReplacingArg on the schema side, Bridge.Wrap /
-// Bridge.WrapDatasource on the handler side. The bridge resolves
-// "org" → OrgID + datasource UID server-side so the LLM never sees a
-// datasourceUid argument.
+// Bridged tools are wired through internal/tools/upstream.Registrar.
+// Registrar.Org covers org-only tools; Registrar.Datasource covers tools
+// that need a datasource UID — it resolves "org" → OrgID + datasource
+// UID server-side so the LLM never sees a datasourceUid argument.
 //
 // Shared helpers (datasource.go, pagination.go) carry the bits the
 // remaining local handlers depend on. tools.go holds RegisterAll and

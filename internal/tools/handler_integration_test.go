@@ -62,12 +62,12 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			{ID: 13, Name: "alertmanager-acme"},
 		},
 	}}
-	br, err := upstream.NewBridge(az, gf, ts.URL, "test-token", nil)
+	r, err := upstream.NewRegistrar(az, gf, ts.URL, "test-token", nil)
 	if err != nil {
-		t.Fatalf("upstream.NewBridge: %v", err)
+		t.Fatalf("upstream.NewRegistrar: %v", err)
 	}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	RegisterAll(s, az, gf, br)
+	RegisterAll(s, az, gf, r)
 	return s
 }
 

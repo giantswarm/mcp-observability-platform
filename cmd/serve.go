@@ -129,16 +129,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 		}()
 	}
 
-	bridge, err := newUpstreamBridge(authorizer, grafanaClient, cfg)
+	registrar, err := newUpstreamRegistrar(authorizer, grafanaClient, cfg)
 	if err != nil {
-		return fmt.Errorf("upstream bridge: %w", err)
+		return fmt.Errorf("upstream registrar: %w", err)
 	}
 
 	mcp, err := server.New(server.Config{
 		Logger:           logger,
 		Authorizer:       authorizer,
 		Grafana:          grafanaClient,
-		Bridge:           bridge,
+		Registrar:        registrar,
 		Version:          version,
 		ToolTimeout:      cfg.ToolTimeout,
 		MaxResponseBytes: cfg.MaxResponseBytes,
@@ -197,11 +197,12 @@ func guardStdioInCluster(transport string) error {
 	return fmt.Errorf("MCP_TRANSPORT=stdio refused inside Kubernetes (stdio bypasses OAuth); use streamable-http or set MCP_ALLOW_STDIO_IN_CLUSTER=true to override")
 }
 
-// newUpstreamBridge constructs the upstream-mcp-grafana bridge from
-// runtime config. APIKey vs BasicAuth are mutually exclusive at config-
-// load time (see cmd/config.go) so exactly one of the two will be set;
-// upstream.NewBridge enforces the same invariant in code.
-func newUpstreamBridge(az authz.Authorizer, gc grafana.Client, cfg *config) (*upstream.Bridge, error) {
+// newUpstreamRegistrar constructs the registrar that wires upstream
+// grafana/mcp-grafana tools onto our MCP server. APIKey vs BasicAuth are
+// mutually exclusive at config-load time (see cmd/config.go) so exactly
+// one of the two will be set; upstream.NewRegistrar enforces the same
+// invariant in code.
+func newUpstreamRegistrar(az authz.Authorizer, gc grafana.Client, cfg *config) (*upstream.Registrar, error) {
 	var basicAuth *url.Userinfo
 	if cfg.GrafanaBasicAuth != "" {
 		user, pass, ok := strings.Cut(cfg.GrafanaBasicAuth, ":")
@@ -212,12 +213,12 @@ func newUpstreamBridge(az authz.Authorizer, gc grafana.Client, cfg *config) (*up
 	}
 	apiKey := cfg.GrafanaSAToken
 	if basicAuth != nil {
-		// NewBridge requires exactly one of APIKey / BasicAuth, so when
-		// BasicAuth is set blank the token here. Same invariant the
+		// NewRegistrar requires exactly one of APIKey / BasicAuth, so
+		// when BasicAuth is set blank the token here. Same invariant the
 		// loader enforces, expressed at construction.
 		apiKey = ""
 	}
-	return upstream.NewBridge(az, gc, cfg.GrafanaURL, apiKey, basicAuth)
+	return upstream.NewRegistrar(az, gc, cfg.GrafanaURL, apiKey, basicAuth)
 }
 
 // newLogger builds the root slog logger. format is "json" or "text"; debug

@@ -120,8 +120,8 @@ Once #794 lands upstream and exposes the per-request context override,
 prototype replacing our local `internal/grafana/client.go` and the
 duplicated tool registrations (`search_dashboards`, `query_prometheus*`,
 `query_loki*`, etc.) with imports. The local code base shrinks to the
-GS-specific layer: authz, audit, multi-tenant org awareness, OSS triage
-co-pilots, middleware composition.
+GS-specific layer: authz, audit, multi-tenant org awareness, middleware
+composition.
 
 Blockers before this is worth doing:
 

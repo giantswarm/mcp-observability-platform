@@ -20,7 +20,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bridge) {
+func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, r *upstream.Registrar) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
 			ReadOnlyAnnotation(),
@@ -78,6 +78,6 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bri
 		mcpgrafanatools.ListDatasources,
 		mcpgrafanatools.GetDatasource,
 	} {
-		s.AddTool(upstream.WithOrg(t.Tool, ""), br.Wrap(authz.RoleViewer, "", "", t))
+		r.Org(s, authz.RoleViewer, t)
 	}
 }

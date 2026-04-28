@@ -14,10 +14,10 @@ import (
 )
 
 // registerMetricsTools wires the upstream Mimir/Prometheus tools onto
-// our MCP server. All gate on RoleViewer; the bridge handles
+// our MCP server. All gate on RoleViewer; the registrar handles
 // org→OrgID + Mimir-datasource-UID resolution and X-Grafana-User
 // caller attribution.
-func registerMetricsTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
+func registerMetricsTools(s *mcpsrv.MCPServer, r *upstream.Registrar) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.QueryPrometheus,
 		mcpgrafanatools.QueryPrometheusHistogram,
@@ -26,9 +26,6 @@ func registerMetricsTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.ListPrometheusLabelValues,
 		mcpgrafanatools.ListPrometheusMetricMetadata,
 	} {
-		s.AddTool(
-			upstream.WithOrg(t.Tool, upstream.DatasourceUIDArg),
-			br.Wrap(authz.RoleViewer, authz.DSKindMimir, upstream.DatasourceUIDArg, t),
-		)
+		r.Datasource(s, authz.RoleViewer, authz.DSKindMimir, upstream.DatasourceUIDArg, t)
 	}
 }

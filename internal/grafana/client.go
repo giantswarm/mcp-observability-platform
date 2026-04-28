@@ -56,9 +56,9 @@ type User struct {
 
 // Client is the consumer-facing port onto Grafana. The implementation
 // is small by design: bridged tools talk to upstream's GrafanaClient
-// (built per-call by the bridge); local handlers use DatasourceProxy
-// for Tempo / Alertmanager / triage; authz uses LookupUser + UserOrgs;
-// the bridge uses LookupDatasourceUIDByID. Anything else lives upstream.
+// (built per-call by the registrar); local handlers use DatasourceProxy
+// for Tempo / Alertmanager v2; authz uses LookupUser + UserOrgs; the
+// registrar uses LookupDatasourceUIDByID. Anything else lives upstream.
 type Client interface {
 	Ping(ctx context.Context) error
 	VerifyServerAdmin(ctx context.Context) error

@@ -13,13 +13,9 @@ import (
 )
 
 // registerAlertingTools wires the upstream alert-rule reader. The
-// bridge injects "datasource_uid" (snake_case, upstream's choice) with
-// the org's Mimir UID before calling upstream.
-func registerAlertingTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
-	t := mcpgrafanatools.ManageRulesRead
-	const argName = "datasource_uid" // alerting_manage_rules uses snake_case (vs the typical "datasourceUid")
-	s.AddTool(
-		upstream.WithOrg(t.Tool, argName),
-		br.Wrap(authz.RoleViewer, authz.DSKindMimir, argName, t),
-	)
+// registrar injects "datasource_uid" (snake_case, upstream's choice)
+// with the org's Mimir UID before calling upstream.
+func registerAlertingTools(s *mcpsrv.MCPServer, r *upstream.Registrar) {
+	// alerting_manage_rules uses snake_case (vs the typical "datasourceUid").
+	r.Datasource(s, authz.RoleViewer, authz.DSKindMimir, "datasource_uid", mcpgrafanatools.ManageRulesRead)
 }

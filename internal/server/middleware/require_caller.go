@@ -9,10 +9,12 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-// RequireCaller fails tool calls that arrive without an authenticated caller
-// in context. Per-org/role checks stay in handlers (they need the org arg
-// from tool params); this middleware closes the "no caller at all" hole so
-// a future tool added without explicit authz code is still gated.
+// RequireCaller fails tool calls that arrive without an authenticated
+// caller in context. It is a guard, not an authentication step — actual
+// auth happens in mcp-oauth's ValidateToken at the HTTP layer; this
+// middleware asserts the result reached us so a future tool added
+// without explicit authz code is still gated. Per-org/role checks stay
+// in handlers (they need the org arg from tool params).
 //
 // Wired between Instrument and ResponseCap so denials still emit a span
 // and a tool_call audit line. Returning an error result (not a Go error)
