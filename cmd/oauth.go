@@ -11,11 +11,10 @@ import (
 	"github.com/giantswarm/mcp-oauth/providers/dex"
 )
 
-// buildOAuthHandler wires the dex provider, the storage backend (selected
-// by STORAGE_BACKEND, default "memory"), the mcp-oauth server (configured
-// from OAUTH_*), and optional encryption-at-rest. Every env-var read here
-// is delegated to upstream oauthconfig — see its package doc for the full
-// variable list and the *_FILE secret-mount convention.
+// buildOAuthHandler wires the dex provider, the storage backend, the
+// mcp-oauth server, and optional encryption-at-rest. Every env-var read
+// is delegated to upstream oauthconfig (OAUTH_* prefix) — see its package
+// doc for the full variable list and the *_FILE secret-mount convention.
 func buildOAuthHandler(_ context.Context, logger *slog.Logger) (*oauth.Handler, func() error, error) {
 	provider, err := oauthconfig.DexFromEnv()
 	if err != nil {
@@ -42,17 +41,14 @@ func buildOAuthHandler(_ context.Context, logger *slog.Logger) (*oauth.Handler, 
 		_ = storeClose()
 		return nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
-	// oauthconfig only splits OAUTH_TRUSTED_AUDIENCES; charset/length validated here.
+	// oauthconfig.FromEnv only splits OAUTH_TRUSTED_AUDIENCES; the upstream
+	// server filters invalid entries with a warning, but a typo in a
+	// production deployment should be a startup error rather than silent
+	// SSO breakage. Hard-fail here.
 	if err := dex.ValidateAudiences(srvCfg.TrustedAudiences); err != nil {
 		_ = storeClose()
 		return nil, nil, fmt.Errorf("OAUTH_TRUSTED_AUDIENCES: %w", err)
 	}
-	// Required by MCP CLI clients (Claude Code, mcp-inspector) that register
-	// a loopback redirect URI per RFC 8252.
-	srvCfg.AllowLocalhostRedirectURIs = true
-	// Custom redirect schemes (e.g. cursor://, vscode://) for public client
-	// registration; mcp-oauth validates per RFC 3986.
-	srvCfg.TrustedPublicRegistrationSchemes = splitAndTrimCSV(os.Getenv("OAUTH_TRUSTED_REDIRECT_SCHEMES"))
 
 	if srvCfg.AllowInsecureHTTP {
 		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
