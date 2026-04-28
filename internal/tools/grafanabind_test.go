@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -387,7 +388,9 @@ func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
 
 func TestInjectArg_NilArguments(t *testing.T) {
 	req := &mcp.CallToolRequest{}
-	injectArg(req, "k", "v")
+	if err := injectArg(req, "k", "v"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	got, ok := req.Params.Arguments.(map[string]any)
 	if !ok || got["k"] != "v" {
 		t.Fatalf("Arguments = %#v, want map[k:v]", req.Params.Arguments)
@@ -397,7 +400,9 @@ func TestInjectArg_NilArguments(t *testing.T) {
 func TestInjectArg_PreservesOriginalMap(t *testing.T) {
 	original := map[string]any{"a": 1}
 	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: original}}
-	injectArg(req, "k", "v")
+	if err := injectArg(req, "k", "v"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Caller's map MUST NOT be mutated — the request shape is shared with
 	// the caller through Params.Arguments-by-reference.
@@ -407,5 +412,19 @@ func TestInjectArg_PreservesOriginalMap(t *testing.T) {
 	got := req.Params.Arguments.(map[string]any)
 	if got["a"] != 1 || got["k"] != "v" {
 		t.Errorf("Arguments = %#v, want a=1 + k=v", got)
+	}
+}
+
+func TestInjectArg_RejectsMalformedRawMessage(t *testing.T) {
+	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: json.RawMessage("not-json")}}
+	if err := injectArg(req, "k", "v"); err == nil {
+		t.Fatal("expected error decoding malformed json.RawMessage, got nil")
+	}
+}
+
+func TestInjectArg_RejectsUnknownShape(t *testing.T) {
+	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: 42}}
+	if err := injectArg(req, "k", "v"); err == nil {
+		t.Fatal("expected error on unknown Arguments type, got nil")
 	}
 }

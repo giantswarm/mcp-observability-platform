@@ -5,7 +5,7 @@
 // grafanabind.go) and those handled locally:
 //
 //	dashboards.go  — delegated: dashboards, search, navigation
-//	metrics.go     — delegated: Mimir Prometheus tools (query, label/metric/value lists, histogram)
+//	metrics.go     — delegated: Mimir Prometheus tools (query, label/metric/value lists, metadata, histogram)
 //	logs.go        — delegated: Loki tools (query, label names/values, stats, patterns)
 //	alerting.go    — delegated: alerting_manage_rules (read meta-tool over alert rules)
 //	orgs.go        — list_orgs (local) + delegated list/get_datasource
@@ -19,5 +19,5 @@
 //
 // Shared helpers (datasource.go, pagination.go) carry the bits the
 // remaining local handlers depend on. tools.go holds RegisterAll, the
-// shared orgArg() helper, and the per-category constant tokens.
+// shared orgArg() helper, and cross-category constant tokens.
 package tools

@@ -15,10 +15,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-// registerDashboardTools wires the upstream dashboard + navigation tools
-// onto our MCP server. All gate on RoleViewer; the binder handles
-// org→OrgID resolution and X-Grafana-User caller attribution before
-// delegating.
 func registerDashboardTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.SearchDashboards,

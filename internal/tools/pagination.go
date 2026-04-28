@@ -57,7 +57,6 @@ func paginateStrings(values []string, prefix string, page, pageSize int) paginat
 	}
 }
 
-// clampInt clamps n into [lo, hi]. Used for pagination sizes.
 func clampInt(n, lo, hi int) int {
 	if n < lo {
 		return lo
