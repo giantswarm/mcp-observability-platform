@@ -167,7 +167,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 
 	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
-	obsMux := buildObsMux(os.Getenv(envOAuthDexIssuerURL), grafanaClient, orgLister, cacheAlive)
+	obsMux := buildObsMux(orgLister, cacheAlive)
 
 	startOrgCacheReporter(shutdownCtx, orgLister)
 

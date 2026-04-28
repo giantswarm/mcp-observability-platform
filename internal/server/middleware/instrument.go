@@ -15,17 +15,10 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-// Instrument is the composite observability middleware: one OTEL span,
-// one metric pair, and one structured slog "tool_call" record per
-// invocation. Classify(res, err) is computed once and fanned out so the
-// span status, metric label, and log outcome stay in lockstep.
-//
-// logger is the app's slog.Logger (or nil to disable the structured
-// log line while keeping span + metric). The "tool_call" msg makes the
-// line trivially filterable in any log pipeline. With OTEL tracing
-// wired up, the span carries the same caller / outcome / duration
-// attributes — the slog line is the fallback for setups without OTLP.
-//
+// Instrument emits an OTEL span, the tool_call counter (+ errors
+// counter on failure), a duration observation, and a slog audit record
+// per call. is_error follows mcp `IsError`, with a Go-error return
+// treated as is_error=true. nil logger disables only the audit line.
 // The handler error is propagated unchanged.
 func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
@@ -43,27 +36,25 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 
 			res, err := next(ctx, req)
 
-			outcome := Classify(res, err)
+			isErr := err != nil || (res != nil && res.IsError)
 			duration := time.Since(start)
 
-			// Span: record outcome on every call; mark Error only on
-			// system_error — user_error is expected behaviour, same
-			// convention as HTTP servers not marking 4xx spans Error.
+			// Span status mirrors HTTP-server convention: Error only on
+			// Go-error returns; IsError results stay Unset (4xx-equivalent).
 			span.SetAttributes(
-				attribute.String("tool.outcome", outcome),
+				attribute.Bool("tool.is_error", isErr),
 				attribute.Int64("tool.duration_ms", duration.Milliseconds()),
 			)
-			if outcome == OutcomeSystemError {
+			if err != nil {
 				span.SetStatus(codes.Error, "tool returned error")
 			}
 
-			// Metrics: counter + latency histogram, labelled by tool + outcome.
-			observability.ToolCallTotal.WithLabelValues(name, outcome).Inc()
-			observability.ToolCallDuration.WithLabelValues(name, outcome).Observe(duration.Seconds())
+			observability.ToolCallTotal.WithLabelValues(name).Inc()
+			if isErr {
+				observability.ToolCallErrorsTotal.WithLabelValues(name).Inc()
+			}
+			observability.ToolCallDuration.WithLabelValues(name).Observe(duration.Seconds())
 
-			// Structured log line for setups without OTLP traces. With
-			// a gateway + traces in place this is redundant — leave
-			// logger=nil to disable.
 			if logger != nil {
 				traceID, spanID := traceIDs(ctx)
 				logger.LogAttrs(ctx, slog.LevelInfo, "tool_call",
@@ -72,7 +63,7 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
 					slog.String("tool", name),
 					slog.Any("args", req.GetArguments()),
-					slog.String("outcome", outcome),
+					slog.Bool("is_error", isErr),
 					slog.Int64("duration_ms", duration.Milliseconds()),
 					slog.String("error", auditErrorMessage(err, res)),
 					slog.String("trace_id", traceID),
@@ -85,9 +76,8 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 	}
 }
 
-// auditErrorMessage picks the most useful string to record as the audit
-// error field: the handler error first (system_error), otherwise the text
-// of an IsError result (user_error). Empty when the call succeeded.
+// auditErrorMessage prefers the Go error, falls back to the IsError
+// result's text, empty on success.
 func auditErrorMessage(err error, res *mcp.CallToolResult) string {
 	if err != nil {
 		return err.Error()
@@ -103,9 +93,8 @@ func auditErrorMessage(err error, res *mcp.CallToolResult) string {
 	return "tool returned isError with no text content"
 }
 
-// traceIDs returns the trace + span IDs from any active span on ctx,
-// or empty strings when no span is set. Stable schema: every audit
-// record carries both fields.
+// traceIDs returns empty strings when no span is on ctx, so every
+// audit record carries both fields with a stable schema.
 func traceIDs(ctx context.Context) (string, string) {
 	sc := trace.SpanContextFromContext(ctx)
 	if !sc.IsValid() {

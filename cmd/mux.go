@@ -11,9 +11,9 @@ import (
 	oauth "github.com/giantswarm/mcp-oauth"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
@@ -52,10 +52,10 @@ func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Ha
 	)
 }
 
-func buildObsMux(dexIssuerURL string, gf grafana.Client, lister authz.OrgLister, cacheAlive *atomic.Bool) http.Handler {
+func buildObsMux(lister authz.OrgLister, cacheAlive *atomic.Bool) http.Handler {
 	mux := http.NewServeMux()
-	health := setupHealth(dexIssuerURL, gf, lister, cacheAlive)
-	health.Mount(mux)
+	mux.Handle("/healthz", healthz.CheckHandler{Checker: healthz.Ping})
+	mux.Handle("/readyz", healthz.CheckHandler{Checker: readyzChecker(lister, cacheAlive)})
 	mux.Handle("/metrics", observability.MetricsHandler())
 	return mux
 }

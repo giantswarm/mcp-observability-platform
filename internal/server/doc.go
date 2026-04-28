@@ -1,6 +1,6 @@
-// Package server wires the MCP protocol layer: it registers tools and
-// resource templates against a mark3labs/mcp-go server. Transport wrapping
-// (streamable-HTTP, SSE, stdio) is the caller's concern — this package
-// returns the core *mcpsrv.MCPServer plus convenience handlers for the
-// HTTP transports.
+// Package server constructs the MCP server (tools-only surface),
+// composes the tool-handler middleware stack, and provides
+// streamable-HTTP / SSE transport wrappers and readiness probes.
+// Stdio is the caller's concern — drive it via mcpsrv.ServeStdio
+// directly.
 package server

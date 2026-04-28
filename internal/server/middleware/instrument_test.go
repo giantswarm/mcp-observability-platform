@@ -16,10 +16,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-// stubRequest builds a CallToolRequest with the given tool name and args.
-// Mirrors how mcp-go populates Params at dispatch time; without this the
-// middleware reads an empty tool name and the test isn't verifying the
-// real path.
+// stubRequest mirrors how mcp-go populates Params at dispatch — the
+// middleware would read an empty tool name otherwise.
 func stubRequest(name string, args map[string]any) mcp.CallToolRequest {
 	var req mcp.CallToolRequest
 	req.Params.Name = name
@@ -36,8 +34,6 @@ func decodeAuditLine(t *testing.T, buf *bytes.Buffer) map[string]any {
 	return rec
 }
 
-// applyHandler runs Instrument around a fake handler. Returns the decoded
-// audit line emitted by the composite middleware.
 func applyHandler(t *testing.T, h server.ToolHandlerFunc, name string, args map[string]any) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
@@ -47,7 +43,7 @@ func applyHandler(t *testing.T, h server.ToolHandlerFunc, name string, args map[
 	return decodeAuditLine(t, &buf)
 }
 
-func TestInstrument_SuccessRecordsOK(t *testing.T) {
+func TestInstrument_SuccessRecordsNoError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
@@ -59,8 +55,8 @@ func TestInstrument_SuccessRecordsOK(t *testing.T) {
 	if rec["tool"] != "list_orgs" {
 		t.Errorf("tool = %v, want list_orgs (reads req.Params.Name)", rec["tool"])
 	}
-	if rec["outcome"] != OutcomeOK {
-		t.Errorf("outcome = %v, want %s", rec["outcome"], OutcomeOK)
+	if rec["is_error"] != false {
+		t.Errorf("is_error = %v, want false on success", rec["is_error"])
 	}
 	if rec["error"] != "" {
 		t.Errorf("error = %v, want empty on success", rec["error"])
@@ -71,22 +67,22 @@ func TestInstrument_SuccessRecordsOK(t *testing.T) {
 	}
 }
 
-func TestInstrument_HandlerErrorRecordsSystemError(t *testing.T) {
+func TestInstrument_HandlerErrorRecordsIsError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return nil, errors.New("downstream 502")
 		},
 		"query_metrics", nil)
 
-	if rec["outcome"] != OutcomeSystemError {
-		t.Errorf("outcome = %v, want %s (Go error → system)", rec["outcome"], OutcomeSystemError)
+	if rec["is_error"] != true {
+		t.Errorf("is_error = %v, want true (Go error)", rec["is_error"])
 	}
 	if rec["error"] != "downstream 502" {
 		t.Errorf("error = %v, want 'downstream 502'", rec["error"])
 	}
 }
 
-func TestInstrument_IsErrorResultRecordsUserError(t *testing.T) {
+func TestInstrument_IsErrorResultRecordsIsError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
@@ -96,8 +92,8 @@ func TestInstrument_IsErrorResultRecordsUserError(t *testing.T) {
 		},
 		"list_datasources", nil)
 
-	if rec["outcome"] != OutcomeUserError {
-		t.Errorf("outcome = %v, want %s (IsError → user)", rec["outcome"], OutcomeUserError)
+	if rec["is_error"] != true {
+		t.Errorf("is_error = %v, want true (IsError result)", rec["is_error"])
 	}
 	if rec["error"] != "missing required argument 'org'" {
 		t.Errorf("error = %v, want the IsError text", rec["error"])
@@ -116,8 +112,6 @@ func TestInstrument_IsErrorWithNoContentRecordsPlaceholder(t *testing.T) {
 }
 
 func TestInstrument_NilLoggerIsPassthrough(t *testing.T) {
-	// Instrument(nil) disables audit emission while keeping span +
-	// metric side-effects. The handler must still run and not panic.
 	called := false
 	h := Instrument(nil)(func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		called = true
@@ -131,12 +125,7 @@ func TestInstrument_NilLoggerIsPassthrough(t *testing.T) {
 	}
 }
 
-// TestInstrument_SpanCarriesOutcomeAndStatus installs a recording
-// TracerProvider and asserts the span side-effects: attribute
-// "tool.outcome" is set on every call, but span status is Error only for
-// system_error. User errors are expected behaviour — same convention as
-// HTTP servers not marking 4xx Error.
-func TestInstrument_SpanCarriesOutcomeAndStatus(t *testing.T) {
+func TestInstrument_SpanCarriesIsErrorAndStatus(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
 	original := otel.GetTracerProvider()
@@ -146,29 +135,29 @@ func TestInstrument_SpanCarriesOutcomeAndStatus(t *testing.T) {
 	cases := []struct {
 		name       string
 		handler    server.ToolHandlerFunc
-		wantOutc   string
+		wantIsErr  bool
 		wantStatus codes.Code
 	}{
 		{
 			name:       "ok",
 			handler:    func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, nil },
-			wantOutc:   OutcomeOK,
+			wantIsErr:  false,
 			wantStatus: codes.Unset,
 		},
 		{
-			name: "user_error",
+			name: "is_error_result",
 			handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return &mcp.CallToolResult{IsError: true}, nil
 			},
-			wantOutc:   OutcomeUserError,
+			wantIsErr:  true,
 			wantStatus: codes.Unset, // NOT Error — 4xx-equivalent
 		},
 		{
-			name: "system_error",
+			name: "go_error",
 			handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return nil, errors.New("boom")
 			},
-			wantOutc:   OutcomeSystemError,
+			wantIsErr:  true,
 			wantStatus: codes.Error,
 		},
 	}
@@ -187,23 +176,27 @@ func TestInstrument_SpanCarriesOutcomeAndStatus(t *testing.T) {
 			if sp.Status().Code != c.wantStatus {
 				t.Errorf("status = %v, want %v", sp.Status().Code, c.wantStatus)
 			}
-			var gotOutc string
+			var gotIsErr bool
+			var seen bool
 			for _, kv := range sp.Attributes() {
-				if kv.Key == "tool.outcome" {
-					gotOutc = kv.Value.AsString()
+				if kv.Key == "tool.is_error" {
+					gotIsErr = kv.Value.AsBool()
+					seen = true
 				}
 			}
-			if gotOutc != c.wantOutc {
-				t.Errorf("tool.outcome = %q, want %q", gotOutc, c.wantOutc)
+			if !seen {
+				t.Errorf("tool.is_error attribute missing")
+			}
+			if gotIsErr != c.wantIsErr {
+				t.Errorf("tool.is_error = %v, want %v", gotIsErr, c.wantIsErr)
 			}
 		})
 	}
 }
 
-// Ensure Instrument doesn't panic on any of the three outcomes — exact
-// counter / histogram values are asserted in the observability /metrics
-// scrape test; here we only guard the composite's survival.
-func TestInstrument_ExercisesAllThreeOutcomes(t *testing.T) {
+// Smoke-test that Instrument doesn't panic on any handler shape;
+// counter / histogram values are asserted in the /metrics scrape test.
+func TestInstrument_SurvivesAllShapes(t *testing.T) {
 	mw := Instrument(nil)
 	req := stubRequest("probe", nil)
 

@@ -12,10 +12,10 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// stubGrafana satisfies grafana.Client for server.New's non-nil check.
-// All methods return zero values; they're never invoked in these tests.
+// stubGrafana satisfies grafana.Client for the non-nil check in New;
+// methods return zero values and are not invoked.
 type stubGrafana struct {
-	grafana.Client // embedded — keeps the stub honest if the interface grows
+	grafana.Client
 }
 
 func (stubGrafana) Ping(context.Context) error              { return nil }
@@ -33,8 +33,9 @@ func (stubGrafana) DatasourceProxy(context.Context, grafana.RequestOpts, int64, 
 	return nil, nil
 }
 
-// goodCfg is a Config with every required field populated; tests start
-// from this and zero one field at a time to assert the validation.
+// goodCfg is a Config every test starts from, then zeroes one field
+// at a time to assert validation. URL/cred validation lives in
+// tools.RegisterAll, surfaced through server.New's wrapped error.
 func goodCfg() Config {
 	return Config{
 		Logger:        slog.Default(),
@@ -73,7 +74,6 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 }
 
 func TestNew_DefaultsVersion(t *testing.T) {
-	// Empty Version must still construct (defaults to "dev").
 	if _, err := New(goodCfg()); err != nil {
 		t.Fatalf("New with empty Version: %v", err)
 	}
