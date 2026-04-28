@@ -106,12 +106,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// authz uses Grafana as the source of truth for org membership. Positive
 	// entries cache 30s; negative ones (user-not-found, empty memberships)
 	// use a 5s TTL so a mid-SSO-outage failure doesn't lock anyone out for
-	// half a minute. LRU-bounded so long-running pods don't leak.
-	authorizer, err := authz.NewAuthorizer(orgLister, grafanaClient, logger,
-		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
-	if err != nil {
-		return fmt.Errorf("resolver: %w", err)
-	}
+	// half a minute.
+	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
+		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL)
 
 	oauthHandler, storeClose, err := buildOAuthHandler(logger)
 	if err != nil {
