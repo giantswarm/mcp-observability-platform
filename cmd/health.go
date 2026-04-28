@@ -7,28 +7,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
 
-// orgLister returns the count of GrafanaOrganization CRs currently visible
-// through the informer cache, or an error if the list call fails. A small
-// function type rather than a full ctrlcache.Cache dependency keeps
-// setupHealth testable without a K8s stub.
-type orgLister func(ctx context.Context) (int, error)
-
-// setupHealth wires the production readiness probes: Grafana
-// reachability (Ping), Dex OIDC discovery, and K8s informer-cache
-// liveness. cacheAlive is flipped to false by the caller when the
-// informer's Start goroutine exits on a non-canceled error — without
-// it, the cache's List keeps returning the last-known snapshot and
-// readyz lies.
+// setupHealth wires the production readiness probes: Grafana reachability
+// (Ping), Dex OIDC discovery, and K8s informer-cache liveness. cacheAlive
+// is flipped to false by the caller when the informer's Start goroutine
+// exits on a non-canceled error — without it, the cache's List keeps
+// returning the last-known snapshot and readyz lies.
 //
 // 2s deadline applied across all probes per readiness call.
 func setupHealth(
 	dexIssuerURL string,
 	gfClient grafana.Client,
-	listOrgs orgLister,
+	lister authz.OrgLister,
 	cacheAlive *atomic.Bool,
 ) *server.Health {
 	health := server.NewHealth(2 * time.Second)
@@ -40,7 +34,7 @@ func setupHealth(
 		if !cacheAlive.Load() {
 			return errors.New("controller-runtime cache stopped")
 		}
-		_, err := listOrgs(ctx)
+		_, err := lister.List(ctx)
 		return err
 	})
 	return health

@@ -33,7 +33,13 @@ containerSecurityContext:
 
 service:
   type: ClusterIP
+  # MCP HTTP transport — /mcp, /sse, /oauth/*. Production deploys gate this
+  # behind ingress + OAuth.
   port: 8080
+  # Observability surface — /healthz, /readyz, /metrics. Scraped by the
+  # ServiceMonitor and probed by kubelet via the corresponding container
+  # port. Split from `port` so a slow MCP drain doesn't fail liveness.
+  metricsPort: 9091
   annotations: {}
 
 serviceAccount:
@@ -70,8 +76,8 @@ podDisruptionBudget:
 # NetworkPolicySpec — paste any shape the K8s API accepts. The chart owns
 # only the podSelector (it has to match the deployment labels).
 #
-# Default ingress allows the single mcp port from any pod; tighten with
-# from: selectors per the upstream NetworkPolicySpec. Egress is
+# Default ingress allows the mcp + metrics ports from any pod; tighten
+# with from: selectors per the upstream NetworkPolicySpec. Egress is
 # unrestricted unless you add Egress to policyTypes and supply egress
 # rules — remember to allow kube-dns + your Grafana / Dex / OTLP peers.
 networkPolicy:
@@ -81,6 +87,8 @@ networkPolicy:
   ingress:
     - ports:
         - port: http
+          protocol: TCP
+        - port: metrics
           protocol: TCP
   egress: []
 

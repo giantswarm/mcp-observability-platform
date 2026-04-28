@@ -49,6 +49,12 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            # Observability surface — /healthz, /readyz, /metrics. Split
+            # from MCP so kubelet probes and Prometheus scrapes keep
+            # working through the OAuth-flow drain on shutdown.
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
           env:
             - name: MCP_TRANSPORT
               value: {{ .Values.mcp.transport | quote }}
@@ -56,6 +62,8 @@ spec:
               value: {{ .Values.mcp.debug | quote }}
             - name: MCP_ADDR
               value: ":8080"
+            - name: METRICS_ADDR
+              value: ":9091"
 
             # OAuth (resource server) — its own identity
             - name: OAUTH_ISSUER
@@ -171,7 +179,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: metrics
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 3
@@ -179,7 +187,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: metrics
             initialDelaySeconds: 2
             periodSeconds: 10
             # Per-check budget inside the process is 2s; give kubelet 3s
