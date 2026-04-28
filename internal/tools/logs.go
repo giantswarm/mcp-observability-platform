@@ -18,6 +18,6 @@ func registerLogTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.ListLokiLabelNames,
 		mcpgrafanatools.ListLokiLabelValues,
 	} {
-		b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindLoki, datasourceUIDArg, t)
+		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindLoki, datasourceUIDArg, t)
 	}
 }

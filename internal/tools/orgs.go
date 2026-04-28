@@ -5,6 +5,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 
@@ -23,13 +24,6 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, b *gfBinder) {
 			mcp.WithDescription("List orgs the caller can access. Call this first to discover the 'org' value other tools need. Returns name, displayName, orgId, role, and tenantTypes (e.g. [\"data\",\"alerting\"])."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			access, err := az.ListOrgs(ctx)
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
-			}
-			// Minimal projection keeps list_orgs well under the response
-			// cap even for callers with 50+ orgs. Full datasource info
-			// is available per-org via list_datasources + get_datasource.
 			type item struct {
 				Name        string   `json:"name"`
 				DisplayName string   `json:"displayName"`
@@ -37,6 +31,25 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, b *gfBinder) {
 				Role        string   `json:"role"`
 				TenantTypes []string `json:"tenantTypes"`
 			}
+			type response struct {
+				Orgs    []item `json:"orgs"`
+				Message string `json:"message,omitempty"`
+			}
+
+			access, err := az.ListOrgs(ctx)
+			if errors.Is(err, authz.ErrCallerUnknownToGrafana) {
+				// First-login UX: tell the caller to register with Grafana
+				// instead of returning an opaque "not authorised" or empty
+				// list — both are misleading.
+				return mcp.NewToolResultJSON(response{
+					Orgs:    []item{},
+					Message: err.Error(),
+				})
+			}
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
+			}
+
 			out := make([]item, 0, len(access))
 			for _, a := range access {
 				tt := map[string]struct{}{}
@@ -61,9 +74,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, b *gfBinder) {
 			sort.Slice(out, func(i, j int) bool {
 				return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName)
 			})
-			return mcp.NewToolResultJSON(struct {
-				Orgs []item `json:"orgs"`
-			}{Orgs: out})
+			return mcp.NewToolResultJSON(response{Orgs: out})
 		},
 	)
 

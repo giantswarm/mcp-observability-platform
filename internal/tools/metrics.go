@@ -19,6 +19,6 @@ func registerMetricsTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.ListPrometheusLabelValues,
 		mcpgrafanatools.ListPrometheusMetricMetadata,
 	} {
-		b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, t)
+		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg, t)
 	}
 }

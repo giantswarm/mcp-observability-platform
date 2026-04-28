@@ -76,8 +76,7 @@ func runListenAndServe(srv *http.Server, label string, logger *slog.Logger, shut
 // runTwoPhaseShutdown drains MCP first (10s) then the obs server (5s).
 // The ordering is load-bearing: by keeping the obs listener up while MCP
 // drains, kubelet's liveness probe still hits a live /healthz and a slow
-// tool call doesn't trip SIGKILL mid-drain. Merging the servers would
-// destroy this property — see review.
+// tool call doesn't trip SIGKILL mid-drain.
 func runTwoPhaseShutdown(logger *slog.Logger, mcpServer, obsServer *http.Server) {
 	mcpDrainCtx, mcpDrainCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer mcpDrainCancel()

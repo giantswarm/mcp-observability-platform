@@ -119,10 +119,6 @@ spec:
             # Grafana access — one of serviceAccountToken (preferred) or basicAuth
             - name: GRAFANA_URL
               value: {{ .Values.grafana.url | quote }}
-            {{- if .Values.grafana.publicUrl }}
-            - name: GRAFANA_PUBLIC_URL
-              value: {{ .Values.grafana.publicUrl | quote }}
-            {{- end }}
             {{- if eq .Values.grafana.authMode "basicAuth" }}
             - name: GRAFANA_BASIC_AUTH
               valueFrom:

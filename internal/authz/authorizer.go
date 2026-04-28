@@ -7,8 +7,14 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
+
+var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/internal/authz")
 
 // Authorizer decides whether a caller may act on a given Grafana org, and at
 // what Role. Tool handlers hold one and call RequireOrg() before touching
@@ -65,6 +71,10 @@ func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL
 // deep-cloned so handler mutations cannot leak. Caller identity is read
 // from ctx via CallerFromContext.
 //
+// A caller who authenticated with our IdP but has not yet logged into
+// Grafana surfaces ErrCallerUnknownToGrafana — list_orgs translates that
+// to an empty list with a guidance message.
+//
 // The registry list is read fresh every call — only the per-caller
 // Grafana memberships are cached. A GrafanaOrganization deletion takes
 // effect immediately for every caller, not after their TTL expires.
@@ -93,51 +103,78 @@ func (a *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, err
 // Caller identity is read from ctx via CallerFromContext. The returned
 // Organization is deep-cloned so handler mutations cannot escape.
 func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role) (Organization, error) {
+	// Span lets trace waterfalls show authz cost vs handler cost without
+	// an extra slog hop; attrs are set on success too so a slow RequireOrg
+	// shows the org without grepping the audit log.
+	ctx, span := tracer.Start(ctx, "authz.RequireOrg")
+	span.SetAttributes(
+		attribute.String("authz.org_ref", orgRef),
+		attribute.String("authz.min_role", minRole.String()),
+	)
+	defer span.End()
+
 	if minRole == RoleNone {
+		span.SetStatus(codes.Error, ErrInvalidMinRole.Error())
 		return Organization{}, ErrInvalidMinRole
 	}
 	memberships, err := a.resolveMemberships(ctx, CallerFromContext(ctx))
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return Organization{}, err
 	}
 	orgs, err := a.orgs.List(ctx)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return Organization{}, fmt.Errorf("list orgs: %w", err)
 	}
 	access, allRefs := projectMemberships(memberships, orgs)
 
 	org, ok, err := findOrganization(access, orgRef)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		return Organization{}, err
 	}
 	if ok {
 		if !org.Role.AtLeast(minRole) {
-			return Organization{}, insufficientRoleFor(orgRef, org.Role, minRole)
+			err := insufficientRoleFor(orgRef, org.Role, minRole)
+			span.SetStatus(codes.Error, err.Error())
+			return Organization{}, err
 		}
 		return cloneOrganization(org), nil
 	}
 
 	if _, knownOrg := allRefs[strings.ToLower(orgRef)]; !knownOrg {
-		return Organization{}, fmt.Errorf("%w: %q", ErrOrgNotFound, orgRef)
+		err := fmt.Errorf("%w: %q", ErrOrgNotFound, orgRef)
+		span.SetStatus(codes.Error, err.Error())
+		return Organization{}, err
 	}
-	return Organization{}, notAuthorisedFor(orgRef)
+	err = notAuthorisedFor(orgRef)
+	span.SetStatus(codes.Error, err.Error())
+	return Organization{}, err
 }
 
 // resolveMemberships returns the caller's per-org Role assignments
 // (OrgID → Role) as observed by Grafana. Hits the per-caller cache before
-// falling back to load(). Caller-level validation (ErrNoCallerIdentity)
-// happens here.
+// falling back to load(). Returns ErrNoCallerIdentity for an empty caller
+// and ErrCallerUnknownToGrafana when Grafana has no user record yet
+// (negative cache hit with nil memberships).
 func (a *authorizer) resolveMemberships(ctx context.Context, caller Caller) (map[int64]Role, error) {
 	if caller.Empty() {
 		return nil, ErrNoCallerIdentity
 	}
 	key := cacheKey(caller)
 	if hit, ok := a.cacheLookup(key); ok {
+		if hit.memberships == nil {
+			return nil, ErrCallerUnknownToGrafana
+		}
 		return hit.memberships, nil
 	}
 	entry, err := a.load(ctx, caller, key)
 	if err != nil {
 		return nil, err
+	}
+	if entry.memberships == nil {
+		return nil, ErrCallerUnknownToGrafana
 	}
 	return entry.memberships, nil
 }

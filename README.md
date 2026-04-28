@@ -70,9 +70,11 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 
 **Alert rules (Mimir Ruler)**
 
-| Tool                    | DS proxy path                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------ |
-| `alerting_manage_rules` | `api/v1/rules` — read-only meta-tool: list / get / versions over Mimir-backed alert + recording rules |
+| Tool                    | Backend                                                                  |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `alerting_manage_rules` | Grafana `/api/prometheus/{datasourceUID}/api/v1/rules` (delegated to upstream `mcp-grafana`); bound to the Mimir datasource. Useful operation is `operation=list` — `get`/`versions` require Grafana-managed RuleUIDs and don't work for Mimir-side rules. |
+
+> **Known gaps** (tracked in [`docs/roadmap.md`](./docs/roadmap.md)): recording rules are dropped by upstream's projection; Loki rules are not exposed at all. Both Mimir and Loki rulers expose the same Prometheus-shape `/prometheus/api/v1/rules` endpoint and would unblock once upstream stops filtering recording rules.
 
 **Logs (Loki)**
 
@@ -190,7 +192,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`). Also probed by `/readyz` for OIDC discovery. |
+| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
 | `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
 | `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
@@ -204,13 +206,20 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
 | `MCP_ADDR`                                  | no             | Listen address for the MCP HTTP surface — `/mcp`, `/sse`, `/message`, `/oauth/*`, plus the OAuth discovery routes (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
-| `METRICS_ADDR`                              | no             | Listen address for the observability surface — `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`). Split from `MCP_ADDR` so kubelet probes and Prometheus scrapes keep working through the OAuth graceful-drain on shutdown. |
+| `METRICS_ADDR`                              | no             | Listen address for the observability surface — `/metrics`, `/healthz`, `/readyz` (default `:9091`). Split from `MCP_ADDR` so kubelet probes and Prometheus scrapes keep working through the OAuth graceful-drain on shutdown. |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `TOOL_TIMEOUT`                              | no             | Per-tool-call deadline (default `30s`; `0` = disabled). Go duration syntax (`500ms`, `2m`). A tool exceeding the deadline returns an IsError result with timeout text. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`               | no             | `http/protobuf` (default) or `grpc`                      |
 | `POD_NAME` / `POD_NAMESPACE` / `NODE_NAME`  | no             | Downward-API attributes added to OTEL resource when set  |
 | `DEBUG`                                     | no             | `true` to enable debug logging                           |
+| `LOG_FORMAT`                                | no             | `json` or `text`. Defaults to `json` when `KUBERNETES_SERVICE_HOST` is set, else `text`. |
+| `MCP_ALLOW_STDIO_IN_CLUSTER`                | no             | `true` to permit `MCP_TRANSPORT=stdio` inside Kubernetes (in-cluster integration tests only — stdio bypasses OAuth). |
+
+⚠️ **Tool-call arguments are logged verbatim** in the `tool_call` audit slog
+line and OTEL span attributes for forensics. Do not register tools that
+take secrets as arguments — look credentials up server-side from the
+caller identity instead.
 
 ### Grafana service-account token
 

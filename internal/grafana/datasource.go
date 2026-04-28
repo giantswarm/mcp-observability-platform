@@ -11,13 +11,9 @@ type Datasource struct {
 }
 
 // DatasourceKind names the canonical role a datasource plays for the
-// MCP (metrics backend, logs backend, traces backend, alerting).
-//
-// MatchKind picks the concrete Datasource by case-insensitive name
-// substring; the kind ↔ substring rules live here so the substring
-// vocabulary stays in one place. The roadmap's "Datasource UID + kind
-// in CR status" item makes this matching obsolete by reading kind off
-// the CR directly.
+// MCP (metrics backend, logs backend, traces backend, alerting). The
+// const value doubles as the case-insensitive substring MatchKind
+// looks for in Datasource.Name.
 type DatasourceKind string
 
 const (
@@ -27,24 +23,13 @@ const (
 	DSKindAlertmanager DatasourceKind = "alertmanager"
 )
 
-// datasourceKindSubstring is the single source of truth for "what
-// substring identifies a datasource of kind K?". Kept private so
-// changing it doesn't ripple to consumers — they reference the kind
-// constants.
-var datasourceKindSubstring = map[DatasourceKind]string{
-	DSKindMimir:        "mimir",
-	DSKindLoki:         "loki",
-	DSKindTempo:        "tempo",
-	DSKindAlertmanager: "alertmanager",
-}
-
 // MatchKind returns the first datasource whose name contains the
 // kind's canonical substring (case-insensitive).
 func MatchKind(dss []Datasource, kind DatasourceKind) (Datasource, bool) {
-	needle, ok := datasourceKindSubstring[kind]
-	if !ok {
+	if kind == "" {
 		return Datasource{}, false
 	}
+	needle := strings.ToLower(string(kind))
 	for _, ds := range dss {
 		if strings.Contains(strings.ToLower(ds.Name), needle) {
 			return ds, true
