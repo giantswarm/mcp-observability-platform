@@ -1,12 +1,3 @@
-// Package observability sets up a best-effort OpenTelemetry tracer provider from
-// the standard OTEL_* environment variables. If no OTLP endpoint is
-// configured the returned Shutdown is a no-op and spans go to a no-op
-// tracer. Both OTLP/HTTP (default) and OTLP/gRPC are supported via
-// OTEL_EXPORTER_OTLP_PROTOCOL ("http/protobuf" | "grpc").
-//
-// Resource attributes are auto-detected from the K8s downward-API env vars
-// (POD_NAME, POD_NAMESPACE, NODE_NAME) when present, plus the standard
-// OTEL_RESOURCE_ATTRIBUTES env var.
 package observability
 
 import (
@@ -68,8 +59,6 @@ func InitTracing(ctx context.Context, serviceName, serviceVersion string) (Shutd
 	return tp.Shutdown, nil
 }
 
-// buildExporter returns either an HTTP or gRPC OTLP trace exporter
-// depending on OTEL_EXPORTER_OTLP_PROTOCOL ("http/protobuf" default).
 func buildExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
 	proto := strings.ToLower(cmp.Or(
 		os.Getenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
@@ -82,21 +71,19 @@ func buildExporter(ctx context.Context) (sdktrace.SpanExporter, error) {
 	case "http/protobuf", "http":
 		return otlptrace.New(ctx, otlptracehttp.NewClient())
 	default:
-		return nil, fmt.Errorf("unknown OTEL_EXPORTER_OTLP_PROTOCOL=%q (want grpc|http/protobuf)", proto)
+		return nil, fmt.Errorf("unknown OTLP protocol %q (set OTEL_EXPORTER_OTLP_PROTOCOL or OTEL_EXPORTER_OTLP_TRACES_PROTOCOL to grpc|http/protobuf)", proto)
 	}
 }
 
-// buildResource composes service identity + auto-detected K8s attrs +
-// anything in OTEL_RESOURCE_ATTRIBUTES. Treats resource.ErrPartialResource
-// as warn-and-continue so a single failed detector (e.g. WithContainer on
-// a cgroupv2 host) doesn't block startup.
+// buildResource treats resource.ErrPartialResource as warn-and-continue so a
+// single failed detector (e.g. WithContainer on a cgroupv2 host) doesn't
+// block startup.
 func buildResource(ctx context.Context, serviceName, serviceVersion string) (*resource.Resource, error) {
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(serviceName),
 		semconv.ServiceVersion(serviceVersion),
-		attribute.String("service.namespace", "giantswarm.observability"),
+		semconv.ServiceNamespace("giantswarm.observability"),
 	}
-	// Downward-API populated K8s resource attrs.
 	if v := os.Getenv("POD_NAME"); v != "" {
 		attrs = append(attrs, semconv.K8SPodName(v))
 	}
@@ -107,10 +94,10 @@ func buildResource(ctx context.Context, serviceName, serviceVersion string) (*re
 		attrs = append(attrs, semconv.K8SNodeName(v))
 	}
 	res, err := resource.New(ctx,
-		resource.WithFromEnv(),   // honours OTEL_RESOURCE_ATTRIBUTES
-		resource.WithProcess(),   // pid + executable
-		resource.WithOS(),        // os.type, os.version
-		resource.WithContainer(), // best-effort container.id
+		resource.WithFromEnv(),
+		resource.WithProcess(),
+		resource.WithOS(),
+		resource.WithContainer(),
 		resource.WithAttributes(attrs...),
 	)
 	if err != nil {

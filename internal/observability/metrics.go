@@ -34,9 +34,6 @@ var registry = func() *prometheus.Registry {
 	return r
 }()
 
-// ToolCallTotal counts every MCP tool invocation by name. Pair with
-// ToolCallErrorsTotal for the RED-method error rate
-// (rate(errors_total) / rate(total)).
 var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
@@ -46,9 +43,6 @@ var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	[]string{"tool"},
 )
 
-// ToolCallErrorsTotal counts the subset of tool invocations that returned
-// the mcp `IsError` flag, including handlers that returned a Go error
-// (which the middleware treats as is_error=true).
 var ToolCallErrorsTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
@@ -68,38 +62,6 @@ var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	[]string{"tool"},
 )
 
-// GrafanaProxyTotal counts datasource-proxy calls by downstream path so we can
-// see which observability backend (Mimir/Loki/Tempo/AM) is most used.
-var GrafanaProxyTotal = promauto.With(registry).NewCounterVec(
-	prometheus.CounterOpts{
-		Namespace: namespace,
-		Name:      "grafana_proxy_total",
-		Help:      "Number of Grafana datasource-proxy calls, labeled by downstream path.",
-	},
-	[]string{"path"},
-)
-
-// GrafanaProxyDuration measures per-path Grafana proxy latency. The path
-// label is the downstream API path (bounded cardinality: one label value per
-// registered tool). The status label distinguishes success from error so
-// ops can see tail-latency changes during incidents — before this split,
-// the error path skipped Observe entirely and half the signal vanished.
-var GrafanaProxyDuration = promauto.With(registry).NewHistogramVec(
-	prometheus.HistogramOpts{
-		Namespace: namespace,
-		Name:      "grafana_proxy_duration_seconds",
-		Help:      "Duration of Grafana datasource-proxy calls, by downstream path and status.",
-		// Proxy calls are typically sub-second (simple Mimir/Loki queries
-		// with label matchers); DefBuckets' top bucket of 10s is plenty
-		// and gives dense resolution in the 5 ms–1 s range where
-		// regressions are most visible.
-		Buckets: prometheus.DefBuckets,
-	},
-	[]string{"path", "status"},
-)
-
-// OrgCacheSize reports the number of GrafanaOrganization CRs currently cached.
-// Updated periodically by the authz layer.
 var OrgCacheSize = promauto.With(registry).NewGauge(
 	prometheus.GaugeOpts{
 		Namespace: namespace,
@@ -108,8 +70,6 @@ var OrgCacheSize = promauto.With(registry).NewGauge(
 	},
 )
 
-// MetricsHandler returns an http.Handler that serves /metrics in Prometheus
-// text format from the package-local registry.
 func MetricsHandler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 }
