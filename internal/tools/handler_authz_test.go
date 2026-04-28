@@ -44,7 +44,7 @@ type stubGrafanaForAuthz struct {
 
 func (s stubGrafanaForAuthz) LookupUser(_ context.Context, key string) (*grafana.User, error) {
 	if id, ok := s.users[key]; ok {
-		return &grafana.User{ID: id, Email: key}, nil
+		return &grafana.User{ID: id}, nil
 	}
 	return nil, nil
 }

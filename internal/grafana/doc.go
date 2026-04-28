@@ -4,8 +4,8 @@
 //     internal/tools) can't:
 //     authz lookups (LookupUser, UserOrgs); ID→UID resolution
 //     (LookupDatasourceUIDByID); health-probe Ping + startup
-//     VerifyServerAdmin; DatasourceProxy for the local tools (Tempo,
-//     Alertmanager v2).
+//     VerifyServerAdmin; DatasourceProxy for the locally-handled tools
+//     (alerts triage, Tempo search, Alertmanager v2).
 //   - Datasource + DatasourceKind taxonomy (datasource.go) — the
 //     domain projection of a Grafana datasource and its canonical-
 //     role enum, with MatchKind for substring-based selection.
@@ -17,7 +17,9 @@
 // It assumes the caller provides a Grafana server-admin service-account
 // token (an SA granted the "Grafana Admin" server role), so that
 // X-Grafana-Org-Id can switch org context per request. Regular
-// org-scoped SAs will NOT work.
+// org-scoped SAs will NOT work. BasicAuth on the built-in admin user
+// is supported as a dev/bootstrap fallback when SA promotion isn't
+// available — see Config.
 //
 // # SSRF posture
 //

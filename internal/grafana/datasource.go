@@ -30,10 +30,6 @@ const (
 	DSKindAlertmanager DatasourceKind = "alertmanager"
 )
 
-// String makes DatasourceKind satisfy fmt.Stringer for cleaner
-// formatting at error sites.
-func (k DatasourceKind) String() string { return string(k) }
-
 // datasourceKindSubstring is the single source of truth for "what
 // substring identifies a datasource of kind K?". Kept private so
 // changing it doesn't ripple to consumers — they reference the kind
