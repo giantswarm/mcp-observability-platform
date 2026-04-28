@@ -194,8 +194,8 @@ func TestNewGFBinder_Validation(t *testing.T) {
 	}{
 		{"happy_apikey", az, gc, "http://g", "tok", nil, ""},
 		{"happy_basic", az, gc, "http://g", "", url.UserPassword("u", "p"), ""},
-		{"nil_authorizer", nil, gc, "http://g", "tok", nil, "Authorizer"},
-		{"nil_grafana", az, nil, "http://g", "tok", nil, "Grafana"},
+		{"nil_authorizer", nil, gc, "http://g", "tok", nil, "authorizer"},
+		{"nil_grafana", az, nil, "http://g", "tok", nil, "grafana"},
 		{"empty_url", az, gc, "", "tok", nil, "URL"},
 		{"both_creds", az, gc, "http://g", "tok", url.UserPassword("u", "p"), "exactly one"},
 		{"no_creds", az, gc, "http://g", "", nil, "exactly one"},

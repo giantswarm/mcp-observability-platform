@@ -55,7 +55,7 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 		{"no logger", func(c *Config) { c.Logger = nil }, "Logger is required"},
 		{"no authorizer", func(c *Config) { c.Authorizer = nil }, "Authorizer is required"},
 		{"no grafana", func(c *Config) { c.Grafana = nil }, "Grafana is required"},
-		{"no url", func(c *Config) { c.GrafanaURL = "" }, "Grafana URL is required"},
+		{"no url", func(c *Config) { c.GrafanaURL = "" }, "grafana URL is required"},
 		{"no creds", func(c *Config) { c.GrafanaAPIKey = "" }, "exactly one of APIKey or BasicAuth"},
 	}
 	for _, c := range cases {

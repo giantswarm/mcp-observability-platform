@@ -6,7 +6,8 @@
 // duplicate-registration panics, and so multiple MCP instances in one
 // binary never cross-pollute metric streams.
 //
-// OTLP tracing is opt-in via OTEL_EXPORTER_OTLP_ENDPOINT — when unset,
+// OTLP tracing is opt-in via OTEL_EXPORTER_OTLP_ENDPOINT (or the signal-
+// specific OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) — when both are unset,
 // InitTracing returns a no-op shutdown and the tracer falls back to the
 // global noop tracer (downstream calls are span-free).
 package observability

@@ -51,13 +51,13 @@ type gfBinder struct {
 // APIKey and BasicAuth are mutually exclusive; exactly one must be set.
 func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) (*gfBinder, error) {
 	if authorizer == nil {
-		return nil, errors.New("Authorizer is required")
+		return nil, errors.New("authorizer is required")
 	}
 	if gc == nil {
-		return nil, errors.New("Grafana client is required")
+		return nil, errors.New("grafana client is required")
 	}
 	if grafanaURL == "" {
-		return nil, errors.New("Grafana URL is required")
+		return nil, errors.New("grafana URL is required")
 	}
 	hasKey := apiKey != ""
 	hasBasic := basicAuth != nil
