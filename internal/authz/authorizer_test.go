@@ -108,7 +108,7 @@ func (f *fakeGrafana) LookupUser(_ context.Context, loginOrEmail string) (*grafa
 	if !ok {
 		return nil, nil // not yet provisioned in Grafana
 	}
-	return &grafana.User{ID: id, Email: loginOrEmail}, nil
+	return &grafana.User{ID: id}, nil
 }
 
 func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {
@@ -345,7 +345,7 @@ func (b *blockingGrafana) LookupUser(_ context.Context, loginOrEmail string) (*g
 	if !ok {
 		return nil, nil
 	}
-	return &grafana.User{ID: id, Email: loginOrEmail}, nil
+	return &grafana.User{ID: id}, nil
 }
 
 func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {

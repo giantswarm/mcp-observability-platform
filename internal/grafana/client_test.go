@@ -330,11 +330,10 @@ func TestClient_LookupUser_ErrorPaths(t *testing.T) {
 }
 
 // TestClient_LookupDatasourceUIDByID covers the GET /api/datasources/{id}
-// flow used by the upstream-tool bridge to resolve a numeric ID into the
-// UID upstream tools require. Three branches matter: happy path returns
-// uid; an empty uid in the response is rejected; a 404 propagates as
-// error (not silently empty — a missing datasource at lookup time is a
-// real failure for the tool call).
+// flow that resolves a numeric ID into a UID. Three branches matter:
+// happy path returns uid; an empty uid in the response is rejected;
+// a 404 propagates as error (not silently empty — a missing datasource
+// at lookup time is a real failure).
 func TestClient_LookupDatasourceUIDByID(t *testing.T) {
 	cases := []struct {
 		name    string
