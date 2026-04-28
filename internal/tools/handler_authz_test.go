@@ -76,17 +76,14 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		users:       map[string]int64{callerEmail: 1},
 		memberships: map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, zero orgs
 	}
-	az, err := authz.NewAuthorizer(
+	az := authz.NewAuthorizer(
 		staticOrgLister{orgs: []authz.Organization{{
 			Name:        "acme",
 			DisplayName: "Acme",
 			OrgID:       1,
 		}}},
-		azClient, nil, 0, 0, -1,
+		azClient, 0, 0,
 	)
-	if err != nil {
-		t.Fatalf("authz.NewAuthorizer: %v", err)
-	}
 
 	// Tool-side Grafana client. The test fails if the tool reaches here —
 	// authz must deny first.

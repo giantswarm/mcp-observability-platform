@@ -61,9 +61,7 @@ func (o Organization) HasTenantType(want TenantType) bool {
 }
 
 // FindDatasource picks the datasource backing the given kind via
-// substring matching on Datasource.Name (see grafana.MatchKind). Will
-// be replaced by direct kind-on-Datasource access once the
-// CR-status-uid+kind roadmap item lands.
+// substring matching on Datasource.Name (see grafana.MatchKind).
 func (o Organization) FindDatasource(kind grafana.DatasourceKind) (grafana.Datasource, bool) {
 	return grafana.MatchKind(o.Datasources, kind)
 }

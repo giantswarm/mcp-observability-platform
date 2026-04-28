@@ -5,11 +5,11 @@ import (
 	"fmt"
 )
 
-// Sentinel errors for callers that want to distinguish "this org doesn't
-// exist" from "this org exists but you can't access it."
+// Sentinel errors. Use errors.Is to classify denial reasons; the wrapping
+// helpers below carry the org name and roles for human-readable messages.
 var (
 	// ErrOrgNotFound means no GrafanaOrganization CR matches the orgRef
-	// (neither by Name nor by DisplayName). Wrappable via errors.Is.
+	// (neither by Name nor by DisplayName).
 	ErrOrgNotFound = errors.New("org not found")
 
 	// ErrNoCallerIdentity means the authorizer was called without an OIDC
@@ -27,16 +27,21 @@ var (
 	// which is a vacuous gate (every Role.AtLeast(RoleNone) is true).
 	// Pass RoleViewer for "any access at all".
 	ErrInvalidMinRole = errors.New("minRole must be RoleViewer or higher")
+
+	// ErrNotAuthorised means Grafana does not grant the caller access to
+	// the referenced org. Wrap via notAuthorisedFor for human-readable
+	// messages; classify via errors.Is.
+	ErrNotAuthorised = errors.New("not authorised for org")
+
+	// ErrInsufficientRole means the caller has access but below the
+	// required role. Wrap via insufficientRoleFor.
+	ErrInsufficientRole = errors.New("insufficient role for org")
 )
 
-// ErrNotAuthorised signals that Grafana does not grant the caller access
-// to the referenced org. Message is caller-ready.
-func ErrNotAuthorised(org string) error {
-	return fmt.Errorf("not authorised for org %q", org)
+func notAuthorisedFor(org string) error {
+	return fmt.Errorf("%w %q", ErrNotAuthorised, org)
 }
 
-// ErrInsufficientRole signals the caller has access but below the required
-// role. Message carries both the actual and required role for diagnostics.
-func ErrInsufficientRole(org string, have, need Role) error {
-	return fmt.Errorf("insufficient role for org %q: have %s, need %s", org, have, need)
+func insufficientRoleFor(org string, have, need Role) error {
+	return fmt.Errorf("%w %q: have %s, need %s", ErrInsufficientRole, org, have, need)
 }
