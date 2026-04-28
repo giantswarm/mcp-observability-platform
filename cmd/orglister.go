@@ -22,14 +22,17 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// kubernetesSyncPeriod balances cache freshness against API-server load.
-var kubernetesSyncPeriod = 60 * time.Second
+// kubernetesSyncPeriod ≈ Grafana's org-sync cadence; tighter doesn't change
+// observable freshness, looser risks lagging org adds during onboarding.
+const kubernetesSyncPeriod = 60 * time.Second
 
 // buildOrgCache builds the controller-runtime cache, primes the
 // GrafanaOrganization informer, starts the cache, and waits for initial
-// sync. cacheAlive flips false when ctrlCache.Start exits with a
-// non-canceled error so the readiness probe can return 503.
-func buildOrgCache(ctx context.Context, logger *slog.Logger) (ctrlcache.Cache, *atomic.Bool, error) {
+// sync. Returns the org-listing port and an alive flag the readiness
+// probe gates on — the flag flips false when ctrlCache.Start exits with
+// a non-canceled error so /readyz returns 503 instead of serving stale
+// data from the still-readable cache.
+func buildOrgCache(ctx context.Context, logger *slog.Logger) (authz.OrgLister, *atomic.Bool, error) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(obsv1alpha2.AddToScheme(scheme))
@@ -38,9 +41,10 @@ func buildOrgCache(ctx context.Context, logger *slog.Logger) (ctrlcache.Cache, *
 	if err != nil {
 		return nil, nil, fmt.Errorf("kube config: %w", err)
 	}
+	syncPeriod := kubernetesSyncPeriod
 	c, err := ctrlcache.New(kubeCfg, ctrlcache.Options{
 		Scheme:     scheme,
-		SyncPeriod: &kubernetesSyncPeriod,
+		SyncPeriod: &syncPeriod,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("controller-runtime cache: %w", err)
@@ -52,6 +56,10 @@ func buildOrgCache(ctx context.Context, logger *slog.Logger) (ctrlcache.Cache, *
 	var alive atomic.Bool
 	alive.Store(true)
 	go func() {
+		// Start returns context.Canceled on clean shutdown; only non-cancel
+		// exits indicate a crashed informer and should fail the readiness
+		// probe via the alive gate. WaitForCacheSync below catches startup
+		// failure separately.
 		if err := c.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("controller-runtime cache stopped", "error", err)
 			alive.Store(false)
@@ -61,13 +69,13 @@ func buildOrgCache(ctx context.Context, logger *slog.Logger) (ctrlcache.Cache, *
 		return nil, nil, fmt.Errorf("cache sync timed out")
 	}
 	logger.Info("GrafanaOrganization cache synced")
-	return c, &alive, nil
+	return k8sOrgLister{reader: c}, &alive, nil
 }
 
 // startOrgCacheReporter polls every 30s to keep the OrgCacheSize gauge
 // accurate. The informer is event-driven internally; this loop only
 // refreshes the exported metric.
-func startOrgCacheReporter(ctx context.Context, c ctrlcache.Cache) {
+func startOrgCacheReporter(ctx context.Context, lister authz.OrgLister) {
 	go func() {
 		tick := time.NewTicker(30 * time.Second)
 		defer tick.Stop()
@@ -76,33 +84,19 @@ func startOrgCacheReporter(ctx context.Context, c ctrlcache.Cache) {
 			case <-ctx.Done():
 				return
 			case <-tick.C:
-				var list obsv1alpha2.GrafanaOrganizationList
-				if err := c.List(ctx, &list); err == nil {
-					observability.OrgCacheSize.Set(float64(len(list.Items)))
+				if orgs, err := lister.List(ctx); err == nil {
+					observability.OrgCacheSize.Set(float64(len(orgs)))
 				}
 			}
 		}
 	}()
 }
 
-// listOrgCount returns the current count of GrafanaOrganization CRs.
-// Health-handler adapter so the health package stays free of K8s imports.
-func listOrgCount(c ctrlcache.Cache) func(context.Context) (int, error) {
-	return func(ctx context.Context) (int, error) {
-		var list obsv1alpha2.GrafanaOrganizationList
-		if err := c.List(ctx, &list); err != nil {
-			return 0, err
-		}
-		return len(list.Items), nil
-	}
-}
-
-// k8sOrgLister adapts a controller-runtime cache to authz.OrgLister.
-// Lives here so the authz package never imports observability-operator
-// or controller-runtime — this is the K8s ↔ domain translation boundary.
+// k8sOrgLister adapts a controller-runtime cache to authz.OrgLister so the
+// authz package never imports observability-operator or controller-runtime
+// — this is the K8s ↔ domain translation boundary.
 type k8sOrgLister struct{ reader ctrlclient.Reader }
 
-// List implements authz.OrgLister.
 func (k k8sOrgLister) List(ctx context.Context) ([]authz.Organization, error) {
 	var list obsv1alpha2.GrafanaOrganizationList
 	if err := k.reader.List(ctx, &list); err != nil {

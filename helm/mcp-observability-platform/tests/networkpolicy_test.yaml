@@ -19,11 +19,14 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: default ingress allows the single http port
+  - it: default ingress allows the http and metrics ports
     asserts:
       - equal:
           path: spec.ingress[0].ports[0].port
           value: http
+      - equal:
+          path: spec.ingress[0].ports[1].port
+          value: metrics
 
   - it: ingress is toYaml'd verbatim — operators can lock down with from selectors
     set:

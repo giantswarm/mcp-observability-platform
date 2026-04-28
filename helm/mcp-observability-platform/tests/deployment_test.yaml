@@ -34,6 +34,33 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
 
+  - it: probes target the metrics port — /healthz lives on the obs server, not MCP
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: metrics
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: metrics
+
+  - it: container exposes the metrics port and METRICS_ADDR is wired
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9091
+            protocol: TCP
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: METRICS_ADDR
+            value: ":9091"
+
   - it: honors extra envFrom on top of runtime ConfigMap
     set:
       extraEnvFrom:

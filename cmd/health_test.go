@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
@@ -22,6 +23,18 @@ type stubGrafanaClient struct {
 
 func (s stubGrafanaClient) Ping(_ context.Context) error { return s.pingErr }
 
+// stubLister implements authz.OrgLister with a fixed result for the
+// readiness probe. Returning nil/no error simulates a healthy
+// in-memory cache; an err simulates an apiserver failure.
+type stubLister struct {
+	orgs []authz.Organization
+	err  error
+}
+
+func (s stubLister) List(_ context.Context) ([]authz.Organization, error) {
+	return s.orgs, s.err
+}
+
 // dexStub serves a minimal valid /.well-known/openid-configuration so the
 // Dex probe sees a 2xx.
 func dexStub(t *testing.T) *httptest.Server {
@@ -34,11 +47,11 @@ func dexStub(t *testing.T) *httptest.Server {
 // runReadyz wires setupHealth and exercises /readyz, returning the
 // status code and response body. Body carries the failing probe name
 // + error when readyz returns 503 (see Health.Readiness).
-func runReadyz(t *testing.T, gf grafana.Client, orgs orgLister, alive *atomic.Bool) (code int, body string) {
+func runReadyz(t *testing.T, gf grafana.Client, lister authz.OrgLister, alive *atomic.Bool) (code int, body string) {
 	t.Helper()
 	dex := dexStub(t)
 	defer dex.Close()
-	h := setupHealth(dex.URL, gf, orgs, alive)
+	h := setupHealth(dex.URL, gf, lister, alive)
 	mux := http.NewServeMux()
 	h.Mount(mux)
 
@@ -50,9 +63,8 @@ func runReadyz(t *testing.T, gf grafana.Client, orgs orgLister, alive *atomic.Bo
 func TestSetupHealth_AllProbesOK(t *testing.T) {
 	var alive atomic.Bool
 	alive.Store(true)
-	listOrgs := func(context.Context) (int, error) { return 3, nil }
 
-	code, _ := runReadyz(t, stubGrafanaClient{}, listOrgs, &alive)
+	code, _ := runReadyz(t, stubGrafanaClient{}, stubLister{}, &alive)
 	if code != http.StatusOK {
 		t.Errorf("readyz = %d, want 200 when all probes pass", code)
 	}
@@ -61,11 +73,10 @@ func TestSetupHealth_AllProbesOK(t *testing.T) {
 func TestSetupHealth_GrafanaPingFailureSurfaces(t *testing.T) {
 	var alive atomic.Bool
 	alive.Store(true)
-	listOrgs := func(context.Context) (int, error) { return 0, nil }
 
 	code, body := runReadyz(t,
 		stubGrafanaClient{pingErr: errors.New("grafana down")},
-		listOrgs,
+		stubLister{},
 		&alive,
 	)
 	if code == http.StatusOK {
@@ -80,11 +91,9 @@ func TestSetupHealth_DeadCacheSurfaces(t *testing.T) {
 	var alive atomic.Bool
 	alive.Store(false) // informer Start has exited
 
-	// listOrgs would "succeed" on stale data — the cacheAlive gate must
+	// stubLister would "succeed" on stale data — the cacheAlive gate must
 	// still fail the probe.
-	listOrgs := func(context.Context) (int, error) { return 0, nil }
-
-	code, body := runReadyz(t, stubGrafanaClient{}, listOrgs, &alive)
+	code, body := runReadyz(t, stubGrafanaClient{}, stubLister{}, &alive)
 	if code == http.StatusOK {
 		t.Errorf("readyz = 200 despite dead cache; body: %s", body)
 	}
@@ -96,11 +105,9 @@ func TestSetupHealth_DeadCacheSurfaces(t *testing.T) {
 func TestSetupHealth_ListOrgsErrorSurfaces(t *testing.T) {
 	var alive atomic.Bool
 	alive.Store(true)
-	listOrgs := func(context.Context) (int, error) {
-		return 0, errors.New("apiserver throttled")
-	}
+	lister := stubLister{err: errors.New("apiserver throttled")}
 
-	code, body := runReadyz(t, stubGrafanaClient{}, listOrgs, &alive)
+	code, body := runReadyz(t, stubGrafanaClient{}, lister, &alive)
 	if code == http.StatusOK {
 		t.Errorf("readyz = 200 despite list failure; body: %s", body)
 	}

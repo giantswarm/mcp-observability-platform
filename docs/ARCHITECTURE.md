@@ -74,7 +74,7 @@ security boundaries are, and where to add a new tool.
 
 | Package | Responsibility |
 |---|---|
-| `cmd/` | Cobra CLI + per-concern builders (`oauth.go`, `orglister.go`, `mux.go`, `serve.go`). `runServe` wires everything in deterministic phase order. |
+| `cmd/` | Cobra CLI + composition root. `runServe` wires the dex provider, OAuth server, K8s informer cache, MCP server, and the two HTTP listeners (MCP on `MCP_ADDR`, observability on `METRICS_ADDR`) in deterministic phase order. OAuth/Dex/storage/encryption env loading is delegated to `mcp-oauth/oauthconfig.*FromEnv`; this package owns Grafana credentials, the K8s informer adapter, the readiness probes, and the orchestration. |
 | `internal/server/` | MCP server construction; middleware composition (Instrument / RequireCaller / ResponseCap / ToolTimeout); transport wrappers for streamable-HTTP and SSE. |
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |

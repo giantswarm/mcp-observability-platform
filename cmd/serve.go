@@ -28,8 +28,9 @@ var serveCmd = &cobra.Command{
 	RunE:  runServe,
 }
 
-// Transport constants for MCP_TRANSPORT / --transport. mcp-go does not
-// export these, so we define our own — matching mcp-kubernetes.
+// Transport names accepted on MCP_TRANSPORT / --transport. mcp-go does not
+// export them as constants; values are the user-facing contract documented
+// in README.
 const (
 	transportStdio          = "stdio"
 	transportSSE            = "sse"
@@ -52,7 +53,6 @@ func init() {
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", false, "enable debug logging (overrides DEBUG env)")
 }
 
-// validateTransport rejects unknown MCP_TRANSPORT values.
 func validateTransport(transport string) error {
 	switch transport {
 	case transportStdio, transportSSE, transportStreamableHTTP:
@@ -83,7 +83,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
 	logger := newLogger(cfg.Debug || flagDebug, cfg.LogFormat)
 
-	ctrlCache, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
+	orgLister, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
 	if err != nil {
 		return err
 	}
@@ -107,13 +107,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// entries cache 30s; negative ones (user-not-found, empty memberships)
 	// use a 5s TTL so a mid-SSO-outage failure doesn't lock anyone out for
 	// half a minute. LRU-bounded so long-running pods don't leak.
-	authorizer, err := authz.NewAuthorizer(k8sOrgLister{reader: ctrlCache}, grafanaClient, logger,
+	authorizer, err := authz.NewAuthorizer(orgLister, grafanaClient, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
 	}
 
-	oauthHandler, storeClose, err := buildOAuthHandler(shutdownCtx, cfg, logger)
+	oauthHandler, storeClose, err := buildOAuthHandler(logger)
 	if err != nil {
 		return err
 	}
@@ -127,13 +127,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
 		defer shutdownWithTimeout(shutdownOTEL)
-	}
-
-	if cfg.OAuthAllowInsecureHTTP {
-		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
-	}
-	if cfg.OAuthAllowPublicClientRegistration {
-		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
 	basicAuth, err := parseGrafanaBasicAuth(cfg.GrafanaBasicAuth)
@@ -168,17 +161,21 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if flagTransport == transportStdio {
 		logger.Info("MCP serving on stdio", "transport", transportStdio)
 		logger.Warn("stdio transport bypasses OAuth — tool calls will hit authz errors unless the session provides a caller identity")
+		// stdio drives lifecycle from stdin EOF; SIGINT/SIGTERM is intentionally
+		// not propagated and shutdownCtx is unused on this path.
 		return mcpsrv.ServeStdio(mcp)
 	}
 
 	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
-	obsMux := buildObsMux(cfg.DexIssuerURL, grafanaClient, listOrgCount(ctrlCache), cacheAlive)
+	obsMux := buildObsMux(os.Getenv(envOAuthDexIssuerURL), grafanaClient, orgLister, cacheAlive)
 
-	startOrgCacheReporter(shutdownCtx, ctrlCache)
+	startOrgCacheReporter(shutdownCtx, orgLister)
 
-	// IdleTimeout closes keep-alives idle past 60s on both servers;
-	// WriteTimeout is set only on the obs server because MCP streaming-HTTP
-	// / SSE responses are intentionally long-lived.
+	// IdleTimeout closes keep-alives idle past 60s on both servers.
+	// MCP omits WriteTimeout because streamable-HTTP / SSE responses are
+	// intentionally long-lived; the obs server caps writes at 10s. MCP's
+	// ReadHeaderTimeout is looser (10s vs 5s) so flaky-network clients can
+	// finish the request line; metrics scrapers should not need slack.
 	mcpServer := &http.Server{
 		Addr:              flagMCPAddr,
 		Handler:           mcpHandler,
@@ -242,8 +239,6 @@ func shutdownWithTimeout(fn func(context.Context) error) {
 	_ = fn(ctx)
 }
 
-// newLogger builds the root slog logger. format is "json" or "text"; debug
-// switches the level from Info to Debug.
 func newLogger(debug bool, format string) *slog.Logger {
 	lvl := slog.LevelInfo
 	if debug {
