@@ -9,15 +9,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// DefaultMaxResponseBytes is enough for typical structured responses; small
-// enough that a pathologically broad query returns a useful error instead
-// of flooding the LLM context.
+// DefaultMaxResponseBytes fits typical structured responses but trips
+// pathologically broad queries before they flood the LLM context.
 const DefaultMaxResponseBytes = 128 * 1024
 
-// ResponseCap replaces oversized TextContent in the tool result with a
-// structured response_too_large payload and marks the result IsError so
-// the LLM client sees a typed, actionable failure (narrow the query)
-// rather than a silently-truncated response. limit <= 0 disables capping.
+// ResponseCap swaps oversized TextContent for a typed response_too_large
+// payload and sets IsError so the LLM sees an actionable failure instead
+// of garbled text. limit <= 0 disables capping.
 func ResponseCap(limit int) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -33,8 +31,6 @@ func ResponseCap(limit int) server.ToolHandlerMiddleware {
 				if !ok || len(t.Text) <= limit {
 					continue
 				}
-				// IsError so the LLM treats this as an actionable failure,
-				// not a successful tool result with garbled text.
 				payload, _ := json.Marshal(responseCapError{
 					Error:   "response_too_large",
 					Bytes:   len(t.Text),
@@ -50,12 +46,8 @@ func ResponseCap(limit int) server.ToolHandlerMiddleware {
 	}
 }
 
-// responseCapError is the structured JSON payload returned when a tool
-// response exceeds the configured cap. LLM clients see a typed error
-// they can react to (by narrowing the query) rather than a truncated
-// result.
 type responseCapError struct {
-	Error   string `json:"error"` // always "response_too_large"
+	Error   string `json:"error"`
 	Bytes   int    `json:"bytes"`
 	Limit   int    `json:"limit"`
 	Message string `json:"message"`

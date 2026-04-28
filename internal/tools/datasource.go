@@ -8,22 +8,27 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/mark3labs/mcp-go/mcp"
+
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// grafanaOpts packages orgID and caller-subject into a RequestOpts so
-// every downstream call attributes to the caller via X-Grafana-User.
+// grafanaOpts builds a RequestOpts that attributes the call to the
+// OIDC subject via X-Grafana-User in Grafana's audit log.
 func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 	return grafana.RequestOpts{OrgID: orgID, Caller: authz.CallerSubject(ctx)}
 }
 
-// resolveDatasource runs the three checks every datasource-facing tool
-// needs in one shot: the caller must have >= role on org, the org must
-// host the required tenant type (empty = skip), and a datasource of
-// the requested kind must exist. Errors are caller-ready strings so
-// handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind) (authz.Organization, int64, error) {
+// resolveDatasource reads "org" from req, runs the three checks every
+// datasource-facing tool needs (role on org, tenant type, datasource
+// of kind), and returns (org, dsID). Errors are caller-ready strings
+// so handlers can surface them unchanged via mcp.NewToolResultError.
+func resolveDatasource(ctx context.Context, az authz.Authorizer, req mcp.CallToolRequest, role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind) (authz.Organization, int64, error) {
+	orgRef, err := req.RequireString("org")
+	if err != nil {
+		return authz.Organization{}, 0, err
+	}
 	org, err := az.RequireOrg(ctx, orgRef, role)
 	if err != nil {
 		return authz.Organization{}, 0, err

@@ -9,19 +9,12 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-// RequireCaller fails tool calls that arrive without an authenticated
-// caller in context. It is a guard, not an authentication step — actual
-// auth happens in mcp-oauth's ValidateToken at the HTTP layer; this
-// middleware asserts the result reached us so a future tool added
-// without explicit authz code is still gated. Per-org/role checks stay
-// in handlers (they need the org arg from tool params).
-//
-// Wired between Instrument and ResponseCap so denials still emit a span
-// and a tool_call audit line. Returning an error result (not a Go error)
-// keeps the LLM-visible failure mode consistent across the tool surface.
-//
-// Stdio bypasses OAuth — tool calls there trip this guard unless the
-// session installs a caller via a stdio context func.
+// RequireCaller is the fail-closed gate that catches any future tool
+// added without explicit authz code. Real authentication runs in
+// mcp-oauth's ValidateToken at the HTTP edge; per-org/role checks stay
+// in handlers (they need the org arg). Returns an IsError result, not
+// a Go error, to match the rest of the tool surface. Stdio sessions
+// trip this guard unless they install a caller via a context func.
 func RequireCaller() server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

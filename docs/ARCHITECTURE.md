@@ -74,12 +74,12 @@ security boundaries are, and where to add a new tool.
 
 | Package | Responsibility |
 |---|---|
-| `cmd/` | Cobra CLI + per-concern builders (`oauth.go`, `orglister.go`, `mux.go`, `serve.go`). `runServe` wires everything in deterministic phase order. |
+| `cmd/` | Cobra CLI + composition root. `runServe` wires the dex provider, OAuth server, K8s informer cache, MCP server, and the two HTTP listeners (MCP on `MCP_ADDR`, observability on `METRICS_ADDR`) in deterministic phase order. OAuth/Dex/storage/encryption env loading is delegated to `mcp-oauth/oauthconfig.*FromEnv`; this package owns Grafana credentials, the K8s informer adapter, the readiness probes, and the orchestration. |
 | `internal/server/` | MCP server construction; middleware composition (Instrument / RequireCaller / ResponseCap / ToolTimeout); transport wrappers for streamable-HTTP and SSE. |
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
 | `internal/grafana/` | HTTP client (`Ping`, `VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `LookupDatasourceUIDByID`, `DatasourceProxy`) plus `Datasource` and `DatasourceKind` (`MatchKind` substring matcher). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
-| `internal/tools/` | One file per tool category. Delegated to upstream: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (and the delegated datasource tools in `orgs.go`). Local: `orgs.go` (`list_orgs`), `alerts.go`, `traces.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` (`grafanabind.go`) wires upstream `grafana/mcp-grafana` handlers onto our MCP server — `bindOrgTool` covers org-only tools; `bindDatasourceTool` resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape. |
+| `internal/tools/` | One file per tool category. Delegated to upstream: `dashboards.go`, `metrics.go` (Prometheus query/labels/metric metadata), `logs.go`, `alerting.go` (and the delegated datasource tools in `orgs.go`). Local: `orgs.go` (`list_orgs`), `alerts.go`, `traces.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` (`grafanabind.go`) wires upstream `grafana/mcp-grafana` handlers onto our MCP server — `bindOrgTool` covers org-only tools; `bindDatasourceTool` resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape. Since mcp-grafana v0.12.1 (#805) the upstream RoundTrippers read `GrafanaConfig` from request context, so the binder constructs one shared `GrafanaClient` and varies OrgID/headers per call. |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -164,9 +164,9 @@ Document why in the file header. Then add the registration:
 ```go
 s.AddTool(
     mcp.NewTool("your_tool_name",
-        ReadOnlyAnnotation(),
+        readOnlyAnnotation(),
         mcp.WithDescription("..."),
-        mcp.WithString("org", mcp.Required(), mcp.Description("...")),
+        orgArg(),
         // ... other args
     ),
     func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

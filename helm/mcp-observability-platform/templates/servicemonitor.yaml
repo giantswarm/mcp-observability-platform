@@ -14,7 +14,7 @@ spec:
     matchLabels:
       {{- include "mcp-observability-platform.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: http
+    - port: metrics
       interval: {{ .Values.serviceMonitor.interval }}
       path: /metrics
       {{- with .Values.serviceMonitor.relabelings }}

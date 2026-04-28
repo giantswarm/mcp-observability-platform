@@ -11,15 +11,15 @@ import (
 	oauth "github.com/giantswarm/mcp-oauth"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
+	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
 
-// buildMCPMux wires the OAuth flow + discovery routes and the
-// transport-specific MCP handler, then wraps the result in otelhttp so
-// inbound W3C traceparents become server spans.
+// buildMCPMux wraps the OAuth + MCP routes in otelhttp so inbound W3C
+// traceparents become server spans.
 func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handler) http.Handler {
 	mux := http.NewServeMux()
 
@@ -52,19 +52,17 @@ func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Ha
 	)
 }
 
-// buildObsMux wires /healthz, /readyz, and /metrics on a single mux that
-// the observability HTTP server serves.
-func buildObsMux(dexIssuerURL string, gf grafana.Client, listOrgs func(context.Context) (int, error), cacheAlive *atomic.Bool) http.Handler {
+func buildObsMux(lister authz.OrgLister, cacheAlive *atomic.Bool) http.Handler {
 	mux := http.NewServeMux()
-	health := setupHealth(dexIssuerURL, gf, listOrgs, cacheAlive)
-	health.Mount(mux)
+	mux.Handle("/healthz", healthz.CheckHandler{Checker: healthz.Ping})
+	mux.Handle("/readyz", healthz.CheckHandler{Checker: readyzChecker(lister, cacheAlive)})
 	mux.Handle("/metrics", observability.MetricsHandler())
 	return mux
 }
 
-// runListenAndServe runs srv.ListenAndServe in a goroutine and cancels
-// shutdownCancel on a non-clean exit so a single failed bind takes the
-// whole process down rather than leaving one server running silently.
+// runListenAndServe cancels shutdownCancel on a non-clean exit so a single
+// failed bind takes the whole process down rather than leaving one server
+// running silently.
 func runListenAndServe(srv *http.Server, label string, logger *slog.Logger, shutdownCancel context.CancelFunc) {
 	go func() {
 		logger.Info(label+" listening", "addr", srv.Addr)
@@ -75,10 +73,11 @@ func runListenAndServe(srv *http.Server, label string, logger *slog.Logger, shut
 	}()
 }
 
-// runTwoPhaseShutdown drains the MCP server first (in-flight tool calls
-// get up to 10s), then the obs server (5s). Health probes and metrics
-// keep working while MCP drains, so a slow tool call doesn't trip a
-// liveness failure mid-drain.
+// runTwoPhaseShutdown drains MCP first (10s) then the obs server (5s).
+// The ordering is load-bearing: by keeping the obs listener up while MCP
+// drains, kubelet's liveness probe still hits a live /healthz and a slow
+// tool call doesn't trip SIGKILL mid-drain. Merging the servers would
+// destroy this property — see review.
 func runTwoPhaseShutdown(logger *slog.Logger, mcpServer, obsServer *http.Server) {
 	mcpDrainCtx, mcpDrainCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer mcpDrainCancel()

@@ -15,15 +15,10 @@ import (
 )
 
 // ctxWithCaller builds a context carrying the given caller via the
-// production withCaller path, so tests exercise the same context-
-// propagation as runtime callers. Authorizer methods derive the caller
-// from ctx via CallerFromContext, with the framework-level RequireCaller
-// middleware already filtering out empty callers before any handler runs.
-//
-// Subject is required at the production boundary (Caller.Empty() rejects
-// subjectless callers — see fail-closed change) but most test fixtures
-// only care about the email-based Grafana lookup; default Subject from
-// Email when the test didn't supply one explicitly.
+// production withCaller path, so tests exercise the same context
+// propagation as runtime callers. Caller.Empty() requires a non-empty
+// Subject; most fixtures only care about the email-based Grafana lookup,
+// so default Subject from Email when the test didn't set one.
 func ctxWithCaller(c Caller) context.Context {
 	if c.Subject == "" && c.Email != "" {
 		c.Subject = "sub-" + c.Email
@@ -32,8 +27,8 @@ func ctxWithCaller(c Caller) context.Context {
 }
 
 // newOrg builds an Organization fixture. tenantTypes populates the single
-// tenant's Types; Datasources include Mimir/Loki entries named after the org
-// so FindDatasourceID tests have realistic matches.
+// tenant's Types; Datasources include Mimir/Loki entries named after the
+// org so FindDatasource tests have realistic matches.
 func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organization {
 	var tenants []Tenant
 	if len(tenantTypes) > 0 {
@@ -66,28 +61,16 @@ func registry(descs ...Organization) *fakeOrgLister {
 	return &fakeOrgLister{descs: descs}
 }
 
-// mustNewAuthorizer constructs an Authorizer with default TTLs and the given
-// cache size, and fails the test if construction errors. Pass cacheSize=-1
-// to disable caching (uncached read-through every call) — the most common
-// shape for tests that assert upstream-call counts.
-func mustNewAuthorizer(t *testing.T, reg OrgLister, g grafana.Client, cacheSize int) Authorizer {
-	t.Helper()
-	res, err := NewAuthorizer(reg, g, nil, 0, 0, cacheSize)
-	if err != nil {
-		t.Fatalf("NewAuthorizer: %v", err)
-	}
-	return res
+// mustNewAuthorizer constructs an Authorizer with default TTLs.
+func mustNewAuthorizer(_ *testing.T, reg OrgLister, g grafana.Client) Authorizer {
+	return NewAuthorizer(reg, g, DefaultCacheTTL, DefaultNegativeCacheTTL)
 }
 
 // mustNewAuthorizerWithTTL is the same as mustNewAuthorizer but exposes
-// the cache TTLs so expiry-window tests can use very short values.
-func mustNewAuthorizerWithTTL(t *testing.T, reg OrgLister, g grafana.Client, positiveTTL, negativeTTL time.Duration, cacheSize int) Authorizer {
-	t.Helper()
-	res, err := NewAuthorizer(reg, g, nil, positiveTTL, negativeTTL, cacheSize)
-	if err != nil {
-		t.Fatalf("NewAuthorizer: %v", err)
-	}
-	return res
+// the cache TTLs so expiry-window tests can use very short values. Pass
+// 0,0 to disable caching entirely.
+func mustNewAuthorizerWithTTL(_ *testing.T, reg OrgLister, g grafana.Client, positiveTTL, negativeTTL time.Duration) Authorizer {
+	return NewAuthorizer(reg, g, positiveTTL, negativeTTL)
 }
 
 // fakeGrafana stubs grafana.Client for authorizer tests. Only LookupUser
@@ -108,7 +91,7 @@ func (f *fakeGrafana) LookupUser(_ context.Context, loginOrEmail string) (*grafa
 	if !ok {
 		return nil, nil // not yet provisioned in Grafana
 	}
-	return &grafana.User{ID: id, Email: loginOrEmail}, nil
+	return &grafana.User{ID: id}, nil
 }
 
 func (f *fakeGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {
@@ -128,7 +111,7 @@ func TestAuthorizer_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 			},
 		},
 	}
-	r := mustNewAuthorizer(t, registry(alpha, beta), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha, beta), g)
 
 	got, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@example.com"}))
 	if err != nil {
@@ -154,7 +137,7 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 			},
 		},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	got, _ := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
 	if len(got) != 0 {
@@ -166,7 +149,7 @@ func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
 	// Grafana returns 404 on lookup → found=false → resolver returns empty
 	// without erroring, so the UX is "no access yet; log into Grafana first".
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
-	r := mustNewAuthorizer(t, registry(), g, -1)
+	r := mustNewAuthorizer(t, registry(), g)
 
 	got, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
 	if err != nil {
@@ -183,7 +166,7 @@ func TestAuthorizer_Resolve_Cache(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
@@ -199,7 +182,7 @@ func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleAdmin)
 	if err == nil {
@@ -213,7 +196,7 @@ func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists but in no orgs
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleViewer)
 	if err == nil {
@@ -227,7 +210,7 @@ func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	org, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "ALPHA TEAM", RoleAdmin)
 	if err != nil {
@@ -323,78 +306,29 @@ func TestRole_MarshalJSON(t *testing.T) {
 	}
 }
 
-// blockingGrafana lets tests gate LookupUser on a channel so concurrent
-// callers are guaranteed to arrive at the cache miss together. Counts both
-// LookupUser and UserOrgs calls atomically under -race. Embeds
-// grafana.Client (nil) so any method we don't override panics if called.
-type blockingGrafana struct {
+// raceGrafana counts LookupUser / UserOrgs calls atomically so concurrent
+// tests work under -race. Embeds grafana.Client (nil) so any method we
+// don't override panics if called.
+type raceGrafana struct {
 	grafana.Client // nil — unused methods panic
 	users          map[string]int64
 	orgs           map[int64][]grafana.UserOrgMembership
 	lookupCalls    atomic.Int32
 	userOrgs       atomic.Int32
-	release        chan struct{}
 }
 
-func (b *blockingGrafana) LookupUser(_ context.Context, loginOrEmail string) (*grafana.User, error) {
+func (b *raceGrafana) LookupUser(_ context.Context, loginOrEmail string) (*grafana.User, error) {
 	b.lookupCalls.Add(1)
-	if b.release != nil {
-		<-b.release
-	}
 	id, ok := b.users[loginOrEmail]
 	if !ok {
 		return nil, nil
 	}
-	return &grafana.User{ID: id, Email: loginOrEmail}, nil
+	return &grafana.User{ID: id}, nil
 }
 
-func (b *blockingGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {
+func (b *raceGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserOrgMembership, error) {
 	b.userOrgs.Add(1)
 	return b.orgs[userID], nil
-}
-
-// TestAuthorizer_Singleflight_CollapsesConcurrentCallers proves that N
-// concurrent callers on the same cold cache key do exactly ONE upstream
-// round-trip, not N. Guards against the "stampede / thundering herd"
-// failure mode where a cache expiry under load fans out.
-func TestAuthorizer_Singleflight_CollapsesConcurrentCallers(t *testing.T) {
-	alpha := newOrg("alpha", "Alpha", 1)
-	g := &blockingGrafana{
-		users:   map[string]int64{"u@e.com": 1},
-		orgs:    map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
-		release: make(chan struct{}),
-	}
-	r := mustNewAuthorizer(t, registry(alpha), g, 100)
-
-	const callers = 50
-	var started sync.WaitGroup
-	started.Add(callers)
-	var done sync.WaitGroup
-	done.Add(callers)
-
-	for range callers {
-		go func() {
-			defer done.Done()
-			started.Done()
-			_, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com", Subject: "sub-1"}))
-			if err != nil {
-				t.Errorf("Resolve: %v", err)
-			}
-		}()
-	}
-	started.Wait()
-	// Race window: all 50 goroutines are blocked on the singleflight group
-	// waiting for one to finish the upstream call. Release the single in-
-	// flight caller; the rest share its result.
-	close(g.release)
-	done.Wait()
-
-	if got := g.lookupCalls.Load(); got != 1 {
-		t.Errorf("LookupUserID calls = %d, want 1 (singleflight should collapse %d concurrent callers)", got, callers)
-	}
-	if got := g.userOrgs.Load(); got != 1 {
-		t.Errorf("UserOrgs calls = %d, want 1", got)
-	}
 }
 
 // TestAuthorizer_CacheKeyIsSubjectNotEmail proves the same Subject under two
@@ -406,26 +340,26 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	// Same subject, different emails — second call should hit cache.
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@old.com", Subject: "sub-1"}))
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: "sub-1"}))
 	if g.calls.lookup != 1 {
-		t.Errorf("LookupUserID calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
+		t.Errorf("LookupUser calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
 	}
 }
 
 // TestAuthorizer_ReturnedSlicesAreCloned proves handler mutations of the
-// returned Organization don't escape into the cache. Before the fix, appending
-// to oa.Datasources silently corrupted every future cache hit.
+// returned Organization don't escape into any shared state — appending to
+// oa.Datasources must not poison subsequent reads.
 func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
@@ -454,7 +388,7 @@ func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, 100)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
@@ -474,14 +408,13 @@ func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 // TestAuthorizer_Require_OrgNotFoundVsNotAuthorised proves that Require
 // returns a distinct ErrOrgNotFound when the org simply doesn't exist,
 // vs ErrNotAuthorised when the org exists but the caller isn't a member.
-// Today both cases are indistinguishable from the caller's side.
 func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists in Grafana but in no orgs
 	}
-	r := mustNewAuthorizer(t, registry(alpha), g, -1)
+	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	// alpha exists but the caller isn't a member → ErrNotAuthorised.
 	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleViewer)
@@ -534,47 +467,37 @@ func TestCaller_IdentityAndEmpty(t *testing.T) {
 	}
 }
 
-// TestAuthorizer_ConcurrentEviction_NoStaleAuthDecisions stresses the LRU
-// under a hot load that forces evictions while concurrent readers are
-// resolving. The invariant: a caller's Resolve must always return a map
-// whose Role + OrgID reflect that caller's own fakeGrafana state — never
-// another caller's state carried across by a cache bug. A regression (e.g.
-// a cache that returns on key-prefix match, or an aliased map across
-// evictions) surfaces here as "caller A sees caller B's org".
-//
-// Run with -race. Failures surface as either a race report or an
-// assertion mismatch on the caller's expected role/org set.
-func TestAuthorizer_ConcurrentEviction_NoStaleAuthDecisions(t *testing.T) {
+// TestAuthorizer_ConcurrentCallers_NoCrossTalk stresses the cache under
+// concurrent reads/writes. Invariant: a caller's resolve must always
+// return a map whose Role + OrgID reflect THAT caller's own state —
+// never another caller's state carried across by a cache bug. Run with
+// -race; failures surface as a race report or an assertion mismatch.
+func TestAuthorizer_ConcurrentCallers_NoCrossTalk(t *testing.T) {
 	const (
-		cacheSize = 16
-		callers   = 64 // > cacheSize so LRU evicts continuously
-		goros     = 32
-		rounds    = 200
+		callers = 64
+		goros   = 32
+		rounds  = 200
 	)
 
-	// One org per caller; caller i is Admin on org i. If the cache ever
-	// returns caller i's entry to caller j, the assertion catches it.
 	orgs := make([]Organization, callers)
 	users := map[string]int64{}
 	orgMap := map[int64][]grafana.UserOrgMembership{}
-	for i := 0; i < callers; i++ {
+	for i := range callers {
 		orgs[i] = newOrg(fmt.Sprintf("org-%d", i), fmt.Sprintf("Org %d", i), int64(i+1))
 		email := fmt.Sprintf("u%d@e.com", i)
 		users[email] = int64(i + 1)
 		orgMap[int64(i+1)] = []grafana.UserOrgMembership{{OrgID: int64(i + 1), Role: "Admin"}}
 	}
-	// blockingGrafana uses atomic counters so LookupUserID is race-safe
-	// under concurrent callers. release==nil means no artificial blocking.
-	g := &blockingGrafana{users: users, orgs: orgMap}
-	r := mustNewAuthorizer(t, registry(orgs...), g, cacheSize)
+	g := &raceGrafana{users: users, orgs: orgMap}
+	r := mustNewAuthorizer(t, registry(orgs...), g)
 
 	var wg sync.WaitGroup
 	wg.Add(goros)
 	errs := make(chan error, goros*rounds)
-	for w := 0; w < goros; w++ {
+	for w := range goros {
 		go func(worker int) {
 			defer wg.Done()
-			for round := 0; round < rounds; round++ {
+			for round := range rounds {
 				// Spread load across callers with two large primes so each
 				// worker visits the full set but in a different order.
 				i := (worker*1315423911 + round*2654435761) % callers
@@ -623,20 +546,18 @@ func mapKeys(m map[string]Organization) []string {
 	return ks
 }
 
-// TestAuthorizer_PositiveCacheTTL_Expires proves that a positive cache
-// entry is re-fetched after the configured TTL elapses. The doc and
-// README treat the 30s positive-cache TTL as the freshness guarantee
-// for org membership; before this test, no assertion proved it
-// actually expires. Uses 20ms TTL + 60ms sleep so the test runs in
-// well under 100ms while still leaving headroom against scheduler
-// jitter.
+// TestAuthorizer_PositiveCacheTTL_Expires proves a positive cache entry
+// is re-fetched after the configured TTL elapses — the 30s positive-cache
+// TTL is the documented freshness guarantee for org membership. Uses 20ms
+// TTL + 60ms sleep so the test runs well under 100ms while leaving
+// headroom against scheduler jitter.
 func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: "Viewer"}}},
 	}
-	r := mustNewAuthorizerWithTTL(t, registry(alpha), g, 20*time.Millisecond, 5*time.Millisecond, 100)
+	r := mustNewAuthorizerWithTTL(t, registry(alpha), g, 20*time.Millisecond, 5*time.Millisecond)
 
 	// First call → upstream lookup.
 	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
@@ -668,7 +589,7 @@ func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 // empty-memberships (other test below).
 func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{} /* never-seen user */}
-	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond, 100)
+	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
 	// First call → 404 → nil user → cached negative.
 	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
@@ -699,7 +620,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_EmptyMemberships(t *testing.T) {
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, no orgs
 	}
-	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond, 100)
+	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
 	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
 		t.Fatalf("ListOrgs#1: %v", err)
@@ -731,7 +652,7 @@ func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 	}
 	reg := registry(alpha)
 	// Long TTL so any leaked cached state would survive the delete.
-	r := mustNewAuthorizerWithTTL(t, reg, g, time.Hour, time.Hour, 100)
+	r := mustNewAuthorizerWithTTL(t, reg, g, time.Hour, time.Hour)
 
 	ctx := ctxWithCaller(Caller{Email: "u@e.com"})
 	// Warm the per-caller cache with a positive entry.
@@ -751,24 +672,23 @@ func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 	}
 }
 
-// TestRequireOrg_RejectsRoleNone proves H2: passing RoleNone as
-// minRole is a vacuous gate (Role.AtLeast(RoleNone) is always true)
-// and must be rejected explicitly so a future contributor can't
-// silently bypass authorisation by writing it.
+// TestRequireOrg_RejectsRoleNone proves passing RoleNone as minRole is
+// a vacuous gate (Role.AtLeast(RoleNone) is always true) and must be
+// rejected explicitly so a future contributor can't silently bypass
+// authorisation by writing it.
 func TestRequireOrg_RejectsRoleNone(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{"u@e.com": 1}}
-	r := mustNewAuthorizer(t, registry(), g, -1)
+	r := mustNewAuthorizer(t, registry(), g)
 	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleNone)
 	if !errors.Is(err, ErrInvalidMinRole) {
 		t.Errorf("err = %v, want wraps ErrInvalidMinRole", err)
 	}
 }
 
-// TestCallerEmpty_RejectsSubjectlessCaller proves H3: a Caller with
-// only an email and no subject is treated as empty even though both
-// fields aren't blank — email is unsafe to use as a cache key (mutable
-// in some IdPs, mappable to a different user) so cacheKey trusts only
-// Subject.
+// TestCallerEmpty_RejectsSubjectlessCaller proves a Caller with only an
+// email and no subject is treated as empty — email is unsafe as a cache
+// key (mutable in some IdPs, mappable to a different user) so cacheKey
+// trusts only Subject.
 func TestCallerEmpty_RejectsSubjectlessCaller(t *testing.T) {
 	if !(Caller{Email: "u@e.com"}).Empty() {
 		t.Error("Caller with email and no Subject must be Empty (subject required)")
@@ -784,7 +704,7 @@ func TestCallerEmpty_RejectsSubjectlessCaller(t *testing.T) {
 	}
 }
 
-// TestRequireOrg_AmbiguousDisplayName proves M2: when multiple
+// TestRequireOrg_AmbiguousDisplayName proves that when multiple
 // registered orgs share a DisplayName, RequireOrg refuses to silently
 // pick one (map iteration is non-deterministic) and returns
 // ErrAmbiguousOrgRef so an operator can fix the collision.
@@ -798,7 +718,7 @@ func TestRequireOrg_AmbiguousDisplayName(t *testing.T) {
 			{OrgID: 2, Role: "Viewer"},
 		}},
 	}
-	r := mustNewAuthorizer(t, registry(a, b), g, -1)
+	r := mustNewAuthorizer(t, registry(a, b), g)
 	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "Prod", RoleViewer)
 	if !errors.Is(err, ErrAmbiguousOrgRef) {
 		t.Errorf("err = %v, want wraps ErrAmbiguousOrgRef", err)

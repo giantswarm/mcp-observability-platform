@@ -2,13 +2,19 @@ suite: servicemonitor
 templates:
   - templates/servicemonitor.yaml
 tests:
-  - it: rendered by default with 30s interval
+  - it: rendered by default with 30s interval, scrapes the metrics port
     asserts:
       - isKind:
           of: ServiceMonitor
       - equal:
           path: spec.endpoints[0].interval
           value: 30s
+      - equal:
+          path: spec.endpoints[0].port
+          value: metrics
+      - equal:
+          path: spec.endpoints[0].path
+          value: /metrics
 
   - it: not rendered when serviceMonitor disabled
     set:

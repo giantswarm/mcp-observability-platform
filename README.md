@@ -67,7 +67,12 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 | `list_prometheus_label_names`        | `api/v1/labels`                                 |
 | `list_prometheus_label_values`       | `api/v1/label/{label}/values`                   |
 | `list_prometheus_metric_metadata`    | `api/v1/metadata`                               |
-| `alerting_manage_rules`              | `api/v1/rules` — read-only meta-tool covering list / get / versions over Mimir-backed alert + recording rules |
+
+**Alert rules (Mimir Ruler)**
+
+| Tool                    | DS proxy path                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `alerting_manage_rules` | `api/v1/rules` — read-only meta-tool: list / get / versions over Mimir-backed alert + recording rules |
 
 **Logs (Loki)**
 
@@ -131,7 +136,10 @@ whole query.
 
 ### Metrics
 
-Prometheus metrics served at `/metrics` on the merged HTTP port (default `:8080`):
+Prometheus metrics served at `/metrics` on the observability port
+(`METRICS_ADDR`, default `:9091`) — split from the MCP HTTP port so
+kubelet probes and Prometheus scrapes keep working through the OAuth
+graceful-drain on shutdown:
 
 | Metric                               | Type      | Labels           |
 | ------------------------------------ | --------- | ---------------- |
@@ -165,7 +173,7 @@ Three MCP transports are wired, selected via `MCP_TRANSPORT`:
 | Transport | When to use | OAuth | Listens on |
 | --- | --- | --- | --- |
 | `streamable-http` (default) | Remote deployment gated by OAuth, the shipping Helm-chart deployment. Works with `claude mcp add --transport http …`, mcp-inspector, browser clients. | Required (mcp-oauth + Dex) | `$MCP_ADDR` (default `:8080`), `POST /mcp` |
-| `sse` | Remote deployment for MCP clients that still prefer SSE (`text/event-stream`). Identical auth and tool surface as streamable-http. | Required | `$MCP_ADDR`, `GET /sse` + `POST /messages` |
+| `sse` | Remote deployment for MCP clients that still prefer SSE (`text/event-stream`). Identical auth and tool surface as streamable-http. | Required | `$MCP_ADDR`, `GET /sse` + `POST /message` |
 | `stdio` | Local-dev and desktop-client integrations (Claude Desktop's `command` server entry, IDE plugins). No HTTP listener, no OAuth — the client is whoever spawned the process, so authz relies on the caller already having the right Grafana / Kubernetes context. | None | stdin/stdout |
 
 OAuth is only meaningful for the network transports; `stdio` treats the
@@ -182,21 +190,21 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`)            |
+| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`). Also probed by `/readyz` for OIDC discovery. |
 | `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
 | `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
 | `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` to unauthenticated callers (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that self-register at runtime. |
-| `OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS`       | no             | `true` to accept loopback redirect URIs (RFC 8252) at registration. The Helm chart defaults to `true` because every MCP CLI client (Claude Code, mcp-inspector, IDE plugins) registers a loopback URI. |
 | `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
 | `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
 | `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
 | `OAUTH_STORAGE_BACKEND`                     | no             | `memory` (default) or `valkey` (read by `oauthconfig.StorageFromEnvWithPrefix("OAUTH_")`) |
 | `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
-| `MCP_ADDR`                                  | no             | Listen address for the merged HTTP surface — `/mcp`, `/oauth/*`, `/metrics`, `/healthz`, `/readyz` are all on the same port (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
+| `MCP_ADDR`                                  | no             | Listen address for the MCP HTTP surface — `/mcp`, `/sse`, `/message`, `/oauth/*`, plus the OAuth discovery routes (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
+| `METRICS_ADDR`                              | no             | Listen address for the observability surface — `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`). Split from `MCP_ADDR` so kubelet probes and Prometheus scrapes keep working through the OAuth graceful-drain on shutdown. |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `TOOL_TIMEOUT`                              | no             | Per-tool-call deadline (default `30s`; `0` = disabled). Go duration syntax (`500ms`, `2m`). A tool exceeding the deadline returns an IsError result with timeout text. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |
