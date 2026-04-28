@@ -75,4 +75,3 @@ func cloneOrganizations(in map[string]Organization) map[string]Organization {
 	}
 	return out
 }
-

@@ -326,7 +326,7 @@ func TestRole_MarshalJSON(t *testing.T) {
 	}
 }
 
-//TestAuthorizer_CacheKeyIsSubjectNotEmail proves the same Subject under two
+// TestAuthorizer_CacheKeyIsSubjectNotEmail proves the same Subject under two
 // different Email values shares a cache entry. Fixes the spoofability
 // concern: email can change or be unverified, subject cannot.
 func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {

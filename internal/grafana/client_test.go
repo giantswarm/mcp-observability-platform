@@ -395,4 +395,3 @@ func TestClient_ErrorBodyCapped(t *testing.T) {
 		t.Errorf("expected body-cap error, got: %v", err)
 	}
 }
-

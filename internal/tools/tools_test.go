@@ -68,4 +68,3 @@ func TestClampInt(t *testing.T) {
 		}
 	}
 }
-

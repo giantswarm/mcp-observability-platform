@@ -182,4 +182,3 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 		t.Errorf("body missing uid: %s", resultText(res))
 	}
 }
-
