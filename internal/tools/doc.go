@@ -11,12 +11,13 @@
 //	alerts.go      — local: Alertmanager v2 alerts (no upstream equivalent)
 //	traces.go      — local: query_traces + Tempo tag discovery (upstream has no Tempo surface)
 //
-// Bridged tools are wired through internal/tools/upstream.Registrar.
-// Registrar.Org covers org-only tools; Registrar.Datasource covers tools
-// that need a datasource UID — it resolves "org" → OrgID + datasource
-// UID server-side so the LLM never sees a datasourceUid argument.
+// Bridged tools are wired through the unexported gfBinder
+// (grafanabind.go). bindOrgTool covers org-only tools; bindDatasourceTool
+// covers tools that need a datasource UID — it resolves "org" → OrgID
+// + datasource UID server-side so the LLM never sees a datasourceUid
+// argument.
 //
 // Shared helpers (datasource.go, pagination.go) carry the bits the
-// remaining local handlers depend on. tools.go holds RegisterAll and
-// the per-category constant tokens.
+// remaining local handlers depend on. tools.go holds RegisterAll, the
+// shared orgArg() helper, and the per-category constant tokens.
 package tools

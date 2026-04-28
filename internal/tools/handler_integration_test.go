@@ -19,7 +19,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // newGrafanaJSONServer wraps handler with a default Content-Type:
@@ -62,12 +61,10 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			{ID: 13, Name: "alertmanager-acme"},
 		},
 	}}
-	r, err := upstream.NewRegistrar(az, gf, ts.URL, "test-token", nil)
-	if err != nil {
-		t.Fatalf("upstream.NewRegistrar: %v", err)
-	}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	RegisterAll(s, az, gf, r)
+	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil); err != nil {
+		t.Fatalf("RegisterAll: %v", err)
+	}
 	return s
 }
 

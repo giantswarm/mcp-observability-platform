@@ -1,6 +1,6 @@
 // Package tools — dashboards.go: dashboards + navigation tools, all
-// delegated to upstream grafana/mcp-grafana via the bridge. Only the
-// local "org" arg is added on top of upstream's schemas.
+// delegated to upstream grafana/mcp-grafana. Only the local "org" arg
+// is added on top of upstream's schemas.
 //
 // Skipped on purpose:
 //   - get_panel_image — LLMs can't reliably interpret PNG bytes through
@@ -15,14 +15,13 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // registerDashboardTools wires the upstream dashboard + navigation tools
-// onto our MCP server. All gate on RoleViewer; the registrar handles
+// onto our MCP server. All gate on RoleViewer; the binder handles
 // org→OrgID resolution and X-Grafana-User caller attribution before
 // delegating.
-func registerDashboardTools(s *mcpsrv.MCPServer, r *upstream.Registrar) {
+func registerDashboardTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.SearchDashboards,
 		mcpgrafanatools.SearchFolders,
@@ -32,6 +31,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, r *upstream.Registrar) {
 		mcpgrafanatools.GetDashboardProperty,
 		mcpgrafanatools.GenerateDeeplink,
 	} {
-		r.Org(s, authz.RoleViewer, t)
+		b.bindOrgTool(s, authz.RoleViewer, t)
 	}
 }

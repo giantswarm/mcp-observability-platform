@@ -2,8 +2,10 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	mcpsrv "github.com/mark3labs/mcp-go/server"
@@ -12,7 +14,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 	"github.com/giantswarm/mcp-observability-platform/internal/tools"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // Config configures a new MCP HTTP server.
@@ -20,11 +21,17 @@ type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	// Registrar wires every upstream-delegated tool (both org-only and
-	// datasource-scoped) onto the MCP server with our authz +
-	// X-Grafana-User attribution applied. Required.
-	Registrar *upstream.Registrar
-	Version   string
+	// GrafanaURL is the base URL the bridged tool handlers use to build
+	// per-request upstream GrafanaClients. Same value as the Grafana
+	// client's URL; threaded through here because the bridge constructs
+	// upstream's client per-call.
+	GrafanaURL string
+	// GrafanaAPIKey and GrafanaBasicAuth are mutually exclusive; exactly
+	// one must be set. Threaded through for the bridge's per-request
+	// upstream GrafanaClient construction.
+	GrafanaAPIKey    string
+	GrafanaBasicAuth *url.Userinfo
+	Version          string
 	// ToolTimeout is the per-tool-handler context deadline. 0 disables
 	// per-handler timeouts (ctx passes through unchanged).
 	ToolTimeout time.Duration
@@ -46,9 +53,6 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	}
 	if cfg.Grafana == nil {
 		return nil, errors.New("server: Grafana is required")
-	}
-	if cfg.Registrar == nil {
-		return nil, errors.New("server: Registrar is required")
 	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
@@ -72,7 +76,9 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
-	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.Registrar)
+	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth); err != nil {
+		return nil, fmt.Errorf("server: register tools: %w", err)
+	}
 
 	return mcp, nil
 }

@@ -1,12 +1,13 @@
 package tools
 
 import (
+	"net/url"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // filterAll is the "no filter" token shared between AM /alerts state
@@ -28,6 +29,12 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 	})
 }
 
+// orgArg is the canonical "org" argument for local tools. Bridged tools
+// build the same arg via withOrg in grafanabind.go.
+func orgArg() mcp.ToolOption {
+	return mcp.WithString("org", mcp.Required(), mcp.Description(orgArgDescription))
+}
+
 // RegisterAll wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding per-category file.
 //
@@ -42,13 +49,17 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 //   - list_orgs (Giant-Swarm-specific GrafanaOrganization CR access)
 //   - Alertmanager v2 alerts (upstream covers OnCall, not Alertmanager)
 //   - Tempo (upstream has no Tempo surface)
-func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, r *upstream.Registrar) {
-	registerOrgTools(s, az, r)
-	registerDashboardTools(s, r)
-	registerMetricsTools(s, r)
-	registerLogTools(s, r)
-	registerAlertingTools(s, r)
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) error {
+	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth)
+	if err != nil {
+		return err
+	}
+	registerOrgTools(s, az, b)
+	registerDashboardTools(s, b)
+	registerMetricsTools(s, b)
+	registerLogTools(s, b)
+	registerAlertingTools(s, b)
 	registerTraceTools(s, az, gc)
 	registerAlertTools(s, az, gc)
+	return nil
 }
-

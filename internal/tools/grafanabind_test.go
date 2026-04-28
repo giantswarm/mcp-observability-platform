@@ -1,4 +1,4 @@
-package upstream
+package tools
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 
 // fakeGrafanaServer satisfies the few endpoints upstream's GrafanaClient
 // pings during construction (frontend settings + a minimal health). Without
-// this the registrar tests do real DNS against "http://g" and slow each
+// this the binder tests do real DNS against "http://g" and slow each
 // test by several seconds.
 func fakeGrafanaServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -43,7 +43,7 @@ func fakeGrafanaServer(t *testing.T) *httptest.Server {
 
 // fakeGrafana implements grafana.Client by embedding the interface (so any
 // method we don't override panics) plus a stub for the one method the
-// registrar calls.
+// binder calls.
 type fakeGrafana struct {
 	grafana.Client // embedded — unused methods nil-panic
 	uid            string
@@ -61,16 +61,16 @@ func (f *fakeGrafana) LookupDatasourceUIDByID(_ context.Context, opts grafana.Re
 	return f.uid, nil
 }
 
-// callerCtx attaches an OAuth caller to ctx using the same plumbing the
+// oauthCtx attaches an OAuth caller to ctx using the same plumbing the
 // HTTP boundary uses. authz.CallerSubject(ctx) then returns sub.
-func callerCtx(sub, email string) context.Context {
+func oauthCtx(sub, email string) context.Context {
 	r := httptest.NewRequest("POST", "/mcp", nil)
 	r = r.WithContext(oauth.ContextWithUserInfo(r.Context(), &providers.UserInfo{ID: sub, Email: email}))
 	return authz.PromoteOAuthCaller(context.Background(), r)
 }
 
 // stubTool builds a minimal mcpgrafana.Tool whose handler records what the
-// registrar passed in: the GrafanaConfig, the datasourceUid arg (if any),
+// binder passed in: the GrafanaConfig, the datasourceUid arg (if any),
 // and the request name.
 func stubTool(name string, required []string, captured *capturedCall) mcpgrafana.Tool {
 	t := mcp.NewTool(name, mcp.WithDescription("stub"))
@@ -154,10 +154,10 @@ func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
 	}
 	in.InputSchema.Required = []string{"datasourceUid", "y"}
 
-	out := withOrg(in, DatasourceUIDArg)
+	out := withOrg(in, datasourceUIDArg)
 
 	if _, has := out.InputSchema.Properties["datasourceUid"]; has {
-		t.Error("output still exposes datasourceUid in Properties; registrar fills it server-side")
+		t.Error("output still exposes datasourceUid in Properties; binder fills it server-side")
 	}
 	if slices.Contains(out.InputSchema.Required, "datasourceUid") {
 		t.Error("output still requires datasourceUid")
@@ -177,9 +177,9 @@ func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
 	}
 }
 
-// ---------- NewRegistrar ----------
+// ---------- newGFBinder ----------
 
-func TestNewRegistrar_Validation(t *testing.T) {
+func TestNewGFBinder_Validation(t *testing.T) {
 	az := &authztest.Fake{}
 	gc := &fakeGrafana{}
 	cases := []struct {
@@ -201,7 +201,7 @@ func TestNewRegistrar_Validation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := NewRegistrar(c.az, c.gc, c.url, c.apiKey, c.basicAuth)
+			_, err := newGFBinder(c.az, c.gc, c.url, c.apiKey, c.basicAuth)
 			if c.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -215,13 +215,13 @@ func TestNewRegistrar_Validation(t *testing.T) {
 	}
 }
 
-// ---------- Org / wrap (org-only path) ----------
+// ---------- bindOrgTool / wrap (org-only path) ----------
 
-func TestRegistrar_Wrap_MissingOrg(t *testing.T) {
+func TestBinder_Wrap_MissingOrg(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	r, _ := NewRegistrar(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil)
+	b, _ := newGFBinder(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	res, err := h(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -235,12 +235,12 @@ func TestRegistrar_Wrap_MissingOrg(t *testing.T) {
 	}
 }
 
-func TestRegistrar_Wrap_AuthzDenied(t *testing.T) {
+func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 	az := &authztest.Fake{Err: errors.New("not authorised")}
 	ts := fakeGrafanaServer(t)
-	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -255,14 +255,14 @@ func TestRegistrar_Wrap_AuthzDenied(t *testing.T) {
 	}
 }
 
-func TestRegistrar_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
+func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	ts := fakeGrafanaServer(t)
-	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
-	ctx := callerCtx("sub-123", "alice@example.com")
+	ctx := oauthCtx("sub-123", "alice@example.com")
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(ctx, req)
 	if err != nil {
@@ -282,12 +282,12 @@ func TestRegistrar_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	}
 }
 
-func TestRegistrar_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
+func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	ts := fakeGrafanaServer(t)
-	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	// No caller in ctx — CallerSubject returns "".
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
@@ -305,14 +305,14 @@ func TestRegistrar_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 
 // ---------- Datasource path ----------
 
-func TestRegistrar_Datasource_InjectsUID(t *testing.T) {
+func TestBinder_Datasource_InjectsUID(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	gc := &fakeGrafana{uid: "mimir-uid-xyz"}
-	r, _ := NewRegistrar(az, gc, ts.URL, "tok", nil)
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg,
+	h := b.wrap(authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg,
 		stubTool("query_prometheus", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up"}}}
@@ -339,15 +339,15 @@ func TestRegistrar_Datasource_InjectsUID(t *testing.T) {
 	}
 }
 
-func TestRegistrar_Datasource_NoMatchingDatasource(t *testing.T) {
+func TestBinder_Datasource_NoMatchingDatasource(t *testing.T) {
 	org := orgWithDatasources()
 	org.Datasources = []authz.Datasource{{ID: 99, Name: "tempo-only"}} // no mimir
 	az := &authztest.Fake{Org: org}
 	ts := fakeGrafanaServer(t)
-	r, _ := NewRegistrar(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -362,13 +362,13 @@ func TestRegistrar_Datasource_NoMatchingDatasource(t *testing.T) {
 	}
 }
 
-func TestRegistrar_Datasource_UIDLookupFails(t *testing.T) {
+func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
 	az := &authztest.Fake{Org: orgWithDatasources()}
 	gc := &fakeGrafana{uidErr: errors.New("grafana down")}
-	r, _ := NewRegistrar(az, gc, "http://g", "tok", nil)
+	b, _ := newGFBinder(az, gc, "http://g", "tok", nil)
 
 	captured := &capturedCall{}
-	h := r.wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)

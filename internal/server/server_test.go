@@ -8,22 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
-
-// stubRegistrar is a minimal *upstream.Registrar that's enough for
-// server.New's non-nil check. The registrar is never actually exercised
-// by these tests — they don't invoke tool handlers.
-func stubRegistrar(az authz.Authorizer) *upstream.Registrar {
-	r, err := upstream.NewRegistrar(az, stubGrafana{}, "http://grafana.local", "stub", nil)
-	if err != nil {
-		panic(err)
-	}
-	return r
-}
 
 // stubGrafana satisfies grafana.Client for server.New's non-nil check.
 // All methods return zero values; they're never invoked in these tests.
@@ -46,27 +33,37 @@ func (stubGrafana) DatasourceProxy(context.Context, grafana.RequestOpts, int64, 
 	return nil, nil
 }
 
-func TestNew_RejectsMissingDependencies(t *testing.T) {
-	log := slog.Default()
-	var resolver authz.Authorizer = &authztest.Fake{}
-	gf := stubGrafana{}
+// goodCfg is a Config with every required field populated; tests start
+// from this and zero one field at a time to assert the validation.
+func goodCfg() Config {
+	return Config{
+		Logger:        slog.Default(),
+		Authorizer:    &authztest.Fake{},
+		Grafana:       stubGrafana{},
+		GrafanaURL:    "http://grafana.local",
+		GrafanaAPIKey: "stub",
+	}
+}
 
-	r := stubRegistrar(resolver)
+func TestNew_RejectsMissingDependencies(t *testing.T) {
 	cases := []struct {
 		name    string
-		cfg     Config
+		mutate  func(*Config)
 		wantErr string
 	}{
-		{"no logger", Config{Authorizer: resolver, Grafana: gf, Registrar: r}, "Logger is required"},
-		{"no authorizer", Config{Logger: log, Grafana: gf, Registrar: r}, "Authorizer is required"},
-		{"no grafana", Config{Logger: log, Authorizer: resolver, Registrar: r}, "Grafana is required"},
-		{"no registrar", Config{Logger: log, Authorizer: resolver, Grafana: gf}, "Registrar is required"},
+		{"no logger", func(c *Config) { c.Logger = nil }, "Logger is required"},
+		{"no authorizer", func(c *Config) { c.Authorizer = nil }, "Authorizer is required"},
+		{"no grafana", func(c *Config) { c.Grafana = nil }, "Grafana is required"},
+		{"no url", func(c *Config) { c.GrafanaURL = "" }, "Grafana URL is required"},
+		{"no creds", func(c *Config) { c.GrafanaAPIKey = "" }, "exactly one of APIKey or BasicAuth"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := New(c.cfg)
+			cfg := goodCfg()
+			c.mutate(&cfg)
+			_, err := New(cfg)
 			if err == nil {
-				t.Fatalf("New(%+v) = nil error, want %q", c.cfg, c.wantErr)
+				t.Fatalf("New(%+v) = nil error, want %q", cfg, c.wantErr)
 			}
 			if !strings.Contains(err.Error(), c.wantErr) {
 				t.Errorf("err = %v, want substring %q", err, c.wantErr)
@@ -77,14 +74,7 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 
 func TestNew_DefaultsVersion(t *testing.T) {
 	// Empty Version must still construct (defaults to "dev").
-	az := &authztest.Fake{}
-	_, err := New(Config{
-		Logger:     slog.Default(),
-		Authorizer: az,
-		Grafana:    stubGrafana{},
-		Registrar:  stubRegistrar(az),
-	})
-	if err != nil {
+	if _, err := New(goodCfg()); err != nil {
 		t.Fatalf("New with empty Version: %v", err)
 	}
 }
