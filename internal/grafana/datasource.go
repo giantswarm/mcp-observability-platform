@@ -2,19 +2,17 @@ package grafana
 
 import "strings"
 
-// Datasource is the domain projection of a Grafana datasource we
-// surface to tool handlers — only the fields the MCP surface actually
-// reads. The full record (URL, secureJsonData, etc.) lives behind
-// LookupDatasourceUIDByID; the GrafanaOrganization CR carries
-// {ID, Name} and the gfBinder in internal/tools resolves UID server-side.
+// Datasource is the domain projection of a Grafana datasource — only
+// the fields the MCP surface actually reads. The GrafanaOrganization
+// CR carries {ID, Name} only; the full record (URL, secureJsonData,
+// etc.) lives behind LookupDatasourceUIDByID.
 type Datasource struct {
 	ID   int64
 	Name string
 }
 
 // DatasourceKind names the canonical role a datasource plays for the
-// MCP (metrics backend, logs backend, traces backend, alerting). Used
-// by tool handlers to pick the right datasource on a caller's org.
+// MCP (metrics backend, logs backend, traces backend, alerting).
 //
 // MatchKind picks the concrete Datasource by case-insensitive name
 // substring; the kind ↔ substring rules live here so the substring

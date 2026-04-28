@@ -61,12 +61,9 @@ type User struct {
 	ID int64 `json:"id"`
 }
 
-// Client is the consumer-facing port onto Grafana. The implementation
-// is small by design: bridged tools talk to upstream's GrafanaClient
-// (built per-call by the bridge); local handlers use DatasourceProxy
-// (alerts triage, Tempo search, Alertmanager v2); authz uses LookupUser
-// + UserOrgs; the bridge uses LookupDatasourceUIDByID. Anything else
-// lives upstream.
+// Client carries the Grafana operations not delegated to upstream's
+// per-call GrafanaClient: server-admin lookups (which need OrgID=0 to
+// use the SA's global context) and a generic datasource proxy.
 type Client interface {
 	Ping(ctx context.Context) error
 	VerifyServerAdmin(ctx context.Context) error
@@ -287,14 +284,14 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*User, er
 	return &out, nil
 }
 
-// LookupDatasourceUIDByID fetches the datasource UID for a numeric ID,
-// in the given org. Used by the upstream-tool bridge to translate our
-// int64 ID into the UID upstream tools require.
+// LookupDatasourceUIDByID fetches the datasource UID for a numeric ID
+// in the given org. Needed because the GrafanaOrganization CR carries
+// int64 IDs while upstream's GrafanaClient takes UIDs.
 //
 // TODO(uid-publish): once observability-operator publishes datasource
-// UIDs in GrafanaOrganization.status.datasources[].uid the bridge will
-// read uid directly from the Datasource model and this lookup goes
-// away. Tracked in docs/roadmap.md.
+// UIDs in GrafanaOrganization.status.datasources[].uid, the Datasource
+// type grows a UID field and this lookup goes away. Tracked in
+// docs/roadmap.md.
 func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error) {
 	if id <= 0 {
 		return "", errors.New("grafana: datasource id must be positive")
@@ -337,9 +334,9 @@ func (c *client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembershi
 // in the given org. Grafana applies the datasource's provisioned tenant
 // headers.
 //
-// path is caller-controlled (tool handlers build it from user input
-// such as "api/v2/alerts" or "api/search"). validateDatasourceProxyPath
-// rejects anything that could escape the proxy prefix.
+// path is caller-controlled (e.g. "api/v2/alerts", "api/search") and
+// must be treated as untrusted; validateDatasourceProxyPath rejects
+// anything that could escape the proxy prefix.
 func (c *client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error) {
 	if err := validateDatasourceProxyPath(path); err != nil {
 		return nil, err
