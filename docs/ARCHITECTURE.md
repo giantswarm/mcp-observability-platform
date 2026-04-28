@@ -73,10 +73,10 @@ security boundaries are, and where to add a new tool.
 
 | Package | Responsibility |
 |---|---|
-| `cmd/` | Cobra CLI + per-concern builders (`oauth.go`, `orgregistry.go`, `mux.go`, `serve.go`). `runServe` wires everything in deterministic phase order. |
+| `cmd/` | Cobra CLI + per-concern builders (`oauth.go`, `orglister.go`, `mux.go`, `serve.go`). `runServe` wires everything in deterministic phase order. |
 | `internal/server/` | MCP server construction; middleware composition (Instrument / RequireCaller / ResponseCap / ToolTimeout); transport wrappers for streamable-HTTP and SSE. |
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
-| `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgRegistry` is a domain port — the K8s informer adapter sits in `cmd/orgregistry.go`. |
+| `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
 | `internal/grafana/` | Slim HTTP client — Ping, VerifyServerAdmin, LookupUser, UserOrgs, LookupDatasourceUIDByID, DatasourceProxy. Bridged tools talk to upstream's `mcpgrafana.GrafanaClient` instead. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
 | `internal/tools/` | One file per tool category. Bridged: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (and bridged datasource tools in `orgs.go`). Local: `orgs.go` (list_orgs), `alerts.go`, `traces.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`. |
 | `internal/tools/upstream/` | Registers upstream `grafana/mcp-grafana` tool handlers onto our MCP server. `Registrar.Org` covers org-only tools; `Registrar.Datasource` covers tools that need a datasource UID (resolves it via `grafana.LookupDatasourceUIDByID` and injects it server-side so the LLM keeps the simple `{org, …}` shape). |

@@ -61,7 +61,7 @@ func validateTransport(transport string) error {
 }
 
 // runServe is the MCP server orchestration entry point. Phase-by-phase
-// helpers live in oauth.go / orgregistry.go / mux.go; runServe reads as a
+// helpers live in oauth.go / orglister.go / mux.go; runServe reads as a
 // single ordered build-then-serve flow.
 func runServe(_ *cobra.Command, _ []string) error {
 	if err := validateTransport(flagTransport); err != nil {
@@ -103,7 +103,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	// authz uses Grafana as the source of truth for org membership.
 	// 30s TTL — role/membership changes propagate within that window.
-	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, grafanaClient, logger, authz.DefaultCacheTTL)
+	authorizer, err := authz.NewAuthorizer(k8sOrgLister{reader: ctrlCache}, grafanaClient, logger, authz.DefaultCacheTTL)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
 	}

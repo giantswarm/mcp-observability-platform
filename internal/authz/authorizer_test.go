@@ -50,25 +50,25 @@ func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organi
 	}
 }
 
-// fakeRegistry implements OrgRegistry for tests — hand-rolled instead of a
+// fakeOrgLister implements OrgLister for tests — hand-rolled instead of a
 // controller-runtime fake client so tests don't need to know about K8s or
 // the CRD package.
-type fakeRegistry struct {
+type fakeOrgLister struct {
 	descs []Organization
 }
 
-func (f *fakeRegistry) List(context.Context) ([]Organization, error) {
+func (f *fakeOrgLister) List(context.Context) ([]Organization, error) {
 	return f.descs, nil
 }
 
-func registry(descs ...Organization) *fakeRegistry {
-	return &fakeRegistry{descs: descs}
+func registry(descs ...Organization) *fakeOrgLister {
+	return &fakeOrgLister{descs: descs}
 }
 
 // mustNewAuthorizer constructs an Authorizer with the default TTL and
 // fails the test if construction errors. Use mustNewAuthorizerWithTTL
 // for tests that need an explicit (typically short) TTL.
-func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g grafana.Client) Authorizer {
+func mustNewAuthorizer(t *testing.T, reg OrgLister, g grafana.Client) Authorizer {
 	t.Helper()
 	res, err := NewAuthorizer(reg, g, nil, 0)
 	if err != nil {
@@ -79,7 +79,7 @@ func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g grafana.Client) Authoriz
 
 // mustNewAuthorizerWithTTL exposes the cache TTL so expiry-window tests
 // can use very short values.
-func mustNewAuthorizerWithTTL(t *testing.T, reg OrgRegistry, g grafana.Client, ttl time.Duration) Authorizer {
+func mustNewAuthorizerWithTTL(t *testing.T, reg OrgLister, g grafana.Client, ttl time.Duration) Authorizer {
 	t.Helper()
 	res, err := NewAuthorizer(reg, g, nil, ttl)
 	if err != nil {

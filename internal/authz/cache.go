@@ -17,7 +17,7 @@ const DefaultCacheTTL = 30 * time.Second
 
 // cacheEntry is one authorizer-cache entry. Holds only the Grafana-side
 // membership snapshot — the registry-side join is recomputed from a
-// fresh OrgRegistry.List on every RequireOrg / ListOrgs call.
+// fresh OrgLister.List on every RequireOrg / ListOrgs call.
 //
 // memberships nil means "user not yet provisioned in Grafana"; empty
 // non-nil means "user found, no org memberships". Both are valid

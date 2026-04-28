@@ -6,7 +6,7 @@
 // that mapping at each user login to compute per-user (org -> role).
 // This package asks Grafana "what orgs does caller X have, and in what role?"
 // via /api/users/lookup + /api/users/{id}/orgs, then enriches each result
-// with tenant/datasource metadata drawn from an OrgRegistry (an informer
+// with tenant/datasource metadata drawn from an OrgLister (an informer
 // cache of GrafanaOrganization CRs in production, an in-memory stub in
 // tests).
 //
@@ -20,7 +20,7 @@
 //   - authorizer.go — Authorizer + RequireOrg / ListOrgs / load.
 //   - cache.go      — TTL cache + clone discipline.
 //   - role.go       — Role enum.
-//   - caller.go     — Caller + OrgRegistry port + context helpers.
+//   - caller.go     — Caller + OrgLister port + context helpers.
 //   - types.go      — Organization + Tenant + Datasource + TenantType +
 //     DatasourceKind domain types plus the methods tool handlers call
 //     (HasTenantType, FindDatasource). Tool-handler consumers import

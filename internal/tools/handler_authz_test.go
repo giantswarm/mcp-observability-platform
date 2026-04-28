@@ -1,6 +1,6 @@
 // Authz-non-bypass integration tests: where the integration tests use
 // authztest.Fake to short-circuit RequireOrg, these wire the real
-// authz.Authorizer against a fake OrgRegistry + fake Grafana lookup and
+// authz.Authorizer against a fake OrgLister + fake Grafana lookup and
 // assert the deny path fires. Catches a future tool that takes an `org`
 // argument but skips RequireOrg — RequireCaller alone wouldn't (a caller
 // is present, just not authorized for this org).
@@ -23,11 +23,11 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// staticOrgRegistry returns a fixed list of orgs. Implements
-// authz.OrgRegistry — the contract is a single List(ctx) method.
-type staticOrgRegistry struct{ orgs []authz.Organization }
+// staticOrgLister returns a fixed list of orgs. Implements
+// authz.OrgLister — the contract is a single List(ctx) method.
+type staticOrgLister struct{ orgs []authz.Organization }
 
-func (r staticOrgRegistry) List(context.Context) ([]authz.Organization, error) {
+func (r staticOrgLister) List(context.Context) ([]authz.Organization, error) {
 	return r.orgs, nil
 }
 
@@ -77,7 +77,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		memberships: map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, zero orgs
 	}
 	az, err := authz.NewAuthorizer(
-		staticOrgRegistry{orgs: []authz.Organization{{
+		staticOrgLister{orgs: []authz.Organization{{
 			Name:        "acme",
 			DisplayName: "Acme",
 			OrgID:       1,

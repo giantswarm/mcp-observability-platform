@@ -44,16 +44,16 @@ type Authorizer interface {
 
 // authorizer answers "what can this caller do?" by asking Grafana for
 // the caller's org memberships and joining them against the
-// OrgRegistry.
+// OrgLister.
 //
 // The cache is keyed on OIDC subject (stable, non-spoofable) and uses
 // a single TTL. A freshly-provisioned user waits one TTL window before
 // access works.
 type authorizer struct {
-	registry OrgRegistry
-	grafana  grafana.Client
-	log      *slog.Logger
-	ttl      time.Duration
+	orgs    OrgLister
+	grafana grafana.Client
+	log     *slog.Logger
+	ttl     time.Duration
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -61,16 +61,16 @@ type authorizer struct {
 
 // NewAuthorizer constructs an Authorizer. ttl=0 uses DefaultCacheTTL.
 // Pass a negative ttl to disable caching (useful for tests).
-func NewAuthorizer(registry OrgRegistry, grafana grafana.Client, log *slog.Logger, ttl time.Duration) (Authorizer, error) {
+func NewAuthorizer(orgs OrgLister, grafana grafana.Client, log *slog.Logger, ttl time.Duration) (Authorizer, error) {
 	if ttl == 0 {
 		ttl = DefaultCacheTTL
 	}
 	return &authorizer{
-		registry: registry,
-		grafana:  grafana,
-		log:      log,
-		ttl:      ttl,
-		cache:    map[string]cacheEntry{},
+		orgs:    orgs,
+		grafana: grafana,
+		log:     log,
+		ttl:     ttl,
+		cache:   map[string]cacheEntry{},
 	}, nil
 }
 
@@ -87,7 +87,7 @@ func (r *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, err
 	if err != nil {
 		return nil, err
 	}
-	orgs, err := r.registry.List(ctx)
+	orgs, err := r.orgs.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list orgs: %w", err)
 	}
@@ -118,7 +118,7 @@ func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 	if err != nil {
 		return Organization{}, err
 	}
-	orgs, err := r.registry.List(ctx)
+	orgs, err := r.orgs.List(ctx)
 	if err != nil {
 		return Organization{}, fmt.Errorf("list orgs: %w", err)
 	}
