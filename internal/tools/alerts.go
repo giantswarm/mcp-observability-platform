@@ -36,7 +36,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveAlertmanagerDS(ctx, az, gc, orgRef)
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -83,7 +83,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveAlertmanagerDS(ctx, az, gc, orgRef)
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -103,13 +103,6 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 			return mcp.NewToolResultJSON(alert)
 		},
 	)
-}
-
-// resolveAlertmanagerDS is the alertmanager-specific specialisation of
-// resolveDatasource, kept as its own name so call sites in resources.go read
-// at the same abstraction level as the tool handlers.
-func resolveAlertmanagerDS(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef string) (authz.Organization, int64, error) {
-	return resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
 }
 
 // fetchAlerts calls Alertmanager's /api/v2/alerts through the Grafana

@@ -34,9 +34,9 @@ Most tool handlers are bridged to upstream
 [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
 synthetic `org` argument and the bridge resolves it to the org's
 OrgID + datasource UID before delegating. Categories without a usable
-upstream equivalent (Tempo, Alertmanager v2 alerts, silences,
-`list_orgs`, triage co-pilots, `explain_query`) stay local. See
-`internal/tools/doc.go` for the per-category rationale.
+upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`, triage
+co-pilots) stay local. See `internal/tools/doc.go` for the per-category
+rationale.
 
 **Orgs & datasources**
 
@@ -46,7 +46,7 @@ upstream equivalent (Tempo, Alertmanager v2 alerts, silences,
 | `list_datasources` | Grafana API | `/api/datasources`; projected to id / uid / name / type        |
 | `get_datasource`   | Grafana API | `/api/datasources/uid/{uid}` full detail                       |
 
-**Dashboards & annotations**
+**Dashboards**
 
 | Tool                           | Backend     | Notes                                                          |
 | ------------------------------ | ----------- | -------------------------------------------------------------- |
@@ -56,11 +56,7 @@ upstream equivalent (Tempo, Alertmanager v2 alerts, silences,
 | `get_dashboard_summary`        | Grafana API | Title / tags / vars / row+panel tree (NO queries)              |
 | `get_dashboard_panel_queries`  | Grafana API | Queries for one panel (by id or title substring) or all        |
 | `get_dashboard_property`       | Grafana API | Sub-tree of the dashboard JSON by RFC 6901 JSON Pointer        |
-| `get_annotations`              | Grafana API | `/api/annotations` filtered by time / dashboard / panel / tags |
-| `get_annotation_tags`          | Grafana API | `/api/annotations/tags` for annotation-tag discovery           |
 | `generate_deeplink`            | Grafana URL | Builds `/d/{uid}?orgId=…&from=…&to=…&viewPanel=…&var-…`        |
-| `get_panel_image`              | Grafana     | Renders a panel as PNG via `/render/d-solo/{uid}` (see below)  |
-| `run_panel_query`              | Grafana API | Runs a panel's stored query directly (auto-routes Mimir/Loki/Tempo) |
 
 **Metrics (Mimir)**
 
@@ -89,17 +85,15 @@ upstream equivalent (Tempo, Alertmanager v2 alerts, silences,
 | Tool                    | DS proxy path                       |
 | ----------------------- | ----------------------------------- |
 | `query_traces`          | `api/search`                        |
-| `query_tempo_metrics`   | `api/metrics/query_range`           |
 | `list_tempo_tag_names`  | `api/v2/search/tags`                |
 | `list_tempo_tag_values` | `api/v2/search/tag/{tag}/values`    |
 
-**Alerts & silences (Alertmanager)**
+**Alerts (Alertmanager)**
 
 | Tool           | DS proxy path                                              |
 | -------------- | ---------------------------------------------------------- |
 | `list_alerts`  | `api/v2/alerts` — paged, severity-sorted                   |
 | `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
-| `list_silences` | `api/v2/silences` — paged, end-time-sorted                |
 
 **Triage co-pilots**
 
@@ -111,7 +105,6 @@ exists; OSS-only — no Grafana Cloud Sift backend required.
 | -------------------------- | -------------------------------------------------------------------------------- |
 | `find_error_pattern_logs`  | service-label probe → `loki/api/v1/index/stats` size guard → `query_range` with error-keyword regex |
 | `find_slow_requests`       | TraceQL builder (`resource.service.name` + `duration > min` + optional `status=error`) → Tempo `api/search` |
-| `explain_query`            | wraps PromQL in `count(...)` → Mimir `api/v1/query` for series-count preflight   |
 
 ### Resources and prompts — deliberately not implemented
 
@@ -176,38 +169,17 @@ Plus default Go and process collectors.
 
 Spans mirror this on the `tool.outcome` attribute; the span is marked Error only on `system_error` (user errors are normal, same convention as HTTP servers not marking 4xx Error).
 
-### Tracing and logs
+### Tracing
 
 OpenTelemetry tracing is wired via the standard `OTEL_EXPORTER_OTLP_*`
 environment variables. When no endpoint is set, spans go to a no-op tracer
 and the W3C trace-context propagator is still installed so incoming headers
 are respected. Spans are emitted per tool call and per Grafana HTTP request.
 
-When `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or the shared
-`OTEL_EXPORTER_OTLP_ENDPOINT`) is set, slog records — operator logs and
-the audit stream — fan out through the `otelslog` bridge, so every record
-carries `trace_id` + `span_id` from ctx. Operators can click from a
-tool-call span straight to the surrounding log lines in Loki/Grafana
-without a correlation-ID scheme.
-
-### Image renderer (for `get_panel_image`)
-
-`get_panel_image` proxies to Grafana's `/render/d-solo/{uid}` endpoint,
-which requires the `grafana-image-renderer` plugin. Without it, Grafana
-returns HTML and the tool responds with an actionable error pointing at
-this setup. Two deployment options:
-
-1. **Plugin installed in Grafana** — set `GF_INSTALL_PLUGINS=grafana-image-renderer`
-   in the Grafana container. Simple, but Chromium adds ~300 MB and CPU/mem
-   pressure on the Grafana pod.
-2. **Standalone renderer service (recommended)** — deploy
-   `grafana/grafana-image-renderer` as its own Deployment/Service in the
-   cluster, and set on Grafana:
-   - `GF_RENDERING_SERVER_URL=http://grafana-image-renderer:8081/render`
-   - `GF_RENDERING_CALLBACK_URL=http://grafana:3000/`
-
-Either way, no changes are required on this MCP once the renderer is
-reachable from Grafana.
+`Instrument` middleware also writes a structured `tool_call` slog line
+to the app logger (caller, tool, outcome, duration, trace_id, span_id) so
+no-OTLP setups still get a queryable record. The cluster log pipeline
+ships stderr to Loki; an MCP gateway can correlate via the trace IDs.
 
 ### Transports
 
@@ -233,7 +205,6 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `GRAFANA_PUBLIC_URL`                        | no             | Human-facing Grafana URL for deeplinks; defaults to `GRAFANA_URL` |
 | `DEX_ISSUER_URL`                            | yes            | Dex issuer                                               |
 | `DEX_CLIENT_ID`                             | yes            | Dex OAuth client                                         |
 | `DEX_CLIENT_SECRET`                         | yes            | Dex OAuth client secret                                  |

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -13,8 +14,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-
-	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 )
 
 // stubRequest builds a CallToolRequest with the given tool name and args.
@@ -42,8 +41,8 @@ func decodeAuditLine(t *testing.T, buf *bytes.Buffer) map[string]any {
 func applyHandler(t *testing.T, h server.ToolHandlerFunc, name string, args map[string]any) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
-	log := audit.NewJSON(&buf)
-	wrapped := Instrument(log)(h)
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	wrapped := Instrument(logger)(h)
 	_, _ = wrapped(context.Background(), stubRequest(name, args))
 	return decodeAuditLine(t, &buf)
 }
@@ -117,8 +116,8 @@ func TestInstrument_IsErrorWithNoContentRecordsPlaceholder(t *testing.T) {
 }
 
 func TestInstrument_NilLoggerIsPassthrough(t *testing.T) {
-	// audit.Logger.Record is nil-safe, so Instrument(nil) must still drive
-	// the handler and emit span + metric side-effects without panicking.
+	// Instrument(nil) disables audit emission while keeping span +
+	// metric side-effects. The handler must still run and not panic.
 	called := false
 	h := Instrument(nil)(func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		called = true

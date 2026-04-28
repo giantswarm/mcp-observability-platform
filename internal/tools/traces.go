@@ -1,4 +1,6 @@
-// Package tools — traces.go: Tempo trace tools (query_traces, tempo metrics, tag names/values).
+// Package tools — traces.go: Tempo trace tools (query_traces + tag
+// discovery). Local because upstream grafana/mcp-grafana has no Tempo
+// surface today.
 package tools
 
 import (
@@ -7,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,27 +33,6 @@ func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			mcp.WithString("end", mcp.Description("RFC3339 or unix seconds")),
 			mcp.WithNumber("limit", mcp.Description("Max traces (default 20)")),
 		),
-		datasourceProxyHandler(az, gc, datasourceSpec{
-			Role:         authz.RoleViewer,
-			NeedTenant:   authz.TenantTypeData,
-			NameContains: []string{dsKindTempo},
-			InstantPath:  "api/search",
-			QueryArg:     "q",
-			ExtraArg:     "limit",
-			Timeout:      20 * time.Second,
-		}),
-	)
-
-	s.AddTool(
-		mcp.NewTool("query_tempo_metrics",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("Run a TraceQL metrics query against Tempo (via the /api/metrics/query_range endpoint). Returns trace-derived RED metrics as a Prometheus-shaped result."),
-			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
-			mcp.WithString("query", mcp.Required(), mcp.Description("TraceQL metrics expression, e.g. '{ .service.name = \"api\" } | rate()'.")),
-			mcp.WithString("start", mcp.Description("RFC3339 or unix seconds; default now-1h.")),
-			mcp.WithString("end", mcp.Description("RFC3339 or unix seconds; default now.")),
-			mcp.WithString("step", mcp.Description("Step, e.g. 30s, 1m.")),
-		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			orgRef, err := req.RequireString("org")
 			if err != nil {
@@ -66,17 +48,21 @@ func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			}
 			ctx, cancel := withToolTimeout(ctx, 20*time.Second)
 			defer cancel()
-			q := url.Values{}
-			q.Set("q", query)
-			q.Set("start", cmp.Or(req.GetString("start", ""), fmt.Sprintf("%d", time.Now().Add(-time.Hour).Unix())))
-			q.Set("end", cmp.Or(req.GetString("end", ""), fmt.Sprintf("%d", time.Now().Unix())))
-			if step := req.GetString("step", ""); step != "" {
-				q.Set("step", step)
+
+			q := url.Values{"q": []string{query}}
+			if s := req.GetString("start", ""); s != "" {
+				q.Set("start", s)
 			}
-			observability.GrafanaProxyTotal.WithLabelValues("api/metrics/query_range").Inc()
-			body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/metrics/query_range", q)
+			if e := req.GetString("end", ""); e != "" {
+				q.Set("end", e)
+			}
+			if lim := req.GetInt("limit", 0); lim > 0 {
+				q.Set("limit", strconv.Itoa(lim))
+			}
+			observability.GrafanaProxyTotal.WithLabelValues("api/search").Inc()
+			body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/search", q)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("tempo metrics", err), nil
+				return mcp.NewToolResultErrorFromErr("tempo search", err), nil
 			}
 			return mcp.NewToolResultText(string(body)), nil
 		},

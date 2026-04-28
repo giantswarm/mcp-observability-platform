@@ -25,8 +25,7 @@ func stubBridge(az authz.Authorizer) *upstream.Bridge {
 }
 
 // stubResolver is an authz.Authorizer implementation that's enough to pass
-// server.New's non-nil check. Methods are never actually invoked in these
-// validation-path tests.
+// server.New's non-nil check. Methods are never invoked in these tests.
 type stubResolver struct{}
 
 func (stubResolver) RequireOrg(context.Context, string, authz.Role) (authz.Organization, error) {
@@ -36,16 +35,14 @@ func (stubResolver) ListOrgs(context.Context) (map[string]authz.Organization, er
 	return nil, nil
 }
 
-// stubGrafana satisfies grafana.Client for server.New's non-nil check. All
-// methods return zero values; they're never invoked in these tests.
-type stubGrafana struct{}
+// stubGrafana satisfies grafana.Client for server.New's non-nil check.
+// All methods return zero values; they're never invoked in these tests.
+type stubGrafana struct {
+	grafana.Client // embedded — keeps the stub honest if the interface grows
+}
 
 func (stubGrafana) Ping(context.Context) error              { return nil }
 func (stubGrafana) VerifyServerAdmin(context.Context) error { return nil }
-func (stubGrafana) BaseURL() *url.URL                       { return nil }
-func (stubGrafana) HasImageRenderer(context.Context) (bool, error) {
-	return false, nil
-}
 func (stubGrafana) LookupUser(context.Context, string) (*grafana.User, error) {
 	return nil, nil
 }
@@ -55,39 +52,14 @@ func (stubGrafana) LookupDatasourceUIDByID(context.Context, grafana.RequestOpts,
 func (stubGrafana) UserOrgs(context.Context, int64) ([]grafana.UserOrgMembership, error) {
 	return nil, nil
 }
-func (stubGrafana) GetDashboard(context.Context, grafana.RequestOpts, string) (json.RawMessage, error) {
-	return nil, nil
-}
-func (stubGrafana) SearchDashboards(context.Context, grafana.RequestOpts, string, int) (json.RawMessage, error) {
-	return nil, nil
-}
-func (stubGrafana) SearchFolders(context.Context, grafana.RequestOpts, string, int) (json.RawMessage, error) {
-	return nil, nil
-}
-func (stubGrafana) ListDatasources(context.Context, grafana.RequestOpts) (json.RawMessage, error) {
-	return nil, nil
-}
-func (stubGrafana) GetDatasource(context.Context, grafana.RequestOpts, string) (json.RawMessage, error) {
-	return nil, nil
-}
-func (stubGrafana) GetAnnotations(context.Context, grafana.RequestOpts, url.Values) (json.RawMessage, error) {
-	return nil, nil
-}
-func (stubGrafana) GetAnnotationTags(context.Context, grafana.RequestOpts, url.Values) (json.RawMessage, error) {
-	return nil, nil
-}
 func (stubGrafana) DatasourceProxy(context.Context, grafana.RequestOpts, int64, string, url.Values) (json.RawMessage, error) {
 	return nil, nil
 }
-func (stubGrafana) RenderPanel(context.Context, grafana.RequestOpts, string, int, url.Values) ([]byte, string, error) {
-	return nil, "", nil
-}
 
 func TestNew_RejectsMissingDependencies(t *testing.T) {
-	// dummy non-nil values for the fields we're NOT testing in each case
 	log := slog.Default()
 	var resolver authz.Authorizer = stubResolver{}
-	gf := stubGrafana{} // ditto
+	gf := stubGrafana{}
 
 	br := stubBridge(resolver)
 	cases := []struct {
@@ -114,9 +86,7 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 }
 
 func TestNew_DefaultsVersion(t *testing.T) {
-	// When Version is empty, New should still succeed and default to "dev".
-	// We can't easily inspect the mcp-go server's stored version, but we can
-	// at least confirm construction doesn't fail on the default path.
+	// Empty Version must still construct (defaults to "dev").
 	az := stubResolver{}
 	_, err := New(Config{
 		Logger:     slog.Default(),

@@ -5,14 +5,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestHealthChecker_Liveness_AlwaysOK(t *testing.T) {
-	h := NewHealthChecker("test", 2*time.Second)
-	// Register a probe that would fail readiness; liveness must still pass.
-	h.Register("broken", func(ctx context.Context) (any, error) { return nil, errors.New("boom") })
+func TestHealth_Liveness_AlwaysOK(t *testing.T) {
+	h := NewHealth(2 * time.Second)
+	// Even with a probe that would fail readiness, liveness must pass.
+	h.Register("broken", func(context.Context) error { return errors.New("boom") })
 	rec := httptest.NewRecorder()
 	h.Liveness(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
@@ -20,27 +21,46 @@ func TestHealthChecker_Liveness_AlwaysOK(t *testing.T) {
 	}
 }
 
-func TestHealthChecker_Readiness_503OnFailure(t *testing.T) {
-	h := NewHealthChecker("test", 2*time.Second)
-	h.Register("fine", func(ctx context.Context) (any, error) { return nil, nil })
-	h.Register("broken", func(ctx context.Context) (any, error) { return nil, errors.New("boom") })
+func TestHealth_Readiness_503OnFirstFailure(t *testing.T) {
+	h := NewHealth(2 * time.Second)
+	h.Register("first", func(context.Context) error { return nil })
+	h.Register("broken", func(context.Context) error { return errors.New("boom") })
 
 	rec := httptest.NewRecorder()
 	h.Readiness(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readiness with one failure = %d, want 503", rec.Code)
 	}
+	if !strings.Contains(rec.Body.String(), `"broken"`) {
+		t.Errorf("body should name the failing probe, got %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "boom") {
+		t.Errorf("body should include the probe error, got %q", rec.Body.String())
+	}
 }
 
-func TestHealthChecker_Readiness_200WhenAllPass(t *testing.T) {
-	h := NewHealthChecker("test", 2*time.Second)
-	h.Register("a", func(ctx context.Context) (any, error) { return nil, nil })
-	h.Register("b", func(ctx context.Context) (any, error) { return nil, nil })
+func TestHealth_Readiness_200WhenAllPass(t *testing.T) {
+	h := NewHealth(2 * time.Second)
+	h.Register("a", func(context.Context) error { return nil })
+	h.Register("b", func(context.Context) error { return nil })
 
 	rec := httptest.NewRecorder()
 	h.Readiness(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("readiness all-pass = %d, want 200", rec.Code)
+	}
+}
+
+func TestHealth_Readiness_StopsAtFirstFailure(t *testing.T) {
+	h := NewHealth(2 * time.Second)
+	var ranSecond bool
+	h.Register("first", func(context.Context) error { return errors.New("first failed") })
+	h.Register("second", func(context.Context) error { ranSecond = true; return nil })
+
+	rec := httptest.NewRecorder()
+	h.Readiness(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ranSecond {
+		t.Error("second probe ran after first failed; serial-stop-at-first contract violated")
 	}
 }
 
@@ -60,9 +80,8 @@ func TestHTTPProbe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Disable redirect following so /redirect surfaces as a 301 response
-	// the probe can inspect, instead of the client transparently
-	// resolving it to /ok and returning 200.
+	// Disable redirect following so /redirect surfaces as a 301 the
+	// probe can reject; otherwise the client transparently resolves it.
 	client := *srv.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
@@ -71,14 +90,13 @@ func TestHTTPProbe(t *testing.T) {
 		wantErr bool
 	}{
 		{"/ok", false},
-		{"/created", false}, // 2xx (not just 200) must pass
+		{"/created", false}, // any 2xx must pass
 		{"/redirect", true}, // 3xx must fail
 		{"/fail", true},     // 5xx must fail
 	}
 	for _, c := range cases {
 		t.Run(c.path, func(t *testing.T) {
-			probe := HTTPProbe(&client, srv.URL+c.path)
-			_, err := probe(context.Background())
+			err := HTTPProbe(&client, srv.URL+c.path)(context.Background())
 			if c.wantErr && err == nil {
 				t.Fatalf("%s: want error, got nil", c.path)
 			}

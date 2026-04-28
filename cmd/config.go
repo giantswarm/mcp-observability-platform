@@ -48,7 +48,6 @@ type config struct {
 	ValkeyPassword              string
 	ValkeyTLS                   bool
 	GrafanaURL                  string
-	GrafanaPublicURL            string
 	GrafanaSAToken              string
 	GrafanaBasicAuth            string
 
@@ -117,7 +116,6 @@ func loadConfig() (*config, error) {
 		ValkeyPassword:                     os.Getenv("VALKEY_PASSWORD"),
 		ValkeyTLS:                          valkeyTLS,
 		GrafanaURL:                         os.Getenv("GRAFANA_URL"),
-		GrafanaPublicURL:                   os.Getenv("GRAFANA_PUBLIC_URL"),
 		GrafanaSAToken:                     os.Getenv("GRAFANA_SA_TOKEN"),
 		GrafanaBasicAuth:                   os.Getenv("GRAFANA_BASIC_AUTH"),
 		ToolTimeout:                        toolTimeout,

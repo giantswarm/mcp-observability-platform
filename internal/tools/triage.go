@@ -10,8 +10,6 @@
 // primitives. Same surface, different back end. If a future
 // open-sourced Sift becomes available, the bridge can replace these
 // handlers verbatim.
-//
-// explain_query is bespoke — no upstream counterpart.
 package tools
 
 import (
@@ -36,7 +34,6 @@ const (
 	errorPatternRegex        = `(?i)(error|fail|fatal|panic|exception|traceback)`
 	findErrorPatternMaxBytes = 256 << 20
 	defaultTriageLookback    = 15 * time.Minute
-	explainQuerySeriesWarn   = 10_000
 )
 
 // serviceLabelCandidates are probed in order; OTel emits service_name,
@@ -67,16 +64,6 @@ func registerTriageTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cl
 			mcp.WithBoolean("errors_only", mcp.Description("If true, filter to status=error spans only.")),
 		),
 		findSlowRequestsHandler(az, gc),
-	)
-
-	s.AddTool(
-		mcp.NewTool("explain_query",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("Estimate how many series a PromQL expression returns BEFORE running it, by wrapping it in count(). Use to preflight expensive or vague queries — a >10k series count usually means the user wants topk() or aggregation, and refusing here is cheaper than a Mimir timeout."),
-			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
-			mcp.WithString("promql", mcp.Required(), mcp.Description("PromQL expression to estimate.")),
-		),
-		explainQueryHandler(az, gc),
 	)
 }
 
@@ -229,62 +216,6 @@ func findSlowRequestsHandler(az authz.Authorizer, gc grafana.Client) func(contex
 	}
 }
 
-// explainQueryHandler implements explain_query: wrap promql in count(...)
-// and run an instant query against Mimir, returning the series count and
-// a warning when it exceeds explainQuerySeriesWarn.
-func explainQueryHandler(az authz.Authorizer, gc grafana.Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		orgRef, err := req.RequireString("org")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		promql, err := req.RequireString("promql")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		promql = strings.TrimSpace(promql)
-		if promql == "" {
-			return mcp.NewToolResultError("promql must not be empty"), nil
-		}
-
-		org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindMimir)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		ctx, cancel := withToolTimeout(ctx, 15*time.Second)
-		defer cancel()
-
-		countQuery := "count(" + promql + ")"
-		q := url.Values{}
-		q.Set("query", countQuery)
-		observability.GrafanaProxyTotal.WithLabelValues("api/v1/query").Inc()
-		body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/v1/query", q)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("explain_query", err), nil
-		}
-		out := struct {
-			OriginalQuery string          `json:"original_query"`
-			CountQuery    string          `json:"count_query"`
-			SeriesCount   *int64          `json:"series_count,omitempty"`
-			Warning       string          `json:"warning,omitempty"`
-			Raw           json.RawMessage `json:"raw,omitempty"`
-		}{
-			OriginalQuery: promql,
-			CountQuery:    countQuery,
-		}
-		seriesCount, ok := parsePromInstantScalar(body)
-		if !ok {
-			out.Raw = body
-			return mcp.NewToolResultJSON(out)
-		}
-		out.SeriesCount = &seriesCount
-		if seriesCount > explainQuerySeriesWarn {
-			out.Warning = fmt.Sprintf("query would return %d series — narrow with label matchers, aggregation, or topk() before running", seriesCount)
-		}
-		return mcp.NewToolResultJSON(out)
-	}
-}
-
 // pickServiceLabel returns the first label in serviceLabelCandidates whose
 // values list contains service. Returns ("", nil) when none match,
 // ("", err) only if every candidate's HTTP/JSON probe failed.
@@ -332,56 +263,6 @@ func buildSlowRequestsTraceQL(service string, minDur time.Duration, errorsOnly b
 	}
 	b.WriteString(` }`)
 	return b.String()
-}
-
-// parsePromInstantScalar extracts an integer from a Prometheus instant-query
-// response, handling both vector ([{value:[ts,"N"]}]) and scalar ([ts,"N"])
-// shapes. (0, true) on empty vector is intentional — count of zero series
-// is a valid answer.
-func parsePromInstantScalar(body []byte) (int64, bool) {
-	var env struct {
-		Status string `json:"status"`
-		Data   struct {
-			ResultType string          `json:"resultType"`
-			Result     json.RawMessage `json:"result"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &env); err != nil || env.Status != "success" {
-		return 0, false
-	}
-	switch env.Data.ResultType {
-	case "vector":
-		var samples []struct {
-			Value [2]any `json:"value"`
-		}
-		if err := json.Unmarshal(env.Data.Result, &samples); err != nil {
-			return 0, false
-		}
-		if len(samples) == 0 {
-			return 0, true
-		}
-		return parsePromValue(samples[0].Value[1])
-	case "scalar":
-		var pair [2]any
-		if err := json.Unmarshal(env.Data.Result, &pair); err != nil {
-			return 0, false
-		}
-		return parsePromValue(pair[1])
-	}
-	return 0, false
-}
-
-// parsePromValue parses a Prometheus value cell ("3.14") to int64.
-func parsePromValue(v any) (int64, bool) {
-	s, ok := v.(string)
-	if !ok {
-		return 0, false
-	}
-	n, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return int64(n), true
 }
 
 // parseDurationOrDefault parses a Go duration. Empty input returns def.
