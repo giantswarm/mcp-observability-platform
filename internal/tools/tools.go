@@ -50,6 +50,7 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	registerMetricsTools(s, b)
 	registerLogTools(s, b)
 	registerAlertingTools(s, b)
+	registerLokiRulesTool(s, az, gc)
 	registerTraceTools(s, az, gc)
 	registerAlertTools(s, az, gc)
 	return nil

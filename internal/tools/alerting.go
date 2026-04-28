@@ -16,5 +16,5 @@ import (
 func registerAlertingTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	// alerting_manage_rules uses snake_case "datasource_uid" — every other
 	// upstream tool uses camelCase "datasourceUid".
-	b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir, "datasource_uid", mcpgrafanatools.ManageRulesRead)
+	b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, "datasource_uid", mcpgrafanatools.ManageRulesRead)
 }

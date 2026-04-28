@@ -18,7 +18,6 @@ type stubGrafana struct {
 	grafana.Client
 }
 
-func (stubGrafana) Ping(context.Context) error              { return nil }
 func (stubGrafana) VerifyServerAdmin(context.Context) error { return nil }
 func (stubGrafana) LookupUser(context.Context, string) (*grafana.User, error) {
 	return nil, nil

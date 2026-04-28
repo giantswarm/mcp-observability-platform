@@ -85,9 +85,15 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		azClient, 0, 0,
 	)
 
-	// Tool-side Grafana client. The test fails if the tool reaches here —
-	// authz must deny first.
+	// Tool-side Grafana client. The test fails if a TOOL handler reaches
+	// here — authz must deny first. /api/frontend/settings is the
+	// upstream client's eager-init probe (in newGFBinder); it's allowed.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/frontend/settings" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"appUrl":"http://example/"}`))
+			return
+		}
 		t.Errorf("downstream Grafana should not be called when authz denies; got %s %s", r.Method, r.URL.Path)
 		http.Error(w, "test failure", http.StatusInternalServerError)
 	}))

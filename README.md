@@ -72,7 +72,7 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 
 | Tool                    | DS proxy path                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------ |
-| `alerting_manage_rules` | `api/v1/rules` — read-only meta-tool: list / get / versions over Mimir-backed alert + recording rules |
+| `alerting_manage_rules` | Grafana `/api/prometheus/{datasourceUID}/api/v1/rules` (delegated to upstream `mcp-grafana`). Read-only meta-tool: list / get / versions over Mimir-backed alerting rules. **Recording rules are dropped by upstream's projection** — use `list_loki_rules` (Loki) or query Mimir's ruler directly until upstream adds them. |
 
 **Logs (Loki)**
 
@@ -83,6 +83,7 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 | `query_loki_stats`         | `loki/api/v1/index/stats`                                |
 | `list_loki_label_names`    | `loki/api/v1/labels`                                     |
 | `list_loki_label_values`   | `loki/api/v1/label/{label}/values`                       |
+| `list_loki_rules`          | `prometheus/api/v1/rules` — alerting + recording rules from Loki's ruler |
 
 **Traces (Tempo)**
 
@@ -204,7 +205,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
 | `MCP_ADDR`                                  | no             | Listen address for the MCP HTTP surface — `/mcp`, `/sse`, `/message`, `/oauth/*`, plus the OAuth discovery routes (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
-| `METRICS_ADDR`                              | no             | Listen address for the observability surface — `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`). Split from `MCP_ADDR` so kubelet probes and Prometheus scrapes keep working through the OAuth graceful-drain on shutdown. |
+| `METRICS_ADDR`                              | no             | Listen address for the observability surface — `/metrics`, `/healthz`, `/readyz` (default `:9091`). Split from `MCP_ADDR` so kubelet probes and Prometheus scrapes keep working through the OAuth graceful-drain on shutdown. |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `TOOL_TIMEOUT`                              | no             | Per-tool-call deadline (default `30s`; `0` = disabled). Go duration syntax (`500ms`, `2m`). A tool exceeding the deadline returns an IsError result with timeout text. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |

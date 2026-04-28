@@ -97,13 +97,18 @@ type capturedCall struct {
 	toolName string
 }
 
-// orgWithDatasources is a stock authz.Organization fixture.
+// orgWithDatasources is a stock authz.Organization fixture. Tenants
+// carry both data and alerting types so the binder's tenant-type gate
+// passes regardless of which kind a test exercises.
 func orgWithDatasources() authz.Organization {
 	return authz.Organization{
 		Name:        "acme",
 		DisplayName: "Acme",
 		OrgID:       7,
 		Role:        authz.RoleViewer,
+		Tenants: []authz.Tenant{
+			{Name: "acme", Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting}},
+		},
 		Datasources: []grafana.Datasource{
 			{ID: 11, Name: "mimir-acme"},
 			{ID: 22, Name: "loki-acme"},
@@ -220,7 +225,7 @@ func TestBinder_Wrap_MissingOrg(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	res, err := h(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -239,7 +244,7 @@ func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -259,7 +264,7 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	ctx := oauthCtx("sub-123", "alice@example.com")
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"org": "acme"}}}
@@ -286,7 +291,7 @@ func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
+	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	// No caller in ctx — CallerSubject returns "".
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
@@ -311,7 +316,7 @@ func TestBinder_Datasource_InjectsUID(t *testing.T) {
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg,
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg,
 		stubTool("query_prometheus", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up"}}}
@@ -346,7 +351,7 @@ func TestBinder_Datasource_NoMatchingDatasource(t *testing.T) {
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -367,7 +372,7 @@ func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
 	b, _ := newGFBinder(az, gc, "http://g", "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)

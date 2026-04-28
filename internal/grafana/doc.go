@@ -3,8 +3,8 @@
 //   - A thin HTTP client (client.go) for operations not delegated to
 //     upstream's per-call GrafanaClient: user / membership lookups
 //     (LookupUser, UserOrgs); datasource UID lookup
-//     (LookupDatasourceUIDByID); reachability probes (Ping,
-//     VerifyServerAdmin); and a generic datasource passthrough
+//     (LookupDatasourceUIDByID); the server-admin self-check
+//     (VerifyServerAdmin); and a generic datasource passthrough
 //     (DatasourceProxy).
 //   - Datasource + DatasourceKind taxonomy (datasource.go) — the
 //     domain projection of a Grafana datasource and its canonical-

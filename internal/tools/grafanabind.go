@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
-	"sync"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,21 +29,17 @@ const datasourceUIDArg = "datasourceUid"
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
 // datasource-scoped tools) datasource UID resolution.
+//
+// upstream is a single shared client; mcp-grafana's RoundTrippers read
+// OrgID/ExtraHeaders/Auth from GrafanaConfigFromContext on each call,
+// so per-caller state moves through ctx via attachGrafana.
 type gfBinder struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
 	url        string
 	apiKey     string
 	basicAuth  *url.Userinfo
-
-	// upstream is a single client reused across requests. mcp-grafana
-	// v0.12.1 (#805) made the OrgID/ExtraHeaders/Auth RoundTrippers read
-	// from GrafanaConfigFromContext(req.Context()) on every call, so per
-	// caller state moves to ctx via attachGrafana. The client is built
-	// lazily on first authz-passed request because NewGrafanaClient
-	// hits /api/frontend/settings during construction.
-	upstreamOnce sync.Once
-	upstream     *mcpgrafana.GrafanaClient
+	upstream   *mcpgrafana.GrafanaClient
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
@@ -66,24 +61,18 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 		url:        grafanaURL,
 		apiKey:     apiKey,
 		basicAuth:  basicAuth,
+		// Eager: the /api/frontend/settings round-trip is no worse than
+		// VerifyServerAdmin already paying at startup, and lazy-init lets
+		// the first request's ctx bleed into the long-lived client.
+		upstream: mcpgrafana.NewGrafanaClient(context.Background(), grafanaURL, apiKey, basicAuth),
 	}, nil
-}
-
-// upstreamClient lazily builds the shared upstream GrafanaClient on
-// first use so the /api/frontend/settings round-trip in
-// NewGrafanaClient is deferred until an authz-passing request runs.
-func (b *gfBinder) upstreamClient(ctx context.Context) *mcpgrafana.GrafanaClient {
-	b.upstreamOnce.Do(func() {
-		b.upstream = mcpgrafana.NewGrafanaClient(ctx, b.url, b.apiKey, b.basicAuth)
-	})
-	return b.upstream
 }
 
 // bindOrgTool registers an upstream tool that needs only org→OrgID
 // resolution. The synthetic "org" argument is prepended to the
 // LLM-visible schema; every other arg passes through unchanged.
 func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
-	s.AddTool(withOrg(t.Tool, ""), b.wrap(role, "", "", t))
+	s.AddTool(withOrg(t.Tool, ""), b.wrap(role, "", "", "", t))
 }
 
 // bindDatasourceTool registers an upstream tool that needs a datasource
@@ -92,10 +81,14 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 // and injects argName=<uid> server-side so the LLM never sees a
 // datasourceUid arg.
 //
+// tenantType gates the call to orgs that carry that tenant type
+// (TenantTypeData for metrics/logs/traces/rules; TenantTypeAlerting is
+// reserved for Alertmanager-shaped tools, which today are local).
+//
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
 // "datasource_uid" (snake_case) for alerting_manage_rules.
-func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, kind grafana.DatasourceKind, argName string, t mcpgrafana.Tool) {
-	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, kind, argName, t))
+func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind, argName string, t mcpgrafana.Tool) {
+	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, tenantType, kind, argName, t))
 }
 
 // withOrg returns a copy of an upstream tool definition with an "org"
@@ -137,9 +130,10 @@ func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 
 // wrap builds the tool-handler that performs authz + context setup, then
 // delegates to upstream's tool handler. kind == "" skips the datasource
-// resolution branch; kind != "" requires argName to be the schema arg
-// the upstream handler reads the UID from.
-func (b *gfBinder) wrap(role authz.Role, kind grafana.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
+// resolution and tenant-type checks (org-only path); kind != "" requires
+// argName to be the schema arg the upstream handler reads the UID from
+// and a tenantType the org must carry.
+func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		orgRef, err := req.RequireString("org")
 		if err != nil {
@@ -150,6 +144,9 @@ func (b *gfBinder) wrap(role authz.Role, kind grafana.DatasourceKind, argName st
 			return mcp.NewToolResultErrorFromErr("authz", err), nil
 		}
 		if kind != "" {
+			if tenantType != "" && !org.HasTenantType(tenantType) {
+				return mcp.NewToolResultError(fmt.Sprintf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType)), nil
+			}
 			ds, ok := org.FindDatasource(kind)
 			if !ok {
 				return mcp.NewToolResultError(fmt.Sprintf("org %q has no %s datasource configured", orgRef, kind)), nil
@@ -183,7 +180,7 @@ func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Conte
 		cfg.ExtraHeaders = map[string]string{"X-Grafana-User": subj}
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	ctx = mcpgrafana.WithGrafanaClient(ctx, b.upstreamClient(ctx))
+	ctx = mcpgrafana.WithGrafanaClient(ctx, b.upstream)
 	return ctx
 }
 
