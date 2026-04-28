@@ -10,9 +10,6 @@
 //	orgs.go        — list_orgs (local) + bridged list/get_datasource
 //	alerts.go      — local: Alertmanager v2 alerts (no upstream equivalent)
 //	traces.go      — local: query_traces + Tempo tag discovery (upstream has no Tempo surface)
-//	triage.go      — local: find_error_pattern_logs / find_slow_requests,
-//	                 mimicking the upstream Sift API on open-source primitives
-//	                 (Sift backend is Grafana Cloud only)
 //
 // Bridging happens through internal/tools/upstream: WithOrg /
 // WithOrgReplacingArg on the schema side, Bridge.Wrap /

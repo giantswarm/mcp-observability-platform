@@ -34,65 +34,37 @@ var registry = func() *prometheus.Registry {
 	return r
 }()
 
-// ToolCallTotal counts every MCP tool invocation by name and outcome.
-// Outcome bucketing lives in middleware.Classify.
+// ToolCallTotal counts every MCP tool invocation by name. Pair with
+// ToolCallErrorsTotal for an error rate (HTTP-server idiom).
 var ToolCallTotal = promauto.With(registry).NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "tool_call_total",
-		Help:      "Number of MCP tool calls, labeled by tool name and outcome (ok|user_error|system_error).",
+		Help:      "Number of MCP tool calls, labeled by tool name.",
 	},
-	[]string{"tool", "outcome"},
+	[]string{"tool"},
+)
+
+// ToolCallErrorsTotal counts tool invocations that returned a Go error
+// or an IsError result. PromQL: rate(mcp_tool_call_errors_total[5m]) /
+// rate(mcp_tool_call_total[5m]) for the error rate.
+var ToolCallErrorsTotal = promauto.With(registry).NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "tool_call_errors_total",
+		Help:      "Number of MCP tool calls that returned an error, labeled by tool name.",
+	},
+	[]string{"tool"},
 )
 
 var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "tool_call_duration_seconds",
-		Help:      "Duration of MCP tool handlers, by tool name and outcome.",
+		Help:      "Duration of MCP tool handlers, by tool name.",
 		Buckets:   prometheus.DefBuckets,
 	},
-	[]string{"tool", "outcome"},
-)
-
-// GrafanaProxyTotal counts datasource-proxy calls by downstream path so we can
-// see which observability backend (Mimir/Loki/Tempo/AM) is most used.
-var GrafanaProxyTotal = promauto.With(registry).NewCounterVec(
-	prometheus.CounterOpts{
-		Namespace: namespace,
-		Name:      "grafana_proxy_total",
-		Help:      "Number of Grafana datasource-proxy calls, labeled by downstream path.",
-	},
-	[]string{"path"},
-)
-
-// GrafanaProxyDuration measures per-path Grafana proxy latency. The path
-// label is the downstream API path (bounded cardinality: one label value per
-// registered tool). The status label distinguishes success from error so
-// ops can see tail-latency changes during incidents — before this split,
-// the error path skipped Observe entirely and half the signal vanished.
-var GrafanaProxyDuration = promauto.With(registry).NewHistogramVec(
-	prometheus.HistogramOpts{
-		Namespace: namespace,
-		Name:      "grafana_proxy_duration_seconds",
-		Help:      "Duration of Grafana datasource-proxy calls, by downstream path and status.",
-		// Proxy calls are typically sub-second (simple Mimir/Loki queries
-		// with label matchers); DefBuckets' top bucket of 10s is plenty
-		// and gives dense resolution in the 5 ms–1 s range where
-		// regressions are most visible.
-		Buckets: prometheus.DefBuckets,
-	},
-	[]string{"path", "status"},
-)
-
-// OrgCacheSize reports the number of GrafanaOrganization CRs currently cached.
-// Updated periodically by the authz layer.
-var OrgCacheSize = promauto.With(registry).NewGauge(
-	prometheus.GaugeOpts{
-		Namespace: namespace,
-		Name:      "org_cache_size",
-		Help:      "Number of GrafanaOrganization CRs in the informer cache.",
-	},
+	[]string{"tool"},
 )
 
 // MetricsHandler returns an http.Handler that serves /metrics in Prometheus

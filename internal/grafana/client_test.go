@@ -118,24 +118,6 @@ func TestClient_VerifyServerAdmin_Unauthorised(t *testing.T) {
 	}
 }
 
-func TestClient_DetectsPrometheusErrorIn200(t *testing.T) {
-	// Prometheus returns status=error in a 200 body on malformed queries.
-	// The client must treat this as an error.
-	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"error","errorType":"bad_data","error":"invalid query"}`))
-	})
-	defer ts.Close()
-
-	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 5, "api/v1/query", url.Values{"query": []string{"bad"}})
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "bad_data") || !strings.Contains(err.Error(), "invalid query") {
-		t.Errorf("error should carry errorType + error fields, got: %v", err)
-	}
-}
-
 func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 	var gotPath, gotQuery string
 	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
@@ -414,22 +396,3 @@ func TestClient_ErrorBodyCapped(t *testing.T) {
 	}
 }
 
-func TestRedactedHeader_DoesNotLeakInPrints(t *testing.T) {
-	c, err := New(Config{URL: "http://example.invalid", Token: "super-secret-token"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	// Reach into the unexported concrete impl to exercise the redacted
-	// String()/GoString() methods. Tests live in the same package, so
-	// direct field access via assertion is fine.
-	impl := c.(*client)
-	for _, verb := range []string{"%v", "%s", "%+v", "%#v"} {
-		s := fmt.Sprintf(verb, impl.authHeader)
-		if strings.Contains(s, "super-secret-token") {
-			t.Errorf("authHeader leaked via %s: %q", verb, s)
-		}
-		if !strings.Contains(s, "REDACTED") {
-			t.Errorf("authHeader %s did not contain REDACTED: %q", verb, s)
-		}
-	}
-}

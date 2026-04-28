@@ -15,8 +15,9 @@ import (
 const DefaultMaxResponseBytes = 128 * 1024
 
 // ResponseCap replaces oversized TextContent in the tool result with a
-// structured response_too_large payload, marking the result IsError so
-// Classify routes it to user_error. limit <= 0 disables capping.
+// structured response_too_large payload and marks the result IsError so
+// the LLM client sees a typed, actionable failure (narrow the query)
+// rather than a silently-truncated response. limit <= 0 disables capping.
 func ResponseCap(limit int) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -32,9 +33,8 @@ func ResponseCap(limit int) server.ToolHandlerMiddleware {
 				if !ok || len(t.Text) <= limit {
 					continue
 				}
-				// Replace oversized content with the structured cap payload
-				// and mark the result as IsError so Classify() buckets this
-				// as user_error (expected, LLM-actionable — not a server bug).
+				// IsError so the LLM treats this as an actionable failure,
+				// not a successful tool result with garbled text.
 				payload, _ := json.Marshal(responseCapError{
 					Error:   "response_too_large",
 					Bytes:   len(t.Text),

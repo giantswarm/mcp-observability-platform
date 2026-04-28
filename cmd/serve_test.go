@@ -122,10 +122,10 @@ func TestShutdown_DrainsInFlightRequests(t *testing.T) {
 // When a tool call runs longer than the drain budget (pathological upstream,
 // missing ToolTimeout override), Shutdown returns context.DeadlineExceeded
 // and the in-flight handler is cut off — which surfaces in production as a
-// non-zero exit from mcpServer.Shutdown and the "mcp server drain returned
-// error" warning. Documents that contract so a future naive increase in
-// the drain budget (to "just let everything finish") isn't silently safer
-// than running ToolTimeout-capped handlers.
+// non-zero exit from srv.Shutdown and the "server drain returned error"
+// warning. Documents that contract so a future naive increase in the drain
+// budget (to "just let everything finish") isn't silently safer than
+// running ToolTimeout-capped handlers.
 func TestShutdown_DeadlineStarvesSlowHandler(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)

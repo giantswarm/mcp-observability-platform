@@ -149,25 +149,20 @@ whole query.
 
 ### Metrics
 
-Prometheus metrics served at `:9091/metrics`:
+Prometheus metrics served at `/metrics` on the merged HTTP port (default `:8080`):
 
-| Metric                               | Type      | Labels            |
-| ------------------------------------ | --------- | ----------------- |
-| `mcp_tool_call_total`                | counter   | `tool`, `outcome` |
-| `mcp_tool_call_duration_seconds`     | histogram | `tool`, `outcome` |
-| `mcp_grafana_proxy_total`            | counter   | `path`            |
-| `mcp_grafana_proxy_duration_seconds` | histogram | `path`, `status`  |
-| `mcp_org_cache_size`                 | gauge     | —                 |
+| Metric                               | Type      | Labels           |
+| ------------------------------------ | --------- | ---------------- |
+| `mcp_tool_call_total`                | counter   | `tool`           |
+| `mcp_tool_call_errors_total`         | counter   | `tool`           |
+| `mcp_tool_call_duration_seconds`     | histogram | `tool`           |
+
+Per-Grafana-request observation lives on the OTEL span emitted by
+`internal/grafana.client.fetch` — no separate aggregate counter.
 
 Plus default Go and process collectors.
 
-`outcome` values:
-
-- `ok` — handler returned a non-error result.
-- `user_error` — handler returned `isError: true` (user-visible failure such as a missing arg, authz denial, or `response_too_large`). Expected behaviour.
-- `system_error` — handler returned a Go error (upstream unreachable, panic caught by mcp-go's `WithRecovery`, bug). Ops-actionable.
-
-Spans mirror this on the `tool.outcome` attribute; the span is marked Error only on `system_error` (user errors are normal, same convention as HTTP servers not marking 4xx Error).
+Tool error rate is `errors_total / total` per tool — the standard two-counter pattern. Error spans are marked Error regardless of whether the handler returned a Go error or an `IsError` result.
 
 ### Tracing
 
@@ -177,7 +172,7 @@ and the W3C trace-context propagator is still installed so incoming headers
 are respected. Spans are emitted per tool call and per Grafana HTTP request.
 
 `Instrument` middleware also writes a structured `tool_call` slog line
-to the app logger (caller, tool, outcome, duration, trace_id, span_id) so
+to the app logger (caller, tool, error, duration, trace_id, span_id) so
 no-OTLP setups still get a queryable record. The cluster log pipeline
 ships stderr to Loki; an MCP gateway can correlate via the trace IDs.
 
@@ -205,21 +200,20 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `DEX_ISSUER_URL`                            | yes            | Dex issuer                                               |
-| `DEX_CLIENT_ID`                             | yes            | Dex OAuth client                                         |
-| `DEX_CLIENT_SECRET`                         | yes            | Dex OAuth client secret                                  |
+| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`)            |
+| `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
+| `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
+| `OAUTH_DEX_REDIRECT_URL`                    | yes            | Provider callback URL — typically `$OAUTH_ISSUER/oauth/callback`. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
-| `OAUTH_REDIRECT_URL`                        | no             | Defaults to `$OAUTH_ISSUER/oauth/callback`               |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only)  |
 | `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that use loopback redirect URIs per RFC 8252. |
-| `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token encryption at rest; 64-char hex (`openssl rand -hex 32`) or 44-char standard base64 (`openssl rand -base64 32`). Rejected if entropy is too low (all-zeros, repeated byte). |
-| `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `DEX_ISSUER_URL`. Empty = own-tokens-only. |
+| `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char standard base64 (`openssl rand -base64 32`). Entropy is checked at startup. `*_FILE` variant supported. |
+| `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
 | `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
-| `OAUTH_STORAGE`                             | no             | `memory` (default) or `valkey`                           |
-| `VALKEY_ADDR` / `_PASSWORD` / `_TLS`        | no             | Required when `OAUTH_STORAGE=valkey`                     |
+| `OAUTH_STORAGE_BACKEND`                     | no             | `memory` (default) or `valkey` (read by `oauthconfig.StorageFromEnvWithPrefix("OAUTH_")`) |
+| `OAUTH_VALKEY_ADDRESS` / `_PASSWORD` / `_TLS` | no           | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
-| `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
-| `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`) |
+| `MCP_ADDR`                                  | no             | Listen address for the merged HTTP surface — `/mcp`, `/oauth/*`, `/metrics`, `/healthz`, `/readyz` are all on the same port (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `TOOL_TIMEOUT`                              | no             | Per-tool-call deadline (default `30s`; `0` = disabled). Go duration syntax (`500ms`, `2m`). A tool exceeding the deadline returns an IsError result with timeout text. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |

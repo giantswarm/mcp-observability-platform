@@ -17,6 +17,7 @@ import (
 	"github.com/giantswarm/mcp-oauth/providers"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
@@ -39,28 +40,6 @@ func fakeGrafanaServer(t *testing.T) *httptest.Server {
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return ts
-}
-
-// fakeAuthorizer records the arguments to RequireOrg and returns a
-// caller-supplied result. ListOrgs is unused by the bridge but
-// satisfies the interface.
-type fakeAuthorizer struct {
-	org    authz.Organization
-	err    error
-	gotRef string
-	gotMin authz.Role
-}
-
-func (f *fakeAuthorizer) RequireOrg(_ context.Context, ref string, min authz.Role) (authz.Organization, error) {
-	f.gotRef = ref
-	f.gotMin = min
-	if f.err != nil {
-		return authz.Organization{}, f.err
-	}
-	return f.org, nil
-}
-func (f *fakeAuthorizer) ListOrgs(_ context.Context) (map[string]authz.Organization, error) {
-	return nil, nil
 }
 
 // fakeGrafana implements grafana.Client by embedding the interface (so
@@ -133,14 +112,14 @@ func orgWithDatasources() authz.Organization {
 	}
 }
 
-// ---------- WithOrg / WithOrgReplacingDatasource ----------
+// ---------- WithOrg ----------
 
 func TestWithOrg_AddsRequiredOrgArg(t *testing.T) {
 	in := mcp.NewTool("foo", mcp.WithDescription("d"))
 	in.InputSchema.Properties = map[string]any{"x": map[string]any{"type": "number"}}
 	in.InputSchema.Required = []string{"x"}
 
-	out := WithOrg(in)
+	out := WithOrg(in, "")
 
 	if _, ok := out.InputSchema.Properties["org"].(map[string]any); !ok {
 		t.Fatal("output missing 'org' in Properties")
@@ -166,10 +145,10 @@ func TestWithOrg_PanicsOnOrgCollision(t *testing.T) {
 			t.Fatal("expected panic on org-arg collision, got none")
 		}
 	}()
-	_ = WithOrg(in)
+	_ = WithOrg(in, "")
 }
 
-func TestWithOrgReplacingDatasource_RemovesDatasourceUid(t *testing.T) {
+func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
 	in := mcp.NewTool("foo", mcp.WithDescription("d"))
 	in.InputSchema.Properties = map[string]any{
 		"datasourceUid": map[string]any{"type": "string"},
@@ -177,7 +156,7 @@ func TestWithOrgReplacingDatasource_RemovesDatasourceUid(t *testing.T) {
 	}
 	in.InputSchema.Required = []string{"datasourceUid", "y"}
 
-	out := WithOrgReplacingDatasource(in)
+	out := WithOrg(in, DatasourceUIDArg)
 
 	if _, has := out.InputSchema.Properties["datasourceUid"]; has {
 		t.Error("output still exposes datasourceUid in Properties; bridge fills it server-side")
@@ -193,17 +172,17 @@ func TestWithOrgReplacingDatasource_RemovesDatasourceUid(t *testing.T) {
 	}
 	// Input must not have been mutated.
 	if _, has := in.InputSchema.Properties["org"]; has {
-		t.Error("WithOrgReplacingDatasource mutated input.Properties")
+		t.Error("WithOrg mutated input.Properties")
 	}
 	if !slices.Contains(in.InputSchema.Required, "datasourceUid") {
-		t.Error("WithOrgReplacingDatasource mutated input.Required")
+		t.Error("WithOrg mutated input.Required")
 	}
 }
 
 // ---------- NewBridge ----------
 
 func TestNewBridge_Validation(t *testing.T) {
-	az := &fakeAuthorizer{}
+	az := &authztest.Fake{}
 	gc := &fakeGrafana{}
 	cases := []struct {
 		name      string
@@ -242,9 +221,9 @@ func TestNewBridge_Validation(t *testing.T) {
 
 func TestBridge_Wrap_MissingOrg(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	br, _ := NewBridge(&fakeAuthorizer{}, &fakeGrafana{}, ts.URL, "tok", nil)
+	br, _ := NewBridge(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, stubTool("t", nil, captured))
+	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	res, err := h(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
@@ -259,11 +238,11 @@ func TestBridge_Wrap_MissingOrg(t *testing.T) {
 }
 
 func TestBridge_Wrap_AuthzDenied(t *testing.T) {
-	az := &fakeAuthorizer{err: errors.New("not authorised")}
+	az := &authztest.Fake{Err: errors.New("not authorised")}
 	ts := fakeGrafanaServer(t)
 	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, stubTool("t", nil, captured))
+	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -279,11 +258,11 @@ func TestBridge_Wrap_AuthzDenied(t *testing.T) {
 }
 
 func TestBridge_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
-	az := &fakeAuthorizer{org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgWithDatasources()}
 	ts := fakeGrafanaServer(t)
 	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, stubTool("t", nil, captured))
+	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	ctx := callerCtx("sub-123", "alice@example.com")
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"org": "acme"}}}
@@ -294,8 +273,8 @@ func TestBridge_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError on happy path: %+v", res)
 	}
-	if az.gotRef != "acme" || az.gotMin != authz.RoleViewer {
-		t.Errorf("authz called with (%q, %v), want (acme, Viewer)", az.gotRef, az.gotMin)
+	if az.GotRef != "acme" || az.GotMin != authz.RoleViewer {
+		t.Errorf("authz called with (%q, %v), want (acme, Viewer)", az.GotRef, az.GotMin)
 	}
 	if captured.cfg.OrgID != 7 {
 		t.Errorf("OrgID = %d, want 7", captured.cfg.OrgID)
@@ -306,11 +285,11 @@ func TestBridge_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 }
 
 func TestBridge_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
-	az := &fakeAuthorizer{org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgWithDatasources()}
 	ts := fakeGrafanaServer(t)
 	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
-	h := br.Wrap(authz.RoleViewer, stubTool("t", nil, captured))
+	h := br.Wrap(authz.RoleViewer, "", "", stubTool("t", nil, captured))
 
 	// No caller in ctx — CallerSubject returns "".
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
@@ -330,12 +309,12 @@ func TestBridge_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 
 func TestBridge_WrapDatasource_InjectsUID(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	az := &fakeAuthorizer{org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgWithDatasources()}
 	gc := &fakeGrafana{uid: "mimir-uid-xyz"}
 	br, _ := NewBridge(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir,
+	h := br.Wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg,
 		stubTool("query_prometheus", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up"}}}
@@ -365,12 +344,12 @@ func TestBridge_WrapDatasource_InjectsUID(t *testing.T) {
 func TestBridge_WrapDatasource_NoMatchingDatasource(t *testing.T) {
 	org := orgWithDatasources()
 	org.Datasources = []authz.Datasource{{ID: 99, Name: "tempo-only"}} // no mimir
-	az := &fakeAuthorizer{org: org}
+	az := &authztest.Fake{Org: org}
 	ts := fakeGrafanaServer(t)
 	br, _ := NewBridge(az, &fakeGrafana{}, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, stubTool("t", []string{"datasourceUid"}, captured))
+	h := br.Wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -386,12 +365,12 @@ func TestBridge_WrapDatasource_NoMatchingDatasource(t *testing.T) {
 }
 
 func TestBridge_WrapDatasource_UIDLookupFails(t *testing.T) {
-	az := &fakeAuthorizer{org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgWithDatasources()}
 	gc := &fakeGrafana{uidErr: errors.New("grafana down")}
 	br, _ := NewBridge(az, gc, "http://g", "tok", nil)
 
 	captured := &capturedCall{}
-	h := br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, stubTool("t", []string{"datasourceUid"}, captured))
+	h := br.Wrap(authz.RoleViewer, authz.DSKindMimir, DatasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)

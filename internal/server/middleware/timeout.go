@@ -17,10 +17,7 @@ const DefaultToolTimeout = 30 * time.Second
 // ToolTimeout wraps every tool handler with a context deadline. On timeout
 // the handler's ctx.Done() fires, next returns an error, and the middleware
 // converts that into an IsError result so the LLM sees actionable text
-// rather than a silent hang.
-//
-// Runs innermost of the standard middleware chain so Instrument observes
-// the timeout as a system_error. timeout <= 0 passes ctx through unchanged.
+// rather than a silent hang. timeout <= 0 passes ctx through unchanged.
 func ToolTimeout(timeout time.Duration) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

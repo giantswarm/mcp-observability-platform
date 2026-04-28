@@ -1,9 +1,9 @@
-// Authz-non-bypass integration tests: where the existing handler tests use
-// a fakeAuthz that always grants, these wire the real authz.Authorizer
-// against a fake OrgRegistry + fake Grafana lookup and assert the deny
-// path fires. Belt-and-braces for the RequireCaller middleware: catches
-// a future tool that takes an `org` argument but skips RequireOrg, where
-// RequireCaller alone wouldn't (a caller is present, just not authorized).
+// Authz-non-bypass integration tests: where the integration tests use
+// authztest.Fake to short-circuit RequireOrg, these wire the real
+// authz.Authorizer against a fake OrgRegistry + fake Grafana lookup and
+// assert the deny path fires. Catches a future tool that takes an `org`
+// argument but skips RequireOrg — RequireCaller alone wouldn't (a caller
+// is present, just not authorized for this org).
 package tools
 
 import (
@@ -83,7 +83,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 			DisplayName: "Acme",
 			OrgID:       1,
 		}}},
-		azClient, nil, 0, 0, -1, // -1 disables the LRU so each call hits the upstream stubs.
+		azClient, nil, 0,
 	)
 	if err != nil {
 		t.Fatalf("authz.NewAuthorizer: %v", err)

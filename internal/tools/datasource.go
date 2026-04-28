@@ -20,11 +20,10 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 
 // resolveDatasource runs the three checks every datasource-facing tool
 // needs in one shot: the caller must have >= role on org, the org must
-// host the required tenant type (empty = skip), and a datasource whose
-// name contains all nameContains substrings (case-insensitive) must
-// exist. Errors are caller-ready strings so handlers can surface them
-// unchanged.
-func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, role authz.Role, tenantType authz.TenantType, nameContains ...string) (authz.Organization, int64, error) {
+// host the required tenant type (empty = skip), and a datasource of
+// the requested kind must exist. Errors are caller-ready strings so
+// handlers can surface them unchanged.
+func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, role authz.Role, tenantType authz.TenantType, kind authz.DatasourceKind) (authz.Organization, int64, error) {
 	org, err := az.RequireOrg(ctx, orgRef, role)
 	if err != nil {
 		return authz.Organization{}, 0, err
@@ -32,9 +31,9 @@ func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, 
 	if tenantType != "" && !org.HasTenantType(tenantType) {
 		return authz.Organization{}, 0, fmt.Errorf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType)
 	}
-	dsID, ok := org.FindDatasourceID(nameContains...)
+	ds, ok := org.FindDatasource(kind)
 	if !ok {
-		return authz.Organization{}, 0, fmt.Errorf("no datasource matching %v in org %q", nameContains, orgRef)
+		return authz.Organization{}, 0, fmt.Errorf("org %q has no %s datasource", orgRef, kind)
 	}
-	return org, dsID, nil
+	return org, ds.ID, nil
 }

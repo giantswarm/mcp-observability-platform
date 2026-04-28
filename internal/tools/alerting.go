@@ -1,11 +1,7 @@
-// Package tools — alerting.go: Mimir/Loki alert-rule reads, delegated to
-// upstream grafana/mcp-grafana via the bridge.
-//
-// alerting_manage_rules is upstream's read-only meta-tool for browsing
-// rules: it covers what our prior list_alert_rules + get_alert_rule
-// pair did, behind a single tool with an `operation` enum
-// (list/get/versions). Bridged with the Mimir datasource scoped from
-// the caller's org.
+// Package tools — alerting.go: Mimir/Loki alert-rule reads via upstream's
+// alerting_manage_rules meta-tool. Read-only; the `operation` enum
+// (list/get/versions) is upstream's surface — we just bind it to the
+// caller's org → Mimir datasource.
 package tools
 
 import (
@@ -21,8 +17,9 @@ import (
 // the org's Mimir UID before calling upstream.
 func registerAlertingTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 	t := mcpgrafanatools.ManageRulesRead
+	const argName = "datasource_uid" // alerting_manage_rules uses snake_case (vs the typical "datasourceUid")
 	s.AddTool(
-		upstream.WithOrgReplacingArg(t.Tool, "datasource_uid"),
-		br.WrapDatasourceArg(authz.RoleViewer, authz.DSKindMimir, "datasource_uid", t),
+		upstream.WithOrg(t.Tool, argName),
+		br.Wrap(authz.RoleViewer, authz.DSKindMimir, argName, t),
 	)
 }

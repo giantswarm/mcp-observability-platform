@@ -11,7 +11,6 @@ import (
 	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -61,27 +60,6 @@ func buildOrgCache(ctx context.Context, logger *slog.Logger) (ctrlcache.Cache, *
 	}
 	logger.Info("GrafanaOrganization cache synced")
 	return c, &alive, nil
-}
-
-// startOrgCacheReporter polls every 30s to keep the OrgCacheSize gauge
-// accurate. The informer is event-driven internally; this loop only
-// refreshes the exported metric.
-func startOrgCacheReporter(ctx context.Context, c ctrlcache.Cache) {
-	go func() {
-		tick := time.NewTicker(30 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				var list obsv1alpha2.GrafanaOrganizationList
-				if err := c.List(ctx, &list); err == nil {
-					observability.OrgCacheSize.Set(float64(len(list.Items)))
-				}
-			}
-		}
-	}()
 }
 
 // listOrgCount returns the current count of GrafanaOrganization CRs.

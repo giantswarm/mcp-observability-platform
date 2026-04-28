@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
@@ -22,17 +23,6 @@ func stubBridge(az authz.Authorizer) *upstream.Bridge {
 		panic(err)
 	}
 	return br
-}
-
-// stubResolver is an authz.Authorizer implementation that's enough to pass
-// server.New's non-nil check. Methods are never invoked in these tests.
-type stubResolver struct{}
-
-func (stubResolver) RequireOrg(context.Context, string, authz.Role) (authz.Organization, error) {
-	return authz.Organization{}, nil
-}
-func (stubResolver) ListOrgs(context.Context) (map[string]authz.Organization, error) {
-	return nil, nil
 }
 
 // stubGrafana satisfies grafana.Client for server.New's non-nil check.
@@ -58,7 +48,7 @@ func (stubGrafana) DatasourceProxy(context.Context, grafana.RequestOpts, int64, 
 
 func TestNew_RejectsMissingDependencies(t *testing.T) {
 	log := slog.Default()
-	var resolver authz.Authorizer = stubResolver{}
+	var resolver authz.Authorizer = &authztest.Fake{}
 	gf := stubGrafana{}
 
 	br := stubBridge(resolver)
@@ -87,7 +77,7 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 
 func TestNew_DefaultsVersion(t *testing.T) {
 	// Empty Version must still construct (defaults to "dev").
-	az := stubResolver{}
+	az := &authztest.Fake{}
 	_, err := New(Config{
 		Logger:     slog.Default(),
 		Authorizer: az,

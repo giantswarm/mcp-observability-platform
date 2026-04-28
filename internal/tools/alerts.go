@@ -8,15 +8,17 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
+
+// amActive — shared between the AM v2 /alerts URL parameter ("active=true|false")
+// and the LLM-facing state filter enum (which happens to use the same literal).
+const amActive = "active"
 
 func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	registerAlertDetailTool(s, az, gc)
@@ -36,12 +38,10 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, authz.DSKindAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
-			defer cancel()
 
 			page := req.GetInt("page", 0)
 			pageSize := req.GetInt("pageSize", 0)
@@ -63,9 +63,9 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 	)
 }
 
-// registerAlertDetailTool exposes a per-alert read tool. Replaces the prior
-// alertmanager://org/{name}/alert/{fingerprint} resource (LLMs handle tools
-// far more reliably than resources).
+// registerAlertDetailTool exposes a per-fingerprint read after list_alerts.
+// Tool (not a resource) because LLM clients handle tool calls more reliably
+// than resource URI templates.
 func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("get_alert",
@@ -83,12 +83,10 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, authz.DSKindAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
-			defer cancel()
 			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
@@ -134,7 +132,6 @@ func fetchAlerts(ctx context.Context, gc grafana.Client, orgID, dsID int64, stat
 	if filter != "" {
 		q.Set("filter", filter)
 	}
-	observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/alerts").Inc()
 	return gc.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, "alertmanager/api/v2/alerts", q)
 }
 

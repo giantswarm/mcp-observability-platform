@@ -17,11 +17,6 @@ import (
 // our MCP server. All gate on RoleViewer; the bridge handles
 // org→OrgID + Mimir-datasource-UID resolution and X-Grafana-User
 // caller attribution.
-//
-// query_prometheus_histogram in particular replaces our prior local
-// implementation that used string-splicing to compose the
-// histogram_quantile expression — upstream's structured-param
-// approach removes that injection vector.
 func registerMetricsTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.QueryPrometheus,
@@ -31,6 +26,9 @@ func registerMetricsTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.ListPrometheusLabelValues,
 		mcpgrafanatools.ListPrometheusMetricMetadata,
 	} {
-		s.AddTool(upstream.WithOrgReplacingDatasource(t.Tool), br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, t))
+		s.AddTool(
+			upstream.WithOrg(t.Tool, upstream.DatasourceUIDArg),
+			br.Wrap(authz.RoleViewer, authz.DSKindMimir, upstream.DatasourceUIDArg, t),
+		)
 	}
 }

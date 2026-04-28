@@ -18,11 +18,12 @@
 // # Layout
 //
 //   - authorizer.go — Authorizer + RequireOrg / ListOrgs / load.
-//   - cache.go      — LRU + singleflight + TTL + clone discipline.
+//   - cache.go      — TTL cache + clone discipline.
 //   - role.go       — Role enum.
 //   - caller.go     — Caller + OrgRegistry port + context helpers.
-//   - types.go      — Organization + Tenant + Datasource + TenantType domain
-//     types plus the methods tool handlers call (HasTenantType,
-//     FindDatasourceID). Tool-handler consumers import these, never the CRD.
+//   - types.go      — Organization + Tenant + Datasource + TenantType +
+//     DatasourceKind domain types plus the methods tool handlers call
+//     (HasTenantType, FindDatasource). Tool-handler consumers import
+//     these, never the CRD.
 //   - errors.go     — Sentinel errors.
 package authz

@@ -25,22 +25,20 @@ type Tenant struct {
 	Types []TenantType
 }
 
-// Datasource is the domain projection of a GrafanaOrganization.status.dataSources
-// entry. Name is matched case-insensitively by FindDatasourceID.
+// Datasource is the domain projection of a
+// GrafanaOrganization.status.dataSources entry. Name is matched
+// case-insensitively by FindDatasource via internal substring rules.
 type Datasource struct {
 	ID   int64
 	Name string
 }
 
 // DatasourceKind names the canonical role a datasource plays for the MCP
-// (a metrics backend, a logs backend, …). Today FindDatasource picks the
-// concrete Datasource by case-insensitive name substring; the kind ↔
-// substring rules live with the authz package so the substring vocabulary
-// stays in one place.
-//
-// TODO(uid-publish): once observability-operator publishes per-datasource
-// kind on the GrafanaOrganization CR, drop the substring rules and read
-// the kind off the Datasource directly.
+// (metrics backend, logs backend, …). FindDatasource picks the concrete
+// Datasource by case-insensitive name substring; the kind ↔ substring
+// rules live in this package so the substring vocabulary stays in one
+// place. See docs/roadmap.md (uid-publish) for the planned switch to
+// reading kind + UID off the CR directly.
 type DatasourceKind string
 
 const (
@@ -86,27 +84,6 @@ func (o Organization) HasTenantType(want TenantType) bool {
 		}
 	}
 	return false
-}
-
-// FindDatasourceID picks the first datasource whose name (case-insensitively)
-// contains all the given substrings. Returns (0, false) if none match.
-// Used by tools to select the Mimir/Loki/Tempo/Alertmanager datasource
-// without hard-coding IDs.
-func (o Organization) FindDatasourceID(mustContain ...string) (int64, bool) {
-	for _, ds := range o.Datasources {
-		lower := strings.ToLower(ds.Name)
-		match := true
-		for _, needle := range mustContain {
-			if !strings.Contains(lower, strings.ToLower(needle)) {
-				match = false
-				break
-			}
-		}
-		if match {
-			return ds.ID, true
-		}
-	}
-	return 0, false
 }
 
 // FindDatasource picks the datasource backing the given kind. Today the

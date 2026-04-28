@@ -32,6 +32,6 @@ func registerDashboardTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.GetDashboardProperty,
 		mcpgrafanatools.GenerateDeeplink,
 	} {
-		s.AddTool(upstream.WithOrg(t.Tool), br.Wrap(authz.RoleViewer, t))
+		s.AddTool(upstream.WithOrg(t.Tool, ""), br.Wrap(authz.RoleViewer, "", "", t))
 	}
 }

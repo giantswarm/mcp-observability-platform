@@ -68,7 +68,5 @@ Shared patterns worth upstreaming to the sibling MCP:
 - `paginateStrings` (and `Paginated[T]`).
 - Typed `Role` enum with `MarshalJSON`.
 - Controller-runtime-informer-backed authz resolver.
-- Three-bucket `outcome` metric label + shared `Classify()` across
-  middlewares.
 - `RequireCaller` middleware (fail-closed authentication on top of
   mcp-go's tool-handler middleware stack).

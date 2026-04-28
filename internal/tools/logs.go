@@ -25,6 +25,9 @@ func registerLogTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.ListLokiLabelNames,
 		mcpgrafanatools.ListLokiLabelValues,
 	} {
-		s.AddTool(upstream.WithOrgReplacingDatasource(t.Tool), br.WrapDatasource(authz.RoleViewer, authz.DSKindLoki, t))
+		s.AddTool(
+			upstream.WithOrg(t.Tool, upstream.DatasourceUIDArg),
+			br.Wrap(authz.RoleViewer, authz.DSKindLoki, upstream.DatasourceUIDArg, t),
+		)
 	}
 }

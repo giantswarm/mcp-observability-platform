@@ -78,6 +78,6 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bri
 		mcpgrafanatools.ListDatasources,
 		mcpgrafanatools.GetDatasource,
 	} {
-		s.AddTool(upstream.WithOrg(t.Tool), br.Wrap(authz.RoleViewer, t))
+		s.AddTool(upstream.WithOrg(t.Tool, ""), br.Wrap(authz.RoleViewer, "", "", t))
 	}
 }
