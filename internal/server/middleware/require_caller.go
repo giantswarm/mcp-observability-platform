@@ -25,7 +25,7 @@ import (
 func RequireCaller() server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if !authz.CallerFromContext(ctx).Authenticated() {
+			if authz.CallerFromContext(ctx).Empty() {
 				return mcp.NewToolResultError("authentication required"), nil
 			}
 			return next(ctx, req)

@@ -1,6 +1,7 @@
 package grafana
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -27,6 +28,14 @@ var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/inter
 // body can't OOM the MCP pod. 16 MiB is well above any realistic
 // query payload and far below pod RSS.
 const maxResponseBytes = 16 << 20
+
+// redactedHeader wraps a secret header value (auth token) so that %v / %#v
+// prints of the Client never leak the credential. Use string(r) to get the
+// raw value when setting the HTTP header.
+type redactedHeader string
+
+func (r redactedHeader) String() string   { return "[REDACTED]" }
+func (r redactedHeader) GoString() string { return "[REDACTED]" }
 
 // errInvalidDatasourceProxyPath is returned by DatasourceProxy when the
 // caller supplies a path that could escape the
@@ -55,11 +64,10 @@ type User struct {
 }
 
 // Client is the consumer-facing port onto Grafana. The implementation
-// is small by design: delegated tools talk to upstream's GrafanaClient
-// (built per-call by gfBinder in internal/tools); local handlers use
-// DatasourceProxy for Tempo / Alertmanager v2; authz uses LookupUser +
-// UserOrgs; gfBinder uses LookupDatasourceUIDByID. Anything else lives
-// in upstream's grafana/mcp-grafana package.
+// is small by design: bridged tools talk to upstream's GrafanaClient
+// (built per-call by the bridge); local handlers use DatasourceProxy
+// for Tempo / Alertmanager / triage; authz uses LookupUser + UserOrgs;
+// the bridge uses LookupDatasourceUIDByID. Anything else lives upstream.
 type Client interface {
 	Ping(ctx context.Context) error
 	VerifyServerAdmin(ctx context.Context) error
@@ -69,9 +77,10 @@ type Client interface {
 	DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error)
 }
 
+// client is the concrete Grafana HTTP client.
 type client struct {
 	base       *url.URL
-	authHeader string
+	authHeader redactedHeader
 	http       *http.Client
 }
 
@@ -113,9 +122,9 @@ func New(cfg Config) (Client, error) {
 			),
 		}
 	}
-	authHeader := "Bearer " + cfg.Token
+	authHeader := redactedHeader("Bearer " + cfg.Token)
 	if cfg.BasicAuth != "" {
-		authHeader = "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.BasicAuth))
+		authHeader = redactedHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.BasicAuth)))
 	}
 	return &client{base: u, authHeader: authHeader, http: hc}, nil
 }
@@ -160,7 +169,7 @@ func (c *client) fetch(ctx context.Context, method, path string, query url.Value
 		span.SetStatus(codes.Error, err.Error())
 		return 0, nil, "", fmt.Errorf("grafana: new request: %w", err)
 	}
-	req.Header.Set("Authorization", c.authHeader)
+	req.Header.Set("Authorization", string(c.authHeader))
 	req.Header.Set("Accept", "application/json")
 	if opts.OrgID > 0 {
 		req.Header.Set("X-Grafana-Org-Id", strconv.FormatInt(opts.OrgID, 10))
@@ -190,9 +199,10 @@ func (c *client) fetch(ctx context.Context, method, path string, query url.Value
 }
 
 // fetchJSON wraps fetch for JSON endpoints: HTTP >= 300 becomes an error,
-// and an explicitly non-JSON content-type (HTML from a misconfigured
-// sidecar) surfaces as an error instead of a confusing parse failure
-// downstream.
+// Prometheus-family `{"status":"error"}` in a 200 body is translated
+// into an error with the errorType/error message, and an explicitly
+// non-JSON content-type (HTML from a misconfigured sidecar) surfaces
+// as an error instead of a confusing parse failure downstream.
 func (c *client) fetchJSON(ctx context.Context, method, path string, query url.Values, body io.Reader, opts RequestOpts) (json.RawMessage, error) {
 	status, respBody, contentType, err := c.fetch(ctx, method, path, query, body, opts)
 	if err != nil {
@@ -203,6 +213,9 @@ func (c *client) fetchJSON(ctx context.Context, method, path string, query url.V
 	}
 	if !isJSONContentType(contentType) {
 		return nil, fmt.Errorf("grafana: %s %s: unexpected content-type %q (want application/json) — check that no sidecar is intercepting /api calls", method, path, contentType)
+	}
+	if err := detectPromError(respBody); err != nil {
+		return nil, fmt.Errorf("grafana: %s %s: %w", method, path, err)
 	}
 	return json.RawMessage(respBody), nil
 }
@@ -279,8 +292,13 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*User, er
 }
 
 // LookupDatasourceUIDByID fetches the datasource UID for a numeric ID,
-// in the given org. gfBinder (in internal/tools) calls this to translate
-// our int64 ID into the UID upstream tools take.
+// in the given org. Used by the upstream-tool bridge to translate our
+// int64 ID into the UID upstream tools require.
+//
+// TODO(uid-publish): once observability-operator publishes datasource
+// UIDs in GrafanaOrganization.status.datasources[].uid the bridge will
+// read uid directly from the Datasource model and this lookup goes
+// away. Tracked in docs/roadmap.md.
 func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error) {
 	if id <= 0 {
 		return "", errors.New("grafana: datasource id must be positive")
@@ -331,6 +349,38 @@ func (c *client) DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int
 		return nil, err
 	}
 	return c.fetchJSON(ctx, http.MethodGet, fmt.Sprintf("/api/datasources/proxy/%d/%s", dsID, path), query, nil, opts)
+}
+
+// detectPromError scans the first few hundred bytes for a JSON object
+// with {"status":"error"}; if present, returns an error carrying the
+// message. Bounded-size scan so we don't regex-walk multi-MiB responses.
+func detectPromError(body []byte) error {
+	if len(body) == 0 || body[0] != '{' {
+		return nil
+	}
+	head := body
+	if len(head) > 1024 {
+		head = head[:1024]
+	}
+	if !bytes.Contains(head, []byte(`"status":"error"`)) &&
+		!bytes.Contains(head, []byte(`"status": "error"`)) {
+		return nil
+	}
+	var peek struct {
+		Status    string `json:"status"`
+		ErrorType string `json:"errorType"`
+		Error     string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &peek); err != nil {
+		return nil
+	}
+	if peek.Status != "error" {
+		return nil
+	}
+	if peek.ErrorType != "" {
+		return fmt.Errorf("upstream error (%s): %s", peek.ErrorType, peek.Error)
+	}
+	return fmt.Errorf("upstream error: %s", peek.Error)
 }
 
 // validateDatasourceProxyPath is defence-in-depth against a future

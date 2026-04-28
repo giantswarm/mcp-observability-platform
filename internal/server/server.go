@@ -58,13 +58,18 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		cfg.Version = "dev"
 	}
 
-	// Middleware stack, outer→inner. Order matters:
-	//   1. WithRecovery       — panic guard (mcp-go).
-	//   2. Instrument         — span + metrics + tool_call audit line. Outer
-	//                           so RequireCaller denials are still observed.
-	//   3. RequireCaller      — fail closed if no authenticated caller.
-	//   4. ResponseCap        — replace oversized text with response_too_large.
-	//   5. ToolTimeout        — per-handler context deadline (innermost).
+	// Middleware stack (outermost first):
+	//   1. WithRecovery()                — panic guard (mcp-go).
+	//   2. middleware.Instrument(logger) — span + metric + structured
+	//                                      "tool_call" log line.
+	//   3. middleware.RequireCaller()    — fail-closed authentication.
+	//                                      Inside Instrument so denials still
+	//                                      emit metric + log.
+	//   4. middleware.ResponseCap()      — replace oversized text content
+	//                                      with a response_too_large payload.
+	//   5. middleware.ToolTimeout()      — per-handler context deadline.
+	//                                      Innermost so Instrument classifies
+	//                                      timeouts as system_error.
 	mcp := mcpsrv.NewMCPServer(
 		"mcp-observability-platform",
 		cfg.Version,

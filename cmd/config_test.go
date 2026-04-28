@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +17,12 @@ import (
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"OAUTH_DEX_ISSUER_URL",
+		"DEX_ISSUER_URL", "DEX_CLIENT_ID", "DEX_CLIENT_SECRET",
+		"OAUTH_ISSUER", "OAUTH_REDIRECT_URL",
+		"OAUTH_ALLOW_INSECURE_HTTP", "OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION",
+		"OAUTH_ENCRYPTION_KEY", "OAUTH_TRUSTED_AUDIENCES",
+		"OAUTH_TRUSTED_REDIRECT_SCHEMES",
+		"OAUTH_STORAGE", "VALKEY_ADDR", "VALKEY_PASSWORD", "VALKEY_TLS",
 		"GRAFANA_URL", "GRAFANA_SA_TOKEN", "GRAFANA_BASIC_AUTH",
 		"TOOL_TIMEOUT", "TOOL_MAX_RESPONSE_BYTES",
 		"DEBUG", "LOG_FORMAT", "KUBERNETES_SERVICE_HOST",
@@ -28,6 +36,11 @@ func clearEnv(t *testing.T) {
 func setMinimalValid(t *testing.T) {
 	t.Helper()
 	clearEnv(t)
+	t.Setenv("OAUTH_ALLOW_INSECURE_HTTP", "true") // skip HTTPS URL validation in tests
+	t.Setenv("DEX_ISSUER_URL", "http://dex.local")
+	t.Setenv("DEX_CLIENT_ID", "mcp")
+	t.Setenv("DEX_CLIENT_SECRET", "secret")
+	t.Setenv("OAUTH_ISSUER", "http://mcp.local")
 	t.Setenv("GRAFANA_URL", "http://grafana.local")
 	t.Setenv("GRAFANA_SA_TOKEN", "token")
 }
@@ -38,7 +51,7 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing required env vars")
 	}
-	for _, want := range []string{"GRAFANA_URL", "GRAFANA_SA_TOKEN"} {
+	for _, want := range []string{"DEX_ISSUER_URL", "DEX_CLIENT_ID", "DEX_CLIENT_SECRET", "OAUTH_ISSUER", "GRAFANA_URL", "GRAFANA_SA_TOKEN"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("missing-var error should list %q: %v", want, err)
 		}
@@ -57,6 +70,15 @@ func TestLoadConfig_RejectsBothSATokenAndBasicAuth(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_ValkeyStorageNeedsAddr(t *testing.T) {
+	setMinimalValid(t)
+	t.Setenv("OAUTH_STORAGE", "valkey")
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "VALKEY_ADDR") {
+		t.Fatalf("expected valkey-needs-addr error, got: %v", err)
+	}
+}
+
 func TestLoadConfig_DefaultsToolTimeoutAndMaxResponseBytes(t *testing.T) {
 	setMinimalValid(t)
 	cfg, err := loadConfig()
@@ -68,6 +90,102 @@ func TestLoadConfig_DefaultsToolTimeoutAndMaxResponseBytes(t *testing.T) {
 	}
 	if cfg.MaxResponseBytes != middleware.DefaultMaxResponseBytes {
 		t.Errorf("MaxResponseBytes = %d, want %d", cfg.MaxResponseBytes, middleware.DefaultMaxResponseBytes)
+	}
+}
+
+func TestLoadConfig_RedirectURLDefault(t *testing.T) {
+	setMinimalValid(t)
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	// When OAUTH_REDIRECT_URL is unset, it defaults to issuer + /oauth/callback.
+	want := "http://mcp.local/oauth/callback"
+	if cfg.OAuthRedirectURL != want {
+		t.Errorf("OAuthRedirectURL = %q, want %q", cfg.OAuthRedirectURL, want)
+	}
+}
+
+func TestLoadConfig_WeakEncryptionKeyRejected(t *testing.T) {
+	setMinimalValid(t)
+	// 64 hex chars decoding to 32 zero bytes — catastrophic placeholder.
+	t.Setenv("OAUTH_ENCRYPTION_KEY", strings.Repeat("0", 64))
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "low entropy") {
+		t.Fatalf("expected low-entropy rejection, got: %v", err)
+	}
+}
+
+func TestLoadConfig_TrustedAudiencesCSVParsing(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty stays empty", "", nil},
+		{"single value", "muster", []string{"muster"}},
+		{"csv unquoted", "muster,prom-mcp,kube-mcp", []string{"muster", "prom-mcp", "kube-mcp"}},
+		{"trims surrounding whitespace", " muster , prom-mcp ", []string{"muster", "prom-mcp"}},
+		{"drops empty entries", "muster,,prom-mcp,", []string{"muster", "prom-mcp"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setMinimalValid(t)
+			t.Setenv("OAUTH_TRUSTED_AUDIENCES", c.in)
+			cfg, err := loadConfig()
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if !equalStringSlices(cfg.OAuthTrustedAudiences, c.want) {
+				t.Errorf("OAuthTrustedAudiences = %#v, want %#v", cfg.OAuthTrustedAudiences, c.want)
+			}
+		})
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestDecodeEncryptionKey(t *testing.T) {
+	raw := bytes.Repeat([]byte{0xab, 0xcd, 0xef, 0x12}, 8) // 32 bytes
+	cases := []struct {
+		name    string
+		in      string
+		want    []byte
+		wantErr bool
+	}{
+		{"hex 64", hex.EncodeToString(raw), raw, false},
+		{"base64 std 44", base64.StdEncoding.EncodeToString(raw), raw, false},
+		{"raw 32 bytes rejected", strings.Repeat("a", 32), nil, true},
+		{"wrong length", "too-short", nil, true},
+		{"64 chars non-hex", strings.Repeat("z", 64), nil, true},
+		{"44 chars non-base64", strings.Repeat("!", 44), nil, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := decodeEncryptionKey(c.in)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got key=%x", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !bytes.Equal(got, c.want) {
+				t.Errorf("decoded = %x, want %x", got, c.want)
+			}
+		})
 	}
 }
 

@@ -18,13 +18,11 @@
 // # Layout
 //
 //   - authorizer.go — Authorizer + RequireOrg / ListOrgs / load.
-//   - cache.go      — TTL cache + clone discipline.
+//   - cache.go      — LRU + singleflight + TTL + clone discipline.
 //   - role.go       — Role enum.
 //   - caller.go     — Caller + OrgLister port + context helpers.
-//   - types.go      — Organization + Tenant + TenantType domain types
-//     plus the methods tool handlers call (HasTenantType,
-//     FindDatasource). Datasource and DatasourceKind live in
-//     internal/grafana. Tool-handler consumers import these, never
-//     the CRD.
+//   - types.go      — Organization + Tenant + Datasource + TenantType domain
+//     types plus the methods tool handlers call (HasTenantType,
+//     FindDatasourceID). Tool-handler consumers import these, never the CRD.
 //   - errors.go     — Sentinel errors.
 package authz

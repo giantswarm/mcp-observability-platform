@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	oauth "github.com/giantswarm/mcp-oauth"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
@@ -16,30 +17,25 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
 
-// buildMux returns the single HTTP handler that serves OAuth flow +
-// discovery, the MCP transport (`/mcp` or `/sse`), /metrics, and
-// /healthz + /readyz. Wrapped in otelhttp so inbound W3C traceparents
-// become server spans.
-//
-// Single mux: ops endpoints (/metrics, /healthz, /readyz) and app
-// traffic share lifecycle and TLS config; the cluster network policy is
-// the trust boundary for the unauthenticated ops paths.
-func buildMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handler, dexIssuerURL string, gf grafana.Client, listOrgs func(context.Context) (int, error), cacheAlive *atomic.Bool) http.Handler {
+// buildMCPMux wires the OAuth flow + discovery routes and the
+// transport-specific MCP handler, then wraps the result in otelhttp so
+// inbound W3C traceparents become server spans.
+func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handler) http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/oauth/authorize", oauthHandler.ServeAuthorization)
+	mux.HandleFunc("/oauth/callback", oauthHandler.ServeCallback)
+	mux.HandleFunc("/oauth/token", oauthHandler.ServeToken)
+	mux.HandleFunc("/oauth/revoke", oauthHandler.ServeTokenRevocation)
+	mux.HandleFunc("/oauth/register", oauthHandler.ServeClientRegistration)
 
 	resourcePath := "/mcp"
 	if transport == transportSSE {
 		resourcePath = "/sse"
 	}
-	// OAuth flow + RFC 9728/8414 discovery — single bundle helper from
-	// mcp-oauth (v0.2.106). Replaces five HandleFunc lines + two
-	// Register*Routes calls.
-	oauthHandler.RegisterOAuthRoutes(mux, oauth.OAuthRoutesOptions{
-		MCPPath:         resourcePath,
-		IncludeMetadata: true,
-	})
+	oauthHandler.RegisterProtectedResourceMetadataRoutes(mux, resourcePath)
+	oauthHandler.RegisterAuthorizationServerMetadataRoutes(mux)
 
-	// MCP transport (OAuth-gated).
 	switch transport {
 	case transportStreamableHTTP:
 		mux.Handle("/mcp", oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp)))
@@ -49,11 +45,6 @@ func buildMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handl
 		mux.Handle("/message", oauthHandler.ValidateToken(sseHandler))
 	}
 
-	// Health + metrics. Unauthenticated by design: the cluster network
-	// policy is the trust boundary.
-	mountHealth(mux, dexIssuerURL, gf, listOrgs, cacheAlive)
-	mux.Handle("/metrics", observability.MetricsHandler())
-
 	return otelhttp.NewHandler(mux, "mcp",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			return r.Method + " " + r.URL.Path
@@ -61,15 +52,43 @@ func buildMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handl
 	)
 }
 
+// buildObsMux wires /healthz, /readyz, and /metrics on a single mux that
+// the observability HTTP server serves.
+func buildObsMux(dexIssuerURL string, gf grafana.Client, listOrgs func(context.Context) (int, error), cacheAlive *atomic.Bool) http.Handler {
+	mux := http.NewServeMux()
+	health := setupHealth(dexIssuerURL, gf, listOrgs, cacheAlive)
+	health.Mount(mux)
+	mux.Handle("/metrics", observability.MetricsHandler())
+	return mux
+}
+
 // runListenAndServe runs srv.ListenAndServe in a goroutine and cancels
-// shutdownCancel on a non-clean exit so a failed bind takes the whole
-// process down rather than leaving the server in a half-up state.
-func runListenAndServe(srv *http.Server, logger *slog.Logger, shutdownCancel context.CancelFunc) {
+// shutdownCancel on a non-clean exit so a single failed bind takes the
+// whole process down rather than leaving one server running silently.
+func runListenAndServe(srv *http.Server, label string, logger *slog.Logger, shutdownCancel context.CancelFunc) {
 	go func() {
-		logger.Info("HTTP listening", "addr", srv.Addr)
+		logger.Info(label+" listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("HTTP server failed", "error", err)
+			logger.Error(label+" server failed", "error", err)
 			shutdownCancel()
 		}
 	}()
+}
+
+// runTwoPhaseShutdown drains the MCP server first (in-flight tool calls
+// get up to 10s), then the obs server (5s). Health probes and metrics
+// keep working while MCP drains, so a slow tool call doesn't trip a
+// liveness failure mid-drain.
+func runTwoPhaseShutdown(logger *slog.Logger, mcpServer, obsServer *http.Server) {
+	mcpDrainCtx, mcpDrainCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer mcpDrainCancel()
+	if err := mcpServer.Shutdown(mcpDrainCtx); err != nil {
+		logger.Warn("mcp server drain returned error", "error", err)
+	}
+
+	obsDrainCtx, obsDrainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer obsDrainCancel()
+	if err := obsServer.Shutdown(obsDrainCtx); err != nil {
+		logger.Warn("observability server drain returned error", "error", err)
+	}
 }

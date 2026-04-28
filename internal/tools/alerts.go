@@ -18,10 +18,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// amActive — shared between the AM v2 /alerts URL parameter ("active=true|false")
-// and the LLM-facing state filter enum (which happens to use the same literal).
-const amActive = "active"
-
 func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	registerAlertDetailTool(s, az, gc)
 

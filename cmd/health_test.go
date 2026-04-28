@@ -13,8 +13,8 @@ import (
 )
 
 // stubGrafanaClient embeds grafana.Client (nil) so any unstubbed method
-// panics — flags any new upstream dependency mountHealth grows that the
-// tests forgot to cover. Only Ping is overridden.
+// panics — exactly what we want if setupHealth ever grows a new upstream
+// dependency we haven't accounted for here. Only Ping is overridden.
 type stubGrafanaClient struct {
 	grafana.Client
 	pingErr error
@@ -31,15 +31,16 @@ func dexStub(t *testing.T) *httptest.Server {
 	}))
 }
 
-// runReadyz mounts mountHealth on a fresh mux and exercises /readyz,
-// returning the status code and response body. Body carries the failing
-// probe name + error when readyz returns 503.
+// runReadyz wires setupHealth and exercises /readyz, returning the
+// status code and response body. Body carries the failing probe name
+// + error when readyz returns 503 (see Health.Readiness).
 func runReadyz(t *testing.T, gf grafana.Client, orgs orgLister, alive *atomic.Bool) (code int, body string) {
 	t.Helper()
 	dex := dexStub(t)
 	defer dex.Close()
+	h := setupHealth(dex.URL, gf, orgs, alive)
 	mux := http.NewServeMux()
-	mountHealth(mux, dex.URL, gf, orgs, alive)
+	h.Mount(mux)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))

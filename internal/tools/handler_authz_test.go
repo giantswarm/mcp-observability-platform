@@ -82,7 +82,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 			DisplayName: "Acme",
 			OrgID:       1,
 		}}},
-		azClient, nil, 0,
+		azClient, nil, 0, 0, -1,
 	)
 	if err != nil {
 		t.Fatalf("authz.NewAuthorizer: %v", err)

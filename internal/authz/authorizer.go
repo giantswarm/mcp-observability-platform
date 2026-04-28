@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
@@ -42,52 +44,71 @@ type Authorizer interface {
 	ListOrgs(ctx context.Context) (map[string]Organization, error)
 }
 
-// authorizer answers "what can this caller do?" by asking Grafana for
-// the caller's org memberships and joining them against the org list
-// returned by OrgLister.
+// authorizer answers "what can this caller do?" by asking Grafana for the
+// caller's org memberships and joining them against the OrgLister.
 //
-// The cache is keyed on OIDC subject (stable, non-spoofable) and uses
-// a single TTL. A freshly-provisioned user waits one TTL window before
-// access works.
+// The cache is keyed on OIDC subject (stable, non-spoofable). Email can
+// change, be unverified, or be re-owned; subject cannot. Email is still
+// used as the Grafana lookup input — Grafana stores users by email.
+//
+// Concurrent callers on a cold key share one upstream round-trip via
+// singleflight; the LRU bounds long-running-process memory to
+// CacheSize entries. Positive and negative entries carry different TTLs.
 type authorizer struct {
-	orgs    OrgLister
-	grafana grafana.Client
-	log     *slog.Logger
-	ttl     time.Duration
+	registry OrgLister
+	grafana  grafana.Client
+	log      *slog.Logger
 
-	mu    sync.Mutex
-	cache map[string]cacheEntry
+	cache            *lru.Cache[string, cacheEntry]
+	sf               singleflight.Group
+	cacheTTL         time.Duration
+	negativeCacheTTL time.Duration
 }
 
-// NewAuthorizer constructs an Authorizer. ttl=0 uses DefaultCacheTTL.
-// Pass a negative ttl to disable caching (useful for tests).
-func NewAuthorizer(orgs OrgLister, grafana grafana.Client, log *slog.Logger, ttl time.Duration) (Authorizer, error) {
-	if ttl == 0 {
-		ttl = DefaultCacheTTL
+// NewAuthorizer constructs an Authorizer with the given cache settings. Passing
+// zero for any of the three cache parameters uses the DefaultCache*
+// constants. cacheSize of -1 disables caching entirely (useful for tests).
+func NewAuthorizer(registry OrgLister, grafana grafana.Client, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
+	if cacheTTL == 0 {
+		cacheTTL = DefaultCacheTTL
 	}
-	return &authorizer{
-		orgs:    orgs,
-		grafana: grafana,
-		log:     log,
-		ttl:     ttl,
-		cache:   map[string]cacheEntry{},
-	}, nil
+	if negativeCacheTTL == 0 {
+		negativeCacheTTL = DefaultNegativeCacheTTL
+	}
+	if cacheSize == 0 {
+		cacheSize = DefaultCacheSize
+	}
+	r := &authorizer{
+		registry:         registry,
+		grafana:          grafana,
+		log:              log,
+		cacheTTL:         cacheTTL,
+		negativeCacheTTL: negativeCacheTTL,
+	}
+	if cacheSize > 0 {
+		c, err := lru.New[string, cacheEntry](cacheSize)
+		if err != nil {
+			return nil, fmt.Errorf("authorizer cache: %w", err)
+		}
+		r.cache = c
+	}
+	return r, nil
 }
 
 // ListOrgs returns the caller's authorised orgs + role by asking Grafana
-// and enriching each with the current org metadata. The returned map is
+// and enriching with the current registry metadata. The returned map is
 // deep-cloned so handler mutations cannot leak. Caller identity is read
 // from ctx via CallerFromContext.
 //
-// The org list is read fresh every call — only the per-caller Grafana
-// memberships are cached. A GrafanaOrganization deletion takes effect
-// immediately for every caller, not after their TTL expires.
+// The registry list is read fresh every call — only the per-caller
+// Grafana memberships are cached. A GrafanaOrganization deletion takes
+// effect immediately for every caller, not after their TTL expires.
 func (r *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, error) {
 	memberships, err := r.resolveMemberships(ctx, CallerFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
-	orgs, err := r.orgs.List(ctx)
+	orgs, err := r.registry.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list orgs: %w", err)
 	}
@@ -101,15 +122,15 @@ func (r *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, err
 // or orgRef matches more than one Organization by DisplayName
 // (ErrAmbiguousOrgRef).
 //
-// orgRef may be either the org's Name or DisplayName
+// orgRef may be either the registry name or the displayName
 // (case-insensitive). minRole MUST be RoleViewer or higher: passing
 // RoleNone returns ErrInvalidMinRole rather than silently passing every
 // authorised caller through (Role.AtLeast(RoleNone) is always true).
 //
 // Caller identity is read from ctx via CallerFromContext. The returned
 // Organization is deep-cloned so handler mutations cannot escape. The
-// org list is read fresh every call — a GrafanaOrganization deletion
-// is invisible to subsequent RequireOrg calls.
+// registry list is read fresh every call — a GrafanaOrganization
+// deletion is invisible to subsequent RequireOrg calls.
 func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role) (Organization, error) {
 	if minRole == RoleNone {
 		return Organization{}, ErrInvalidMinRole
@@ -118,7 +139,7 @@ func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 	if err != nil {
 		return Organization{}, err
 	}
-	orgs, err := r.orgs.List(ctx)
+	orgs, err := r.registry.List(ctx)
 	if err != nil {
 		return Organization{}, fmt.Errorf("list orgs: %w", err)
 	}
@@ -136,7 +157,7 @@ func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 	}
 
 	// Disambiguate "org doesn't exist" vs "caller not a member of an
-	// existing org" against the freshly-listed orgs, not a cached
+	// existing org" against the freshly-listed registry, not a cached
 	// snapshot.
 	if _, knownOrg := allRefs[strings.ToLower(orgRef)]; !knownOrg {
 		return Organization{}, fmt.Errorf("%w: %q", ErrOrgNotFound, orgRef)
@@ -145,52 +166,80 @@ func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 }
 
 // resolveMemberships returns the caller's per-org Role assignments
-// (OrgID → Role), as observed by Grafana. Cache hit returns the
-// snapshot; miss falls back to the load() upstream call.
-//
-// Concurrent callers on a cold key each fan out a Grafana call —
-// acceptable at our scale (~50 users, deploy-time stampede is a
-// handful of duplicate calls per pod, not thousands).
+// (OrgID → Role), as observed by Grafana. Hits the per-caller LRU
+// before falling back to the load() upstream call. Caller-level
+// validation (ErrNoCallerIdentity) happens here.
 func (r *authorizer) resolveMemberships(ctx context.Context, caller Caller) (map[int64]Role, error) {
-	if !caller.Authenticated() {
+	if caller.Empty() {
 		return nil, ErrNoCallerIdentity
 	}
+
 	key := cacheKey(caller)
 	if hit, ok := r.cacheLookup(key); ok {
 		return hit.memberships, nil
 	}
-	entry, err := r.load(ctx, caller, key)
-	if err != nil {
-		return nil, err
+
+	// Single-flight the cold path so concurrent callers on the same key
+	// share one upstream round-trip instead of stampeding Grafana.
+	//
+	// DoChan rather than Do so per-caller context cancellation is
+	// independent: with Do the FIRST caller's ctx.Cancel propagates the
+	// resulting context.Canceled to every waiter. DoChan + select lets
+	// each waiter watch its own ctx and only the leader's load is
+	// actually shared. The leader detaches from the group when its
+	// caller bails (Forget) so the next concurrent caller doesn't
+	// inherit the cancelled state.
+	ch := r.sf.DoChan(key, func() (any, error) {
+		// Use a context.Background-derived ctx so a leader-side
+		// cancellation by an early-bailing caller doesn't kill the
+		// shared upstream call for the others. Bound it with the same
+		// timeout the caller would have applied — for tests/dev
+		// without a deadline, fall back to an unbounded background.
+		loadCtx := context.WithoutCancel(ctx)
+		return r.load(loadCtx, caller, key)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			r.sf.Forget(key)
+			return nil, res.Err
+		}
+		return res.Val.(cacheEntry).memberships, nil
+	case <-ctx.Done():
+		// Leader continues — Forget so a future call doesn't get this
+		// cancelled context-derived state.
+		r.sf.Forget(key)
+		return nil, ctx.Err()
 	}
-	return entry.memberships, nil
 }
 
 // projectMemberships joins per-caller Grafana memberships against the
-// current org list. Returns the caller's accessible orgs (keyed by
-// Organization.Name, with Role filled in) plus the lowercased set of
-// every {Name, DisplayName} in the org list — used by RequireOrg to
+// current registry list. Returns the caller's accessible orgs (keyed
+// by Organization.Name, with Role filled in) plus the lowercased set
+// of every {Name, DisplayName} in the registry — used by RequireOrg to
 // distinguish "org doesn't exist" from "caller not a member".
 func projectMemberships(memberships map[int64]Role, orgs []Organization) (access map[string]Organization, allRefs map[string]struct{}) {
+	allRefs = buildOrgRefSet(orgs)
 	access = make(map[string]Organization, len(memberships))
-	allRefs = make(map[string]struct{}, len(orgs)*2)
+	if len(memberships) == 0 {
+		return access, allRefs
+	}
 	byOrgID := make(map[int64]Organization, len(orgs))
 	for _, o := range orgs {
 		byOrgID[o.OrgID] = o
-		allRefs[strings.ToLower(o.Name)] = struct{}{}
-		if o.DisplayName != "" {
-			allRefs[strings.ToLower(o.DisplayName)] = struct{}{}
-		}
 	}
 	for orgID, role := range memberships {
+		// Role==RoleNone never makes it into memberships (load filters).
+		// Defensive guard anyway, since memberships is map-valued and a
+		// future code path could insert.
 		if role == RoleNone {
 			continue
 		}
-		// Grafana sometimes lists orgs the registry doesn't carry (deleted
-		// or never provisioned). Skip silently — callers must never see
-		// non-registered orgs.
 		org, ok := byOrgID[orgID]
 		if !ok {
+			// Grafana knows about this org but the registry doesn't —
+			// org was deleted (or never registered). Skip silently:
+			// callers should never see non-registered orgs.
 			continue
 		}
 		org.Role = role
@@ -200,34 +249,53 @@ func projectMemberships(memberships map[int64]Role, orgs []Organization) (access
 }
 
 // load does the per-caller upstream work: ask Grafana for the user and
-// their org memberships, then cache OrgID → Role. The join with the
-// org list happens at the per-call site (projectMemberships) — load
-// doesn't see Organization values.
+// their org memberships, then cache OrgID → Role with the appropriate
+// positive-or-negative TTL. The registry-side join happens at the per-
+// call site (projectMemberships) — load doesn't see Organization values.
 func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cacheEntry, error) {
 	user, err := r.grafana.LookupUser(ctx, caller.Identity())
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana lookup: %w", err)
 	}
 
-	var memberships map[int64]Role
-	if user != nil {
-		rawMemberships, err := r.grafana.UserOrgs(ctx, user.ID)
-		if err != nil {
-			return cacheEntry{}, fmt.Errorf("grafana user orgs: %w", err)
+	if user == nil {
+		// User exists in our IdP but has never logged into Grafana yet —
+		// we genuinely don't know what orgs they have. Cache nil
+		// memberships under the negative TTL: the caller hits a brief
+		// "log into Grafana first" window, not the full positive
+		// window. Distinct from len(memberships)==0 (user found, in
+		// no orgs) — same TTL but different semantics.
+		entry := cacheEntry{
+			expiresAt:   time.Now().Add(r.negativeCacheTTL),
+			memberships: nil,
 		}
-		memberships = make(map[int64]Role, len(rawMemberships))
-		for _, m := range rawMemberships {
-			role := roleFromGrafana(m.Role)
-			if role == RoleNone {
-				continue
-			}
-			memberships[m.OrgID] = role
-		}
+		r.cacheStore(key, entry)
+		return entry, nil
 	}
-	// memberships nil => user not provisioned yet in Grafana (cached so
-	// the next call doesn't re-hit /api/users/lookup for one TTL window).
+
+	rawMemberships, err := r.grafana.UserOrgs(ctx, user.ID)
+	if err != nil {
+		return cacheEntry{}, fmt.Errorf("grafana user orgs: %w", err)
+	}
+
+	memberships := make(map[int64]Role, len(rawMemberships))
+	for _, m := range rawMemberships {
+		role := roleFromGrafana(m.Role)
+		if role == RoleNone {
+			continue
+		}
+		memberships[m.OrgID] = role
+	}
+
+	ttl := r.cacheTTL
+	if len(memberships) == 0 {
+		// User found in Grafana but has no role anywhere we recognise —
+		// negative cache so a freshly-provisioned user doesn't wait
+		// the full positive window.
+		ttl = r.negativeCacheTTL
+	}
 	entry := cacheEntry{
-		expiresAt:   time.Now().Add(r.ttl),
+		expiresAt:   time.Now().Add(ttl),
 		memberships: memberships,
 	}
 	r.cacheStore(key, entry)
@@ -241,8 +309,9 @@ func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cache
 //
 // Returns ErrAmbiguousOrgRef when more than one DisplayName matches —
 // silently picking the first map-iteration hit would be unsafe for an
-// authz boundary. The returned Organization aliases cache-owned slices;
-// the caller (RequireOrg) clones before returning to handlers.
+// authz boundary. The returned value aliases cache-owned slices —
+// callers that hand the result to external code must clone via
+// cloneOrganization.
 func findOrganization(access map[string]Organization, orgRef string) (Organization, bool, error) {
 	if org, ok := access[orgRef]; ok {
 		return org, true, nil

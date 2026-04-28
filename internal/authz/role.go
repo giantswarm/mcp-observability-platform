@@ -17,6 +17,7 @@ const (
 	RoleAdmin
 )
 
+// String returns the lowercase canonical name.
 func (r Role) String() string {
 	switch r {
 	case RoleViewer:

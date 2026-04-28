@@ -12,7 +12,7 @@ import (
 // someone. Email is the human-facing handle Grafana provisions users by;
 // Subject is the OIDC sub claim, the stable non-spoofable identifier used
 // as the cache key. A valid Caller MUST have a non-empty Subject — see
-// Authenticated().
+// Empty().
 type Caller struct {
 	Email   string
 	Subject string
@@ -28,12 +28,12 @@ func (c Caller) Identity() string {
 	return c.Subject
 }
 
-// Authenticated reports whether the caller carries a usable identity.
-// A caller with no Subject is unauthenticated even if Email is set:
-// email is mutable in some IdPs and isn't safe to use as the cache key
-// (see cacheKey). Two callers with the same email and no subject would
-// otherwise collide on one cache slot.
-func (c Caller) Authenticated() bool { return c.Subject != "" }
+// Empty reports whether no usable identity is attached. A caller with no
+// Subject is treated as empty even if Email is set: email is mutable in
+// some IdPs and isn't safe to use as the cache key (see cacheKey). Two
+// callers with the same email and no subject would otherwise collide on
+// one cache slot.
+func (c Caller) Empty() bool { return c.Subject == "" }
 
 // OrgLister is the authorizer's port onto "the set of known Grafana
 // organisations". Implementations today wrap controller-runtime's informer
@@ -96,6 +96,12 @@ func CallerTokenSource(ctx context.Context) string {
 // CallerFromContext extracts the identifiers the authorizer needs to ask
 // Grafana who this caller is. Returns an empty Caller if no identity is
 // attached; the authorizer then errors downstream via ErrNoCallerIdentity.
+//
+// Subject is the OIDC sub claim. Login is deliberately left empty: OIDC sub
+// is NOT a Grafana login name, and collapsing the two here would make
+// Grafana's /api/users/lookup silently miss when the caller's email/login
+// doesn't match their sub. The authorizer falls back to Email-based lookup
+// when Login is empty.
 func CallerFromContext(ctx context.Context) Caller {
 	ui, ok := userInfoFromContext(ctx)
 	if !ok || ui == nil {

@@ -25,7 +25,7 @@ func TestMetricsHandler_IsReusable(t *testing.T) {
 // the default Prometheus registerer did not silently drop the Go runtime /
 // process collectors that operators rely on.
 func TestMetricsHandler_ServesCustomAndDefaultCollectors(t *testing.T) {
-	ToolCallTotal.WithLabelValues("probe").Inc()
+	ToolCallTotal.WithLabelValues("probe", "ok").Inc()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/metrics", nil)

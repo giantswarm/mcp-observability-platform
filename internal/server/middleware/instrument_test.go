@@ -59,11 +59,11 @@ func TestInstrument_SuccessRecordsOK(t *testing.T) {
 	if rec["tool"] != "list_orgs" {
 		t.Errorf("tool = %v, want list_orgs (reads req.Params.Name)", rec["tool"])
 	}
-	if rec["error"] != false {
-		t.Errorf("error = %v, want false on success", rec["error"])
+	if rec["outcome"] != OutcomeOK {
+		t.Errorf("outcome = %v, want %s", rec["outcome"], OutcomeOK)
 	}
-	if rec["error_message"] != "" {
-		t.Errorf("error_message = %v, want empty on success", rec["error_message"])
+	if rec["error"] != "" {
+		t.Errorf("error = %v, want empty on success", rec["error"])
 	}
 	args := rec["args"].(map[string]any)
 	if args["org"] != "acme" {
@@ -71,22 +71,22 @@ func TestInstrument_SuccessRecordsOK(t *testing.T) {
 	}
 }
 
-func TestInstrument_HandlerErrorRecordsError(t *testing.T) {
+func TestInstrument_HandlerErrorRecordsSystemError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return nil, errors.New("downstream 502")
 		},
 		"query_metrics", nil)
 
-	if rec["error"] != true {
-		t.Errorf("error = %v, want true (Go error)", rec["error"])
+	if rec["outcome"] != OutcomeSystemError {
+		t.Errorf("outcome = %v, want %s (Go error → system)", rec["outcome"], OutcomeSystemError)
 	}
-	if rec["error_message"] != "downstream 502" {
-		t.Errorf("error_message = %v, want 'downstream 502'", rec["error_message"])
+	if rec["error"] != "downstream 502" {
+		t.Errorf("error = %v, want 'downstream 502'", rec["error"])
 	}
 }
 
-func TestInstrument_IsErrorResultRecordsError(t *testing.T) {
+func TestInstrument_IsErrorResultRecordsUserError(t *testing.T) {
 	rec := applyHandler(t,
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return &mcp.CallToolResult{
@@ -96,11 +96,11 @@ func TestInstrument_IsErrorResultRecordsError(t *testing.T) {
 		},
 		"list_datasources", nil)
 
-	if rec["error"] != true {
-		t.Errorf("error = %v, want true (IsError)", rec["error"])
+	if rec["outcome"] != OutcomeUserError {
+		t.Errorf("outcome = %v, want %s (IsError → user)", rec["outcome"], OutcomeUserError)
 	}
-	if rec["error_message"] != "missing required argument 'org'" {
-		t.Errorf("error_message = %v, want the IsError text", rec["error_message"])
+	if rec["error"] != "missing required argument 'org'" {
+		t.Errorf("error = %v, want the IsError text", rec["error"])
 	}
 }
 
@@ -110,8 +110,8 @@ func TestInstrument_IsErrorWithNoContentRecordsPlaceholder(t *testing.T) {
 			return &mcp.CallToolResult{IsError: true}, nil
 		},
 		"x", nil)
-	if rec["error_message"] != "tool returned isError with no text content" {
-		t.Errorf("error_message = %v", rec["error_message"])
+	if rec["error"] != "tool returned isError with no text content" {
+		t.Errorf("error = %v", rec["error"])
 	}
 }
 
@@ -131,10 +131,12 @@ func TestInstrument_NilLoggerIsPassthrough(t *testing.T) {
 	}
 }
 
-// TestInstrument_SpanStatus installs a recording TracerProvider and
-// asserts the span side-effects: status Error on any failure (Go error
-// or IsError), Unset otherwise.
-func TestInstrument_SpanStatus(t *testing.T) {
+// TestInstrument_SpanCarriesOutcomeAndStatus installs a recording
+// TracerProvider and asserts the span side-effects: attribute
+// "tool.outcome" is set on every call, but span status is Error only for
+// system_error. User errors are expected behaviour — same convention as
+// HTTP servers not marking 4xx Error.
+func TestInstrument_SpanCarriesOutcomeAndStatus(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
 	original := otel.GetTracerProvider()
@@ -144,25 +146,29 @@ func TestInstrument_SpanStatus(t *testing.T) {
 	cases := []struct {
 		name       string
 		handler    server.ToolHandlerFunc
+		wantOutc   string
 		wantStatus codes.Code
 	}{
 		{
 			name:       "ok",
 			handler:    func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, nil },
+			wantOutc:   OutcomeOK,
 			wantStatus: codes.Unset,
 		},
 		{
-			name: "is_error_result",
+			name: "user_error",
 			handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return &mcp.CallToolResult{IsError: true}, nil
 			},
-			wantStatus: codes.Error,
+			wantOutc:   OutcomeUserError,
+			wantStatus: codes.Unset, // NOT Error — 4xx-equivalent
 		},
 		{
-			name: "go_error",
+			name: "system_error",
 			handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return nil, errors.New("boom")
 			},
+			wantOutc:   OutcomeSystemError,
 			wantStatus: codes.Error,
 		},
 	}
@@ -181,14 +187,23 @@ func TestInstrument_SpanStatus(t *testing.T) {
 			if sp.Status().Code != c.wantStatus {
 				t.Errorf("status = %v, want %v", sp.Status().Code, c.wantStatus)
 			}
+			var gotOutc string
+			for _, kv := range sp.Attributes() {
+				if kv.Key == "tool.outcome" {
+					gotOutc = kv.Value.AsString()
+				}
+			}
+			if gotOutc != c.wantOutc {
+				t.Errorf("tool.outcome = %q, want %q", gotOutc, c.wantOutc)
+			}
 		})
 	}
 }
 
-// Ensure Instrument doesn't panic across the success / IsError / Go-error
-// shapes. Exact counter / histogram values are asserted in the
-// observability /metrics scrape test; here we only guard survival.
-func TestInstrument_HandlesAllResultShapes(t *testing.T) {
+// Ensure Instrument doesn't panic on any of the three outcomes — exact
+// counter / histogram values are asserted in the observability /metrics
+// scrape test; here we only guard the composite's survival.
+func TestInstrument_ExercisesAllThreeOutcomes(t *testing.T) {
 	mw := Instrument(nil)
 	req := stubRequest("probe", nil)
 

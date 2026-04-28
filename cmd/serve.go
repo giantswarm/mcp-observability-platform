@@ -37,14 +37,16 @@ const (
 )
 
 var (
-	flagTransport string
-	flagAddr      string
-	flagDebug     bool
+	flagTransport   string
+	flagMCPAddr     string
+	flagMetricsAddr string
+	flagDebug       bool
 )
 
 func init() {
 	serveCmd.Flags().StringVar(&flagTransport, "transport", envOr("MCP_TRANSPORT", transportStreamableHTTP), transportStdio+" | "+transportSSE+" | "+transportStreamableHTTP)
-	serveCmd.Flags().StringVar(&flagAddr, "addr", envOr("MCP_ADDR", ":8080"), "HTTP listen address (serves /mcp + /metrics + /healthz + /readyz + /oauth/*)")
+	serveCmd.Flags().StringVar(&flagMCPAddr, "mcp-addr", envOr("MCP_ADDR", ":8080"), "listen address for MCP HTTP transport")
+	serveCmd.Flags().StringVar(&flagMetricsAddr, "metrics-addr", envOr("METRICS_ADDR", ":9091"), "listen address for /metrics, /healthz, /readyz, /healthz/detailed")
 	// DEBUG env is read inside runServe (via loadConfig) so a malformed value
 	// fails startup with a clear error rather than silently defaulting.
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", false, "enable debug logging (overrides DEBUG env)")
@@ -101,18 +103,21 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	logger.Info("Grafana server-admin credential verified")
 
-	// authz uses Grafana as the source of truth for org membership.
-	// 30s TTL — role/membership changes propagate within that window.
-	authorizer, err := authz.NewAuthorizer(k8sOrgLister{reader: ctrlCache}, grafanaClient, logger, authz.DefaultCacheTTL)
+	// authz uses Grafana as the source of truth for org membership. Positive
+	// entries cache 30s; negative ones (user-not-found, empty memberships)
+	// use a 5s TTL so a mid-SSO-outage failure doesn't lock anyone out for
+	// half a minute. LRU-bounded so long-running pods don't leak.
+	authorizer, err := authz.NewAuthorizer(k8sOrgLister{reader: ctrlCache}, grafanaClient, logger,
+		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
 	}
 
-	oauthHandler, storeClose, err := buildOAuthHandler(shutdownCtx, logger)
+	oauthHandler, storeClose, err := buildOAuthHandler(shutdownCtx, cfg, logger)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = storeClose() }()
+	defer storeClose()
 
 	// Best-effort OTEL tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is
 	// unset. The cluster log pipeline ships stderr to Loki; we don't run
@@ -121,11 +126,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = shutdownOTEL(ctx)
-		}()
+		defer shutdownWithTimeout(shutdownOTEL)
+	}
+
+	if cfg.OAuthAllowInsecureHTTP {
+		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
+	}
+	if cfg.OAuthAllowPublicClientRegistration {
+		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
 	basicAuth, err := parseGrafanaBasicAuth(cfg.GrafanaBasicAuth)
@@ -163,27 +171,34 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return mcpsrv.ServeStdio(mcp)
 	}
 
-	handler := buildMux(flagTransport, mcp, oauthHandler, cfg.DexIssuerURL, grafanaClient, listOrgCount(ctrlCache), cacheAlive)
+	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
+	obsMux := buildObsMux(cfg.DexIssuerURL, grafanaClient, listOrgCount(ctrlCache), cacheAlive)
 
-	// One server for /mcp + /metrics + /healthz + /readyz + /oauth/*.
-	// No WriteTimeout because MCP streamable-HTTP / SSE are
-	// intentionally long-lived; ReadHeaderTimeout + IdleTimeout still
-	// guard against slowloris and lingering keep-alives.
-	srv := &http.Server{
-		Addr:              flagAddr,
-		Handler:           handler,
+	startOrgCacheReporter(shutdownCtx, ctrlCache)
+
+	// IdleTimeout closes keep-alives idle past 60s on both servers;
+	// WriteTimeout is set only on the obs server because MCP streaming-HTTP
+	// / SSE responses are intentionally long-lived.
+	mcpServer := &http.Server{
+		Addr:              flagMCPAddr,
+		Handler:           mcpHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	runListenAndServe(srv, logger, cancel)
+	obsServer := &http.Server{
+		Addr:              flagMetricsAddr,
+		Handler:           obsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	runListenAndServe(mcpServer, "MCP", logger, cancel)
+	runListenAndServe(obsServer, "observability", logger, cancel)
 
 	<-shutdownCtx.Done()
 	logger.Info("shutdown requested")
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer drainCancel()
-	if err := srv.Shutdown(drainCtx); err != nil {
-		logger.Warn("server drain returned error", "error", err)
-	}
+	runTwoPhaseShutdown(logger, mcpServer, obsServer)
 	return nil
 }
 
@@ -217,6 +232,14 @@ func parseGrafanaBasicAuth(s string) (*url.Userinfo, error) {
 		return nil, fmt.Errorf("GRAFANA_BASIC_AUTH must be in the form user:password")
 	}
 	return url.UserPassword(user, pass), nil
+}
+
+// shutdownWithTimeout invokes a provider's Shutdown with a fresh 5s
+// background context. Errors are swallowed: shutdown is best-effort.
+func shutdownWithTimeout(fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = fn(ctx)
 }
 
 // newLogger builds the root slog logger. format is "json" or "text"; debug
