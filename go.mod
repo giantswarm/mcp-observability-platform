@@ -24,6 +24,7 @@ require (
 )
 
 require (
+	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	connectrpc.com/connect v1.19.1 // indirect
 	github.com/PaesslerAG/gval v1.2.4 // indirect
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect

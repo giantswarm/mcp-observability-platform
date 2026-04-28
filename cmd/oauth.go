@@ -1,107 +1,89 @@
 package cmd
 
 import (
-	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
 
 	oauth "github.com/giantswarm/mcp-oauth"
+	"github.com/giantswarm/mcp-oauth/oauthconfig"
 	"github.com/giantswarm/mcp-oauth/providers/dex"
-	"github.com/giantswarm/mcp-oauth/security"
 	"github.com/giantswarm/mcp-oauth/storage"
-	"github.com/giantswarm/mcp-oauth/storage/memory"
-	"github.com/giantswarm/mcp-oauth/storage/valkey"
 )
 
-// buildOAuthHandler wires the dex provider, the storage backend, the
-// mcp-oauth server (with optional encryption-at-rest), and returns a
-// handler ready to mount on the MCP mux. storeClose drains the storage
-// backend on shutdown.
-func buildOAuthHandler(_ context.Context, cfg *config, logger *slog.Logger) (*oauth.Handler, func(), error) {
-	dexProvider, err := dex.NewProvider(&dex.Config{
-		IssuerURL:    cfg.DexIssuerURL,
-		ClientID:     cfg.DexClientID,
-		ClientSecret: cfg.DexClientSecret,
-		RedirectURL:  cfg.OAuthRedirectURL,
-	})
+// OAUTH_* env vars read directly by this package. Upstream owns the rest
+// (see oauthconfig.*FromEnvWithPrefix). Names match the helm chart and
+// README so an operator can grep the same string across all three.
+const (
+	envOAuthDexClientID    = "OAUTH_DEX_CLIENT_ID"
+	envOAuthDexIssuerURL   = "OAUTH_DEX_ISSUER_URL"
+	envOAuthStorageBackend = "OAUTH_STORAGE_BACKEND"
+)
+
+// buildOAuthHandler resolves the dex provider, server config, storage
+// backend, and optional encryptor from OAUTH_* env vars via the upstream
+// loaders, then assembles an mcp-oauth handler. storeClose drains the
+// storage backend on shutdown.
+func buildOAuthHandler(logger *slog.Logger) (*oauth.Handler, func(), error) {
+	provider, err := oauthconfig.DexFromEnv()
 	if err != nil {
 		return nil, nil, fmt.Errorf("dex provider: %w", err)
 	}
+	// Upstream DexFromEnv does not enforce the dex audience charset on
+	// the client ID; check it here so a typo fails startup rather than
+	// producing tokens Dex rejects mid-flow.
+	if err := dex.ValidateAudience(os.Getenv(envOAuthDexClientID)); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
+	}
 
-	tokenStore, clientStore, flowStore, storeClose, err := newOAuthStore(cfg, logger)
+	cfg, err := oauthconfig.FromEnv()
+	if err != nil {
+		return nil, nil, fmt.Errorf("oauth config: %w", err)
+	}
+	// MCP CLI clients (Claude Code, mcp-inspector) register a loopback
+	// redirect URI per RFC 8252. The binary always permits it; not an
+	// operator knob.
+	cfg.AllowLocalhostRedirectURIs = true
+
+	store, storeCloseErr, err := oauthconfig.StorageFromEnv(logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("oauth store: %w", err)
 	}
+	storeClose := func() { _ = storeCloseErr() }
 
-	// In-cluster memory store loses OAuth state on pod restart and isn't
-	// shared across replicas. Warn loudly so operators see it before users do.
-	if (cfg.OAuthStorage == "" || cfg.OAuthStorage == "memory") && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		logger.Warn("OAUTH_STORAGE=memory in a Kubernetes deployment — OAuth state is lost on pod restart and NOT shared across replicas; use OAUTH_STORAGE=valkey for production")
+	backend := os.Getenv(envOAuthStorageBackend)
+	if (backend == "" || backend == storage.BackendMemory) && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		logger.Warn("OAUTH_STORAGE_BACKEND=memory in a Kubernetes deployment — OAuth state is lost on pod restart and NOT shared across replicas; use OAUTH_STORAGE_BACKEND=valkey for production")
 	}
 
-	srv, err := oauth.NewServer(
-		dexProvider,
-		tokenStore, clientStore, flowStore,
-		&oauth.ServerConfig{
-			Issuer:                        cfg.OAuthIssuer,
-			AllowInsecureHTTP:             cfg.OAuthAllowInsecureHTTP,
-			AllowPublicClientRegistration: cfg.OAuthAllowPublicClientRegistration,
-			// Required by MCP CLI clients (Claude Code, mcp-inspector) that
-			// register a loopback redirect URI per RFC 8252.
-			AllowLocalhostRedirectURIs: true,
-			// SSO token forwarding: accept tokens minted for these audiences
-			// as if minted for our own client ID. Empty = own-client-only.
-			TrustedAudiences: cfg.OAuthTrustedAudiences,
-			// Custom redirect schemes (e.g. cursor://, vscode://) accepted
-			// during public client registration. mcp-oauth validates per
-			// RFC 3986.
-			TrustedPublicRegistrationSchemes: cfg.OAuthTrustedRedirectSchemes,
-		},
-		logger,
-	)
+	encryptor, err := oauthconfig.NewEncryptorFromEnv()
+	if err != nil {
+		storeClose()
+		return nil, nil, fmt.Errorf("oauth encryptor: %w", err)
+	}
+	// Valkey persists OAuth state across pod restarts and may live on a
+	// shared instance; refuse to start without encryption-at-rest.
+	// OAUTH_ALLOW_INSECURE_HTTP=true overrides for local dev (same
+	// escape hatch the upstream issuer-scheme check uses).
+	if backend == storage.BackendValkey && encryptor == nil && !cfg.AllowInsecureHTTP {
+		storeClose()
+		return nil, nil, fmt.Errorf("OAUTH_STORAGE_BACKEND=valkey requires OAUTH_ENCRYPTION_KEY (set OAUTH_ALLOW_INSECURE_HTTP=true to override for dev)")
+	}
+
+	if cfg.AllowInsecureHTTP {
+		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
+	}
+	if cfg.AllowPublicClientRegistration {
+		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
+	}
+
+	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger)
 	if err != nil {
 		storeClose()
 		return nil, nil, fmt.Errorf("oauth server: %w", err)
 	}
-	if cfg.OAuthEncryptionKey != nil {
-		enc, err := security.NewEncryptor(cfg.OAuthEncryptionKey)
-		if err != nil {
-			storeClose()
-			return nil, nil, fmt.Errorf("oauth encryptor: %w", err)
-		}
-		srv.SetEncryptor(enc)
+	if encryptor != nil {
+		srv.SetEncryptor(encryptor)
 	}
 	return oauth.NewHandler(srv, logger), storeClose, nil
-}
-
-// newOAuthStore picks the storage backend (memory or valkey) and returns
-// three interface views + a teardown. memory.Store and valkey.Store each
-// implement TokenStore/ClientStore/FlowStore, so a single instance is
-// returned three times.
-func newOAuthStore(cfg *config, logger *slog.Logger) (
-	storage.TokenStore, storage.ClientStore, storage.FlowStore, func(), error,
-) {
-	switch cfg.OAuthStorage {
-	case "", oauthStorageMemory:
-		s := memory.New()
-		return s, s, s, func() { s.Stop() }, nil
-	case oauthStorageValkey:
-		vcfg := valkey.Config{
-			Address:  cfg.ValkeyAddr,
-			Password: cfg.ValkeyPassword,
-			Logger:   logger,
-		}
-		if cfg.ValkeyTLS {
-			vcfg.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
-		}
-		s, err := valkey.New(vcfg)
-		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("valkey: %w", err)
-		}
-		return s, s, s, func() { s.Close() }, nil
-	default:
-		return nil, nil, nil, nil, fmt.Errorf("unknown OAUTH_STORAGE=%q (want memory|valkey)", cfg.OAuthStorage)
-	}
 }
