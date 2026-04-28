@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,15 +33,39 @@ func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			mcp.WithString("end", mcp.Description("RFC3339 or unix seconds")),
 			mcp.WithNumber("limit", mcp.Description("Max traces (default 20)")),
 		),
-		datasourceProxyHandler(az, gc, datasourceSpec{
-			Role:         authz.RoleViewer,
-			NeedTenant:   authz.TenantTypeData,
-			NameContains: []string{dsKindTempo},
-			InstantPath:  "api/search",
-			QueryArg:     "q",
-			ExtraArg:     "limit",
-			Timeout:      20 * time.Second,
-		}),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			orgRef, err := req.RequireString("org")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			query, err := req.RequireString("query")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, dsKindTempo)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			ctx, cancel := withToolTimeout(ctx, 20*time.Second)
+			defer cancel()
+
+			q := url.Values{"q": []string{query}}
+			if s := req.GetString("start", ""); s != "" {
+				q.Set("start", s)
+			}
+			if e := req.GetString("end", ""); e != "" {
+				q.Set("end", e)
+			}
+			if lim := req.GetInt("limit", 0); lim > 0 {
+				q.Set("limit", strconv.Itoa(lim))
+			}
+			observability.GrafanaProxyTotal.WithLabelValues("api/search").Inc()
+			body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, "api/search", q)
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr("tempo search", err), nil
+			}
+			return mcp.NewToolResultText(string(body)), nil
+		},
 	)
 
 	s.AddTool(

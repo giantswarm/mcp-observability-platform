@@ -11,26 +11,33 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/audit"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
 // Instrument is the composite observability middleware: one OTEL span,
-// one metric pair, one slog-based audit record per tool invocation.
-// Classify(res, err) is computed once and fanned out so the span
-// status, metric label, and audit outcome stay in lockstep.
+// one metric pair, and one structured slog "tool_call" record per
+// invocation. Classify(res, err) is computed once and fanned out so the
+// span status, metric label, and log outcome stay in lockstep.
 //
-// auditLogger is a dedicated *slog.Logger (typically JSON to stderr) so
-// audit records can be routed independently of the app's main log
-// stream. nil disables the audit emission while keeping span + metric.
+// logger is the app's slog.Logger (or nil to disable the structured
+// log line while keeping span + metric). The "tool_call" msg makes the
+// line trivially filterable in any log pipeline. With OTEL tracing
+// wired up, the span carries the same caller / outcome / duration
+// attributes — the slog line is the fallback for setups without OTLP.
 //
 // The handler error is propagated unchanged.
-func Instrument(auditLogger *slog.Logger) server.ToolHandlerMiddleware {
+func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			name := req.Params.Name
-			ctx, span := tracer.Start(ctx, "tool."+name)
+			ctx, span := tracer.Start(ctx, "tool."+name,
+				trace.WithAttributes(
+					attribute.String("tool.name", name),
+					attribute.String("caller", authz.CallerSubject(ctx)),
+					attribute.String("caller.token_source", authz.CallerTokenSource(ctx)),
+				),
+			)
 			defer span.End()
 			start := time.Now()
 
@@ -42,7 +49,10 @@ func Instrument(auditLogger *slog.Logger) server.ToolHandlerMiddleware {
 			// Span: record outcome on every call; mark Error only on
 			// system_error — user_error is expected behaviour, same
 			// convention as HTTP servers not marking 4xx spans Error.
-			span.SetAttributes(attribute.String("tool.outcome", outcome))
+			span.SetAttributes(
+				attribute.String("tool.outcome", outcome),
+				attribute.Int64("tool.duration_ms", duration.Milliseconds()),
+			)
 			if outcome == OutcomeSystemError {
 				span.SetStatus(codes.Error, "tool returned error")
 			}
@@ -51,18 +61,17 @@ func Instrument(auditLogger *slog.Logger) server.ToolHandlerMiddleware {
 			observability.ToolCallTotal.WithLabelValues(name, outcome).Inc()
 			observability.ToolCallDuration.WithLabelValues(name, outcome).Observe(duration.Seconds())
 
-			// Audit: structured slog record on the dedicated audit
-			// stream. Emit happens inside this middleware (not in a
-			// dedicated audit package wrapper) so the schema lives
-			// alongside the metric/span — three signals, one place.
-			if auditLogger != nil {
+			// Structured log line for setups without OTLP traces. With
+			// a gateway + traces in place this is redundant — leave
+			// logger=nil to disable.
+			if logger != nil {
 				traceID, spanID := traceIDs(ctx)
-				auditLogger.LogAttrs(ctx, slog.LevelInfo, "tool_call",
+				logger.LogAttrs(ctx, slog.LevelInfo, "tool_call",
 					slog.Time("timestamp", start),
 					slog.String("caller", authz.CallerSubject(ctx)),
 					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
 					slog.String("tool", name),
-					slog.Any("args", audit.TruncateArgs(req.GetArguments())),
+					slog.Any("args", req.GetArguments()),
 					slog.String("outcome", outcome),
 					slog.Int64("duration_ms", duration.Milliseconds()),
 					slog.String("error", auditErrorMessage(err, res)),

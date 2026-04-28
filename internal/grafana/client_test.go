@@ -35,9 +35,9 @@ func TestClient_AuthHeader_Bearer(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := c.GetDashboard(context.Background(), RequestOpts{OrgID: 5}, "uid123")
+	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 5}, 1, "api/v1/query", nil)
 	if err != nil {
-		t.Fatalf("GetDashboard: %v", err)
+		t.Fatalf("DatasourceProxy: %v", err)
 	}
 	if gotAuth != "Bearer test-token" {
 		t.Errorf("auth header = %q, want 'Bearer test-token'", gotAuth)
@@ -56,9 +56,9 @@ func TestClient_AuthHeader_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = c.ListDatasources(context.Background(), RequestOpts{OrgID: 1})
+	_, err = c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 	if err != nil {
-		t.Fatalf("ListDatasources: %v", err)
+		t.Fatalf("DatasourceProxy: %v", err)
 	}
 	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:pw"))
 	if gotAuth != want {
@@ -76,9 +76,9 @@ func TestClient_OrgIDAndCallerHeaders(t *testing.T) {
 	defer ts.Close()
 
 	opts := RequestOpts{OrgID: 42, Caller: "alice@example.com"}
-	_, err := c.SearchDashboards(context.Background(), opts, "", 10)
+	_, err := c.DatasourceProxy(context.Background(), opts, 1, "api/v1/query", nil)
 	if err != nil {
-		t.Fatalf("SearchDashboards: %v", err)
+		t.Fatalf("DatasourceProxy: %v", err)
 	}
 	if gotOrg != "42" {
 		t.Errorf("X-Grafana-Org-Id = %q, want 42", gotOrg)
@@ -158,120 +158,6 @@ func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 		if !strings.Contains(gotQuery, want) {
 			t.Errorf("query %q missing %s", gotQuery, want)
 		}
-	}
-}
-
-func TestClient_RenderPanel_RendererMissing(t *testing.T) {
-	// When Grafana's renderer is absent, the /render endpoint returns an
-	// HTML error page. Our client must translate that into an actionable
-	// error mentioning grafana-image-renderer.
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("<html>Rendering plugin is not installed</html>"))
-	}))
-	defer ts.Close()
-	c, _ := New(Config{URL: ts.URL, Token: "t"})
-
-	_, _, err := c.RenderPanel(context.Background(), RequestOpts{OrgID: 1}, "abc", 2, nil)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "grafana-image-renderer") {
-		t.Errorf("error should mention grafana-image-renderer, got: %v", err)
-	}
-}
-
-func TestClient_RenderPanel_Success(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G'})
-	}))
-	defer ts.Close()
-	c, _ := New(Config{URL: ts.URL, Token: "t"})
-
-	body, ct, err := c.RenderPanel(context.Background(), RequestOpts{OrgID: 1}, "abc", 2, nil)
-	if err != nil {
-		t.Fatalf("RenderPanel: %v", err)
-	}
-	if ct != "image/png" {
-		t.Errorf("content-type = %q", ct)
-	}
-	if !strings.HasPrefix(string(body), "\x89PNG") {
-		t.Errorf("body prefix = %q", body[:4])
-	}
-}
-
-func TestClient_HasImageRenderer(t *testing.T) {
-	// 200 = installed, 404 = not installed, anything else surfaces as an
-	// error so callers don't treat a transient 5xx as "renderer missing".
-	cases := []struct {
-		name         string
-		status       int
-		wantPresent  bool
-		wantErr      bool
-		wantStatusIn string
-	}{
-		{"installed", http.StatusOK, true, false, ""},
-		{"not installed", http.StatusNotFound, false, false, ""},
-		{"transient 502 surfaces error", http.StatusBadGateway, false, true, "status 502"},
-		{"perms error surfaces", http.StatusForbidden, false, true, "status 403"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tc.status)
-			}))
-			defer ts.Close()
-			c, _ := New(Config{URL: ts.URL, Token: "t"})
-
-			present, err := c.HasImageRenderer(context.Background())
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("want error, got present=%v nil", present)
-				}
-				if tc.wantStatusIn != "" && !strings.Contains(err.Error(), tc.wantStatusIn) {
-					t.Errorf("error %q should mention %q", err, tc.wantStatusIn)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if present != tc.wantPresent {
-				t.Errorf("present = %v, want %v", present, tc.wantPresent)
-			}
-		})
-	}
-}
-
-func TestClient_HasImageRenderer_RecoversAfterTransientError(t *testing.T) {
-	// Without the cache, a probe that fails once must not lock callers out
-	// — the next call re-probes and observes recovery immediately.
-	var attempts int
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		attempts++
-		if attempts == 1 {
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-	c, _ := New(Config{URL: ts.URL, Token: "t"})
-
-	if _, err := c.HasImageRenderer(context.Background()); err == nil {
-		t.Fatal("first call: want error, got nil")
-	}
-	present, err := c.HasImageRenderer(context.Background())
-	if err != nil {
-		t.Fatalf("second call: %v", err)
-	}
-	if !present {
-		t.Fatal("second call: present=false, want true after upstream recovery")
-	}
-	if attempts != 2 {
-		t.Errorf("attempts = %d, want 2", attempts)
 	}
 }
 
@@ -357,7 +243,7 @@ func TestDoGET_CapsResponseBody(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := c.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "uid")
+	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 	if err == nil {
 		t.Fatalf("expected size-cap error, got nil")
 	}
@@ -391,7 +277,7 @@ func TestClient_ErrorStatusCodes_SurfaceUpstreamBody(t *testing.T) {
 			})
 			defer ts.Close()
 
-			_, err := client.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "uid")
+			_, err := client.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 			if err == nil {
 				t.Fatalf("expected error for status %d", c.status)
 			}
@@ -516,7 +402,7 @@ func TestClient_ErrorBodyCapped(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := client.GetDashboard(context.Background(), RequestOpts{OrgID: 1}, "uid")
+	_, err := client.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 	if err == nil {
 		t.Fatalf("expected error")
 	}

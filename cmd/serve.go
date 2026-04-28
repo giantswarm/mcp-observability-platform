@@ -91,7 +91,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	grafanaClient, err := grafana.New(grafana.Config{
 		URL:       cfg.GrafanaURL,
-		PublicURL: cfg.GrafanaPublicURL,
 		Token:     cfg.GrafanaSAToken,
 		BasicAuth: cfg.GrafanaBasicAuth,
 	})
@@ -138,11 +137,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
-	// Audit trail: JSON-per-tool-call on stderr. Dedicated *slog.Logger
-	// so audit can be routed to a separate sink later without touching
-	// the main app log.
-	auditLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
 	bridge, err := newUpstreamBridge(authorizer, grafanaClient, cfg)
 	if err != nil {
 		return fmt.Errorf("upstream bridge: %w", err)
@@ -154,7 +148,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 		Grafana:          grafanaClient,
 		Bridge:           bridge,
 		Version:          version,
-		AuditLogger:      auditLogger,
 		ToolTimeout:      cfg.ToolTimeout,
 		MaxResponseBytes: cfg.MaxResponseBytes,
 	})
