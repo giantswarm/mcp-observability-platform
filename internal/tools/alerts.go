@@ -34,7 +34,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("authz", err), nil
 			}
 
 			pageSize := req.GetInt("pageSize", 0)
@@ -70,11 +70,11 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			fp, err := req.RequireString("fingerprint")
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("missing arg", err), nil
 			}
 			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("authz", err), nil
 			}
 			// AM v2 has no fingerprint matcher; the only round-trip is a full
 			// scan with state=all. Acceptable here — the caller already paged

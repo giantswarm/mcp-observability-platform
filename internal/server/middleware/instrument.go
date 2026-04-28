@@ -62,6 +62,7 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 					slog.String("caller", authz.CallerSubject(ctx)),
 					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
 					slog.String("tool", name),
+					slog.String("org", argString(req, "org")),
 					slog.Any("args", req.GetArguments()),
 					slog.Bool("is_error", isErr),
 					slog.Int64("duration_ms", duration.Milliseconds()),
@@ -74,6 +75,17 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 			return res, err
 		}
 	}
+}
+
+// argString reads a string argument off the request without surfacing the
+// type-mismatch path; missing or non-string args return "". Used to lift
+// well-known args (currently "org") to top-level slog attrs so log
+// queries don't have to grep into the args blob.
+func argString(req mcp.CallToolRequest, key string) string {
+	if v, ok := req.GetArguments()[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // auditErrorMessage prefers the Go error, falls back to the IsError
