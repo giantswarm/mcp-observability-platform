@@ -67,7 +67,12 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 | `list_prometheus_label_names`        | `api/v1/labels`                                 |
 | `list_prometheus_label_values`       | `api/v1/label/{label}/values`                   |
 | `list_prometheus_metric_metadata`    | `api/v1/metadata`                               |
-| `alerting_manage_rules`              | `api/v1/rules` — read-only meta-tool covering list / get / versions over Mimir-backed alert + recording rules |
+
+**Alert rules (Mimir Ruler)**
+
+| Tool                    | DS proxy path                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `alerting_manage_rules` | `api/v1/rules` — read-only meta-tool: list / get / versions over Mimir-backed alert + recording rules |
 
 **Logs (Loki)**
 

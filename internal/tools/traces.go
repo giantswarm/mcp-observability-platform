@@ -23,10 +23,15 @@ import (
 )
 
 func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	// query_traces — Tempo TraceQL search.
+	registerQueryTracesTool(s, az, gc)
+	registerListTempoTagNamesTool(s, az, gc)
+	registerListTempoTagValuesTool(s, az, gc)
+}
+
+func registerQueryTracesTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("query_traces",
-			ReadOnlyAnnotation(),
+			readOnlyAnnotation(),
 			mcp.WithDescription("Search traces in Tempo via the org's multi-tenant datasource. Use TraceQL expressions like '{ resource.service.name = \"api\" && duration > 2s }'."),
 			orgArg(),
 			mcp.WithString("query", mcp.Required(), mcp.Description("TraceQL expression — e.g. '{ resource.service.name = \"api\" && duration > 2s }'.")),
@@ -35,15 +40,14 @@ func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			mcp.WithNumber("limit", mcp.Description("Max traces (default 20).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			query, err := req.RequireString("query")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindTempo)
+			// TenantTypeData covers metrics, logs, *and* traces in the
+			// observability-operator CRD; the docstring on TenantType
+			// drives that grouping.
+			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindTempo)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -65,35 +69,35 @@ func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			return mcp.NewToolResultText(string(body)), nil
 		},
 	)
+}
 
+func registerListTempoTagNamesTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("list_tempo_tag_names",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("List searchable tag names in Tempo for the given time window (e.g. 'service.name', 'http.method'). Sorted alphabetically."),
+			readOnlyAnnotation(),
+			mcp.WithDescription("List Tempo tag names for use in TraceQL filters (e.g. 'resource.service.name', 'span.http.method'). Call before list_tempo_tag_values; results are scope-qualified and round-trip into list_tempo_tag_values' 'tag' arg."),
 			orgArg(),
 			mcp.WithString("scope", mcp.Description("Tempo tag scope: 'resource' | 'span' | 'intrinsic' | 'all' (default 'all').")),
 			mcp.WithString("start", mcp.Description("Unix seconds; default now-1h.")),
 			mcp.WithString("end", mcp.Description("Unix seconds; default now.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			names, err := fetchTempoTags(ctx, az, gc, orgRef, "", req)
+			names, err := fetchTempoTags(ctx, az, gc, "", req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return mcp.NewToolResultJSON(paginateStrings(names, "", 0, len(names)))
 		},
 	)
+}
 
+func registerListTempoTagValuesTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("list_tempo_tag_values",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("List values for a given Tempo tag (e.g. values for 'service.name') in the time window. Paginated with optional prefix filter."),
+			readOnlyAnnotation(),
+			mcp.WithDescription("List values for a Tempo tag (e.g. tag='resource.service.name' → ['api','worker',...]). Use the qualified name returned by list_tempo_tag_names. Paginated; 'prefix' is a case-insensitive substring filter."),
 			orgArg(),
-			mcp.WithString("tag", mcp.Required(), mcp.Description("Tag name, e.g. 'service.name'.")),
+			mcp.WithString("tag", mcp.Required(), mcp.Description("Tag name, e.g. 'resource.service.name'.")),
 			mcp.WithString("start", mcp.Description("Unix seconds; default now-1h.")),
 			mcp.WithString("end", mcp.Description("Unix seconds; default now.")),
 			mcp.WithString("prefix", mcp.Description("Case-insensitive substring filter applied after fetching.")),
@@ -101,15 +105,11 @@ func registerTraceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			mcp.WithNumber("pageSize", mcp.Description("Default 100, max 1000.")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			tag, err := req.RequireString("tag")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			values, err := fetchTempoTags(ctx, az, gc, orgRef, tag, req)
+			values, err := fetchTempoTags(ctx, az, gc, tag, req)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -137,8 +137,8 @@ func qualifyTempoTag(scope, tag string) string {
 // /api/v2/search/tag/{tag}/values. Tempo's v2 API returns a single-level
 // {scopes:[{name, tags:[...]}]} structure for tag names and
 // {tagValues:[{type, value}]} for values; we flatten both to a []string.
-func fetchTempoTags(ctx context.Context, az authz.Authorizer, gc grafana.Client, orgRef, tag string, req mcp.CallToolRequest) ([]string, error) {
-	org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindTempo)
+func fetchTempoTags(ctx context.Context, az authz.Authorizer, gc grafana.Client, tag string, req mcp.CallToolRequest) ([]string, error) {
+	org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindTempo)
 	if err != nil {
 		return nil, err
 	}

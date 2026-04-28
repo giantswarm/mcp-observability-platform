@@ -10,10 +10,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// registerMetricsTools wires the upstream Mimir/Prometheus tools onto
-// our MCP server. All gate on RoleViewer; the binder handles
-// org→OrgID + Mimir-datasource-UID resolution and X-Grafana-User
-// caller attribution.
 func registerMetricsTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.QueryPrometheus,

@@ -23,7 +23,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 
 	s.AddTool(
 		mcp.NewTool("list_alerts",
-			ReadOnlyAnnotation(),
+			readOnlyAnnotation(),
 			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); call get_alert with the fingerprint for full detail."),
 			orgArg(),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'silenced' | 'inhibited' | 'all'")),
@@ -32,16 +32,11 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
+			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
-			page := req.GetInt("page", 0)
 			pageSize := req.GetInt("pageSize", 0)
 			if pageSize <= 0 {
 				pageSize = 50
@@ -52,7 +47,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
 			}
-			result, err := paginateAlerts(body, page, pageSize)
+			result, err := paginateAlerts(body, req.GetInt("page", 0), pageSize)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
 			}
@@ -67,24 +62,23 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("get_alert",
-			ReadOnlyAnnotation(),
+			readOnlyAnnotation(),
 			mcp.WithDescription("Return the full Alertmanager alert object for a single fingerprint: labels, annotations, timestamps, generatorURL, silencedBy/inhibitedBy. Use after list_alerts."),
 			orgArg(),
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			orgRef, err := req.RequireString("org")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			fp, err := req.RequireString("fingerprint")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
+			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			// AM v2 has no fingerprint matcher; the only round-trip is a full
+			// scan with state=all. Acceptable here — the caller already paged
+			// list_alerts for this fingerprint, so a re-fetch is bounded.
 			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
@@ -94,7 +88,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
 			}
 			if alert == nil {
-				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found in org %q", fp, orgRef)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found", fp)), nil
 			}
 			return mcp.NewToolResultJSON(alert)
 		},

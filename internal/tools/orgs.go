@@ -19,8 +19,8 @@ import (
 func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, b *gfBinder) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
-			ReadOnlyAnnotation(),
-			mcp.WithDescription("List the Grafana organizations you have access to, with your role and available tenants."),
+			readOnlyAnnotation(),
+			mcp.WithDescription("List orgs the caller can access. Call this first to discover the 'org' value other tools need. Returns name, displayName, orgId, role, and tenantTypes (e.g. [\"data\",\"alerting\"])."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			access, err := az.ListOrgs(ctx)

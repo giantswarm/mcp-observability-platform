@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"sync"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -29,28 +30,21 @@ const datasourceUIDArg = "datasourceUid"
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
 // datasource-scoped tools) datasource UID resolution.
-//
-// Per-call lifecycle of a wrapped handler:
-//
-//  1. Read "org" from the request, resolve via Authorizer.RequireOrg to
-//     a fully-populated authorised Organization at >= role.
-//  2. (Datasource only) pick the Datasource on the org by kind, look up
-//     its UID via Grafana, and inject argName=uid into the request
-//     before delegation.
-//  3. Build mcpgrafana.GrafanaConfig with our base URL + APIKey, overlay
-//     the resolved OrgID + caller-derived X-Grafana-User header (skipped
-//     when caller subject is empty), and stash it in ctx via
-//     WithGrafanaConfig.
-//  4. Construct a fresh upstream GrafanaClient and stash it in ctx.
-//     Per-request construction works around upstream's RoundTrippers
-//     freezing OrgID at construction time (grafana/mcp-grafana#794).
-//  5. Invoke the upstream Tool.Handler.
 type gfBinder struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
 	url        string
 	apiKey     string
 	basicAuth  *url.Userinfo
+
+	// upstream is a single client reused across requests. mcp-grafana
+	// v0.12.1 (#805) made the OrgID/ExtraHeaders/Auth RoundTrippers read
+	// from GrafanaConfigFromContext(req.Context()) on every call, so per
+	// caller state moves to ctx via attachGrafana. The client is built
+	// lazily on first authz-passed request because NewGrafanaClient
+	// hits /api/frontend/settings during construction.
+	upstreamOnce sync.Once
+	upstream     *mcpgrafana.GrafanaClient
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
@@ -79,6 +73,16 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 	}, nil
 }
 
+// upstreamClient lazily builds the shared upstream GrafanaClient on
+// first use so the /api/frontend/settings round-trip in
+// NewGrafanaClient is deferred until an authz-passing request runs.
+func (b *gfBinder) upstreamClient(ctx context.Context) *mcpgrafana.GrafanaClient {
+	b.upstreamOnce.Do(func() {
+		b.upstream = mcpgrafana.NewGrafanaClient(ctx, b.url, b.apiKey, b.basicAuth)
+	})
+	return b.upstream
+}
+
 // bindOrgTool registers an upstream tool that needs only org→OrgID
 // resolution. The synthetic "org" argument is prepended to the
 // LLM-visible schema; every other arg passes through unchanged.
@@ -105,10 +109,8 @@ func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, kind
 // server-side.
 //
 // Properties map and Required slice are deep-copied; the input is never
-// mutated.
-//
-// Panic at registration, not per-request — every wrapped tool is
-// enumerated by RegisterAll, so a collision shows up at process start.
+// mutated. Panic at registration, not per-request — every wrapped tool
+// is enumerated by RegisterAll, so a collision shows up at process start.
 func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 	out := t
 	props := make(map[string]any, len(t.InputSchema.Properties)+1)
@@ -160,16 +162,18 @@ func (b *gfBinder) wrap(role authz.Role, kind grafana.DatasourceKind, argName st
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("datasource lookup", err), nil
 			}
-			injectArg(&req, argName, uid)
+			if err := injectArg(&req, argName, uid); err != nil {
+				return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+			}
 		}
 		return upstream.Handler(b.attachGrafana(ctx, org.OrgID), req)
 	}
 }
 
-// attachGrafana stashes our GrafanaConfig and a fresh upstream
-// GrafanaClient on ctx for upstream's handler to pick up. Per-request
-// client construction works around upstream's OrgID-frozen RoundTripper
-// (grafana/mcp-grafana#794).
+// attachGrafana stashes our GrafanaConfig and the shared upstream
+// GrafanaClient on ctx. mcp-grafana v0.12.1's RoundTrippers read OrgID
+// and ExtraHeaders from this config per-request, so the same client is
+// safe to share across orgs.
 func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Context {
 	cfg := mcpgrafana.GrafanaConfig{
 		URL:       b.url,
@@ -178,21 +182,20 @@ func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Conte
 		OrgID:     orgID,
 	}
 	if subj := authz.CallerSubject(ctx); subj != "" {
-		cfg.ExtraHeaders = map[string]string{
-			// Grafana audit-log attribution to the OIDC subject rather
-			// than the server-admin SA we authenticate with.
-			"X-Grafana-User": subj,
-		}
+		// Grafana audit-log attribution to the OIDC subject rather
+		// than the server-admin SA we authenticate with.
+		cfg.ExtraHeaders = map[string]string{"X-Grafana-User": subj}
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	ctx = mcpgrafana.WithGrafanaClient(ctx, mcpgrafana.NewGrafanaClient(ctx, b.url, b.apiKey, b.basicAuth))
+	ctx = mcpgrafana.WithGrafanaClient(ctx, b.upstreamClient(ctx))
 	return ctx
 }
 
-// injectArg sets a key on req.Params.Arguments, copy-on-write. Handles
-// the three shapes Arguments can carry: nil, map[string]any (common
-// case), and json.RawMessage (some transports unmarshal lazily).
-func injectArg(req *mcp.CallToolRequest, key string, value any) {
+// injectArg sets a key on req.Params.Arguments, copy-on-write. Returns
+// an error rather than silently dropping the caller's args when the
+// shape is malformed (json.RawMessage that doesn't decode as an object,
+// or any other unexpected type).
+func injectArg(req *mcp.CallToolRequest, key string, value any) error {
 	switch a := req.Params.Arguments.(type) {
 	case nil:
 		req.Params.Arguments = map[string]any{key: value}
@@ -203,10 +206,13 @@ func injectArg(req *mcp.CallToolRequest, key string, value any) {
 		req.Params.Arguments = next
 	case json.RawMessage:
 		next := map[string]any{}
-		_ = json.Unmarshal(a, &next)
+		if err := json.Unmarshal(a, &next); err != nil {
+			return fmt.Errorf("decode arguments: %w", err)
+		}
 		next[key] = value
 		req.Params.Arguments = next
 	default:
-		req.Params.Arguments = map[string]any{key: value}
+		return fmt.Errorf("unexpected arguments type %T", a)
 	}
+	return nil
 }
