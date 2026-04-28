@@ -18,6 +18,13 @@ var (
 	// identifier and is the only key the resolver-cache trusts.
 	ErrNoCallerIdentity = errors.New("no caller identity")
 
+	// ErrCallerUnknownToGrafana means the caller authenticated with our IdP
+	// but has never logged into Grafana yet, so Grafana has no user record.
+	// Distinct from ErrNotAuthorised: the latter means "Grafana knows you,
+	// but not for this org"; this one means "Grafana doesn't know you yet —
+	// log in once and retry."
+	ErrCallerUnknownToGrafana = errors.New("caller has no Grafana account yet — log into Grafana once to register")
+
 	// ErrAmbiguousOrgRef means orgRef matches more than one registered
 	// Organization by DisplayName. Returned instead of silently picking
 	// one — collisions need an operator fix, not a coin flip.

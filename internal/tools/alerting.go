@@ -2,7 +2,10 @@
 //
 // alerting_manage_rules is upstream's meta-tool; the `operation` enum
 // (list/get/versions) is its surface, not ours. We expose the read
-// variant only.
+// variant only. With a Mimir datasource bound, only `operation=list`
+// is meaningful — `get`/`versions` require Grafana-managed RuleUIDs,
+// not Mimir-side rule names. Listing currently drops recording rules
+// at upstream's projection; see roadmap for the planned upstream fix.
 package tools
 
 import (
@@ -16,5 +19,5 @@ import (
 func registerAlertingTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	// alerting_manage_rules uses snake_case "datasource_uid" — every other
 	// upstream tool uses camelCase "datasourceUid".
-	b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir, "datasource_uid", mcpgrafanatools.ManageRulesRead)
+	b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, "datasource_uid", mcpgrafanatools.ManageRulesRead)
 }

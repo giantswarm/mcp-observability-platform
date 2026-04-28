@@ -12,7 +12,6 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -70,26 +69,6 @@ func buildOrgCache(ctx context.Context, logger *slog.Logger) (authz.OrgLister, *
 	}
 	logger.Info("GrafanaOrganization cache synced")
 	return k8sOrgLister{reader: c}, &alive, nil
-}
-
-// startOrgCacheReporter polls every 30s to keep the OrgCacheSize gauge
-// accurate. The informer is event-driven internally; this loop only
-// refreshes the exported metric.
-func startOrgCacheReporter(ctx context.Context, lister authz.OrgLister) {
-	go func() {
-		tick := time.NewTicker(30 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				if orgs, err := lister.List(ctx); err == nil {
-					observability.OrgCacheSize.Set(float64(len(orgs)))
-				}
-			}
-		}
-	}()
 }
 
 // k8sOrgLister adapts a controller-runtime cache to authz.OrgLister so the

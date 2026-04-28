@@ -65,7 +65,6 @@ type User struct {
 // per-call GrafanaClient: server-admin lookups (which need OrgID=0 to
 // use the SA's global context) and a generic datasource proxy.
 type Client interface {
-	Ping(ctx context.Context) error
 	VerifyServerAdmin(ctx context.Context) error
 	LookupUser(ctx context.Context, loginOrEmail string) (*User, error)
 	LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error)
@@ -225,20 +224,6 @@ func isJSONContentType(ct string) bool {
 		return false
 	}
 	return mt == "application/json" || strings.HasSuffix(mt, "+json")
-}
-
-// Ping calls GET /api/health, Grafana's auth-free reachability endpoint.
-// Used by readiness probes; cheaper than VerifyServerAdmin (which lists
-// all orgs).
-func (c *client) Ping(ctx context.Context) error {
-	status, _, _, err := c.fetch(ctx, "/api/health", nil, RequestOpts{})
-	if err != nil {
-		return err
-	}
-	if status >= 300 {
-		return fmt.Errorf("grafana: GET /api/health: status %d", status)
-	}
-	return nil
 }
 
 // VerifyServerAdmin calls GET /api/orgs, which requires the server-admin
