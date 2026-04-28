@@ -2,7 +2,8 @@ package authz
 
 import (
 	"slices"
-	"strings"
+
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // TenantType is the authz-owned enum of what a tenant can access. Mirrors
@@ -25,41 +26,14 @@ type Tenant struct {
 	Types []TenantType
 }
 
-// Datasource is the domain projection of a
-// GrafanaOrganization.status.dataSources entry. Name is matched
-// case-insensitively by FindDatasource via internal substring rules.
-type Datasource struct {
-	ID   int64
-	Name string
-}
-
-// DatasourceKind names the canonical role a datasource plays for the MCP
-// (metrics backend, logs backend, …). FindDatasource picks the concrete
-// Datasource by case-insensitive name substring; the kind ↔ substring
-// rules live in this package so the substring vocabulary stays in one
-// place. See docs/roadmap.md (uid-publish) for the planned switch to
-// reading kind + UID off the CR directly.
-type DatasourceKind string
-
-const (
-	DSKindMimir        DatasourceKind = "mimir"
-	DSKindLoki         DatasourceKind = "loki"
-	DSKindTempo        DatasourceKind = "tempo"
-	DSKindAlertmanager DatasourceKind = "alertmanager"
-)
-
-// String returns the kind name (already a string under the hood; this
-// satisfies fmt.Stringer for cleaner formatting at error sites).
-func (k DatasourceKind) String() string { return string(k) }
-
 // Organization is the domain entity backing a Grafana org, plus the caller's
 // Role once resolved.
 //
-// An Organization straight from OrgRegistry.List carries Role = RoleNone —
+// An Organization straight from OrgLister.List carries Role = RoleNone —
 // that's "registry-output state, pre-resolution". The authorizer fills Role
 // from the caller's Grafana membership before returning to tool handlers, so
 // any Organization a handler sees has been authorised (Role ≥ RoleViewer).
-// Code that calls OrgRegistry.List directly (the authorizer only) MUST NOT
+// Code that calls OrgLister.List directly (the authorizer only) MUST NOT
 // treat a RoleNone entry as authorised.
 //
 // Handlers read Organization values returned from the authorizer's Require /
@@ -71,7 +45,7 @@ type Organization struct {
 	OrgID       int64
 	Role        Role
 	Tenants     []Tenant
-	Datasources []Datasource
+	Datasources []grafana.Datasource
 }
 
 // HasTenantType returns true if any tenant on this org supports the given type
@@ -87,29 +61,11 @@ func (o Organization) HasTenantType(want TenantType) bool {
 }
 
 // FindDatasource picks the datasource backing the given kind. Today the
-// kind ↔ substring rules are baked in here; tomorrow (CR-status uid +
-// kind publishing) they're a direct read off Datasource.
-func (o Organization) FindDatasource(kind DatasourceKind) (Datasource, bool) {
-	needle, ok := datasourceKindSubstring[kind]
-	if !ok {
-		return Datasource{}, false
-	}
-	for _, ds := range o.Datasources {
-		if strings.Contains(strings.ToLower(ds.Name), needle) {
-			return ds, true
-		}
-	}
-	return Datasource{}, false
-}
-
-// datasourceKindSubstring is the single source of truth for "what
-// substring identifies a datasource of kind K?". Kept private so changing
-// it doesn't ripple to consumers — they reference the kind constants.
-var datasourceKindSubstring = map[DatasourceKind]string{
-	DSKindMimir:        "mimir",
-	DSKindLoki:         "loki",
-	DSKindTempo:        "tempo",
-	DSKindAlertmanager: "alertmanager",
+// kind ↔ substring rules are baked in (see grafana.MatchKind); tomorrow
+// (CR-status uid + kind publishing) the kind comes off the Datasource
+// directly.
+func (o Organization) FindDatasource(kind grafana.DatasourceKind) (grafana.Datasource, bool) {
+	return grafana.MatchKind(o.Datasources, kind)
 }
 
 // cloneTenants returns a deep copy of a Tenant slice: the outer slice and
@@ -124,13 +80,4 @@ func cloneTenants(in []Tenant) []Tenant {
 		out[i] = Tenant{Name: t.Name, Types: slices.Clone(t.Types)}
 	}
 	return out
-}
-
-// cloneDatasources returns a shallow copy of the slice; Datasource is
-// value-only (no nested slices or pointers) so slices.Clone is enough.
-func cloneDatasources(in []Datasource) []Datasource {
-	if len(in) == 0 {
-		return nil
-	}
-	return slices.Clone(in)
 }

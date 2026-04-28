@@ -43,7 +43,7 @@ func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organi
 		DisplayName: display,
 		OrgID:       orgID,
 		Tenants:     tenants,
-		Datasources: []Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 10, Name: "mimir-" + name},
 			{ID: 11, Name: "loki-" + name},
 		},
@@ -266,21 +266,21 @@ func TestRoleFromGrafana(t *testing.T) {
 
 func TestOrganization_FindDatasource(t *testing.T) {
 	org := Organization{
-		Datasources: []Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 1, Name: "mimir-prod"},
 			{ID: 2, Name: "Loki-Prod"},
 			{ID: 3, Name: "tempo-prod"},
 		},
 	}
 	cases := []struct {
-		kind   DatasourceKind
+		kind   grafana.DatasourceKind
 		wantID int64
 		wantOK bool
 	}{
-		{DSKindMimir, 1, true},
-		{DSKindLoki, 2, true},
-		{DSKindTempo, 3, true},
-		{DSKindAlertmanager, 0, false},
+		{grafana.DSKindMimir, 1, true},
+		{grafana.DSKindLoki, 2, true},
+		{grafana.DSKindTempo, 3, true},
+		{grafana.DSKindAlertmanager, 0, false},
 	}
 	for _, c := range cases {
 		gotDS, gotOK := org.FindDatasource(c.kind)
@@ -361,7 +361,7 @@ func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
 		t.Fatalf("Require: %v", err)
 	}
 	// Mutation simulating a handler that appends to the datasource list.
-	oa1.Datasources = append(oa1.Datasources, Datasource{ID: 999, Name: "poisoned"})
+	oa1.Datasources = append(oa1.Datasources, grafana.Datasource{ID: 999, Name: "poisoned"})
 
 	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -96,9 +97,9 @@ func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) 
 			}
 			tenants = append(tenants, authz.Tenant{Name: string(t.Name), Types: types})
 		}
-		datasources := make([]authz.Datasource, 0, len(cr.Status.DataSources))
+		datasources := make([]grafana.Datasource, 0, len(cr.Status.DataSources))
 		for _, ds := range cr.Status.DataSources {
-			datasources = append(datasources, authz.Datasource{ID: ds.ID, Name: ds.Name})
+			datasources = append(datasources, grafana.Datasource{ID: ds.ID, Name: ds.Name})
 		}
 		out[i] = authz.Organization{
 			Name:        cr.Name,

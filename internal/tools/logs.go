@@ -11,6 +11,7 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // registerLogTools wires the upstream Loki tools onto our MCP server.
@@ -24,6 +25,6 @@ func registerLogTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.ListLokiLabelNames,
 		mcpgrafanatools.ListLokiLabelValues,
 	} {
-		b.bindDatasourceTool(s, authz.RoleViewer, authz.DSKindLoki, datasourceUIDArg, t)
+		b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindLoki, datasourceUIDArg, t)
 	}
 }

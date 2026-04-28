@@ -54,7 +54,7 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			Name:  "acme",
 			Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting},
 		}},
-		Datasources: []authz.Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 10, Name: "mimir-acme"},
 			{ID: 11, Name: "loki-acme"},
 			{ID: 12, Name: "tempo-acme"},

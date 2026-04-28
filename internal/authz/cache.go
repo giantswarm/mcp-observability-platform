@@ -1,6 +1,9 @@
 package authz
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // DefaultCacheTTL is how long a per-caller membership snapshot stays
 // fresh before the next access re-asks Grafana. 30s is the documented
@@ -57,7 +60,7 @@ func cacheKey(c Caller) string {
 // value-typed fields are copied by the struct-copy idiom.
 func cloneOrganization(o Organization) Organization {
 	o.Tenants = cloneTenants(o.Tenants)
-	o.Datasources = cloneDatasources(o.Datasources)
+	o.Datasources = slices.Clone(o.Datasources)
 	return o
 }
 

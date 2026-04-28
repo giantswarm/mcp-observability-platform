@@ -23,7 +23,7 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 // host the required tenant type (empty = skip), and a datasource of
 // the requested kind must exist. Errors are caller-ready strings so
 // handlers can surface them unchanged.
-func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, role authz.Role, tenantType authz.TenantType, kind authz.DatasourceKind) (authz.Organization, int64, error) {
+func resolveDatasource(ctx context.Context, az authz.Authorizer, orgRef string, role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind) (authz.Organization, int64, error) {
 	org, err := az.RequireOrg(ctx, orgRef, role)
 	if err != nil {
 		return authz.Organization{}, 0, err

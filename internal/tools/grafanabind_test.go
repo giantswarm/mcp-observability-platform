@@ -103,7 +103,7 @@ func orgWithDatasources() authz.Organization {
 		DisplayName: "Acme",
 		OrgID:       7,
 		Role:        authz.RoleViewer,
-		Datasources: []authz.Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 11, Name: "mimir-acme"},
 			{ID: 22, Name: "loki-acme"},
 		},
@@ -312,7 +312,7 @@ func TestBinder_Datasource_InjectsUID(t *testing.T) {
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg,
+	h := b.wrap(authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg,
 		stubTool("query_prometheus", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up"}}}
@@ -341,13 +341,13 @@ func TestBinder_Datasource_InjectsUID(t *testing.T) {
 
 func TestBinder_Datasource_NoMatchingDatasource(t *testing.T) {
 	org := orgWithDatasources()
-	org.Datasources = []authz.Datasource{{ID: 99, Name: "tempo-only"}} // no mimir
+	org.Datasources = []grafana.Datasource{{ID: 99, Name: "tempo-only"}} // no mimir
 	az := &authztest.Fake{Org: org}
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -368,7 +368,7 @@ func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
 	b, _ := newGFBinder(az, gc, "http://g", "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)

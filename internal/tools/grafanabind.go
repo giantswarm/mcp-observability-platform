@@ -94,7 +94,7 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 //
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
 // "datasource_uid" (snake_case) for alerting_manage_rules.
-func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, kind authz.DatasourceKind, argName string, t mcpgrafana.Tool) {
+func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, kind grafana.DatasourceKind, argName string, t mcpgrafana.Tool) {
 	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, kind, argName, t))
 }
 
@@ -141,7 +141,7 @@ func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 // delegates to upstream's tool handler. kind == "" skips the datasource
 // resolution branch; kind != "" requires argName to be the schema arg
 // the upstream handler reads the UID from.
-func (b *gfBinder) wrap(role authz.Role, kind authz.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
+func (b *gfBinder) wrap(role authz.Role, kind grafana.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		orgRef, err := req.RequireString("org")
 		if err != nil {

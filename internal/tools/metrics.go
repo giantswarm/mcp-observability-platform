@@ -10,6 +10,7 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // registerMetricsTools wires the upstream Mimir/Prometheus tools onto
@@ -25,6 +26,6 @@ func registerMetricsTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.ListPrometheusLabelValues,
 		mcpgrafanatools.ListPrometheusMetricMetadata,
 	} {
-		b.bindDatasourceTool(s, authz.RoleViewer, authz.DSKindMimir, datasourceUIDArg, t)
+		b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, t)
 	}
 }
