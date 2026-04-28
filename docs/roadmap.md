@@ -69,13 +69,35 @@ where alert-rule access is sensitive) without rebuilding.
   skip set once at startup.
 - Helm chart exposes a `runtime.disabledTools: []string` value.
 
-### 5. Delegate Tempo tools to Tempo's MCP server
+### 5. Unified rule listing (Mimir + Loki, alerting + recording)
+
+Two gaps in today's `alerting_manage_rules` (delegated, Mimir-bound):
+recording rules are dropped at upstream's projection
+(`mcp-grafana@v0.12.1/tools/alerting_manage_rules_datasource.go:80-82`
+hits `case v1.RecordingRule: continue`), and Loki rules aren't exposed
+at all even though Loki's ruler serves the same Prometheus-shape
+endpoint as Mimir (`/prometheus/api/v1/rules`).
+
+- Land an upstream PR against `grafana/mcp-grafana` that includes
+  recording rules in `convertPrometheusRulesToSummary`. The
+  `alertRuleSummary` projection already carries `Name`, `RuleGroup`,
+  `Labels`, `Health`, `LastEvaluation`; recording rules need only an
+  empty `State`/`For`/`Annotations`. Two-line code change + a
+  projection-shape test.
+- Once upstream releases, register `alerting_manage_rules` a second
+  time bound to `DSKindLoki`. Tool-name collision (both registrations
+  share `alerting_manage_rules`) means we either need an upstream-side
+  rename to a kind-neutral name, or a name-override hook in our binder.
+- Until then, recording rules and Loki rules are not exposed; operators
+  query the Grafana UI or the ruler endpoints directly.
+
+### 6. Delegate Tempo tools to Tempo's MCP server
 
 Tempo ships its own MCP server (`query_frontend.mcp_server.enabled`,
 `/api/mcp`, streamable-HTTP) with `traceql-search`, `get-trace`,
 `get-attribute-names`, `get-attribute-values`,
 `traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`.
-`mcp-grafana@v0.12.0` already implements the MCP-to-MCP proxy via
+`mcp-grafana@v0.12.1` already implements the MCP-to-MCP proxy via
 Grafana's datasource proxy (`proxied_tools.go`,
 `mcpgrafana.NewToolManager`, `WithProxiedTools(true)`).
 

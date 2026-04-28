@@ -70,9 +70,11 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 
 **Alert rules (Mimir Ruler)**
 
-| Tool                    | DS proxy path                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------ |
-| `alerting_manage_rules` | Grafana `/api/prometheus/{datasourceUID}/api/v1/rules` (delegated to upstream `mcp-grafana`). Read-only meta-tool: list / get / versions over Mimir-backed alerting rules. **Recording rules are dropped by upstream's projection** — use `list_loki_rules` (Loki) or query Mimir's ruler directly until upstream adds them. |
+| Tool                    | Backend                                                                  |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `alerting_manage_rules` | Grafana `/api/prometheus/{datasourceUID}/api/v1/rules` (delegated to upstream `mcp-grafana`); bound to the Mimir datasource. Useful operation is `operation=list` — `get`/`versions` require Grafana-managed RuleUIDs and don't work for Mimir-side rules. |
+
+> **Known gaps** (tracked in [`docs/roadmap.md`](./docs/roadmap.md)): recording rules are dropped by upstream's projection; Loki rules are not exposed at all. Both Mimir and Loki rulers expose the same Prometheus-shape `/prometheus/api/v1/rules` endpoint and would unblock once upstream stops filtering recording rules.
 
 **Logs (Loki)**
 
@@ -83,7 +85,6 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 | `query_loki_stats`         | `loki/api/v1/index/stats`                                |
 | `list_loki_label_names`    | `loki/api/v1/labels`                                     |
 | `list_loki_label_values`   | `loki/api/v1/label/{label}/values`                       |
-| `list_loki_rules`          | `prometheus/api/v1/rules` — alerting + recording rules from Loki's ruler |
 
 **Traces (Tempo)**
 
@@ -191,7 +192,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`). Also probed by `/readyz` for OIDC discovery. |
+| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
 | `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
 | `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |

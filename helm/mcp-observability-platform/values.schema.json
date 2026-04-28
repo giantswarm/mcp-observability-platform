@@ -239,6 +239,9 @@
                 "enabled": {
                     "type": "boolean"
                 },
+                "maxUnavailable": {
+                    "type": "integer"
+                },
                 "minAvailable": {
                     "type": "integer"
                 }
@@ -316,26 +319,6 @@
                 "maxResponseBytes": {
                     "type": "integer"
                 },
-                "oauthRefreshAhead": {
-                    "type": "string"
-                },
-                "rateLimit": {
-                    "type": "object",
-                    "properties": {
-                        "global": {
-                            "type": "integer"
-                        },
-                        "perCaller": {
-                            "type": "integer"
-                        },
-                        "perOrg": {
-                            "type": "integer"
-                        }
-                    }
-                },
-                "resolverCacheTTL": {
-                    "type": "string"
-                },
                 "toolTimeout": {
                     "type": "string"
                 }
@@ -346,6 +329,9 @@
             "properties": {
                 "annotations": {
                     "type": "object"
+                },
+                "metricsPort": {
+                    "type": "integer"
                 },
                 "port": {
                     "type": "integer"
