@@ -399,7 +399,6 @@ func validateDatasourceProxyPath(p string) error {
 	return nil
 }
 
-// readLimited caps per-response body reads at maxResponseBytes.
 func readLimited(resp *http.Response) ([]byte, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {

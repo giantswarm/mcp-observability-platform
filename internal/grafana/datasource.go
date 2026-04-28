@@ -2,10 +2,9 @@ package grafana
 
 import "strings"
 
-// Datasource is the domain projection of a Grafana datasource — only
-// the fields the MCP surface actually reads. The GrafanaOrganization
-// CR carries {ID, Name} only; the full record (URL, secureJsonData,
-// etc.) lives behind LookupDatasourceUIDByID.
+// Datasource is the domain projection of a Grafana datasource. The
+// GrafanaOrganization CR carries {ID, Name} only; the full record
+// (URL, secureJsonData, etc.) lives behind LookupDatasourceUIDByID.
 type Datasource struct {
 	ID   int64
 	Name string
@@ -39,9 +38,8 @@ var datasourceKindSubstring = map[DatasourceKind]string{
 	DSKindAlertmanager: "alertmanager",
 }
 
-// MatchKind returns the first datasource in dss whose name matches
-// kind via the canonical substring rule, or (Datasource{}, false) when
-// no datasource matches.
+// MatchKind returns the first datasource whose name contains the
+// kind's canonical substring (case-insensitive).
 func MatchKind(dss []Datasource, kind DatasourceKind) (Datasource, bool) {
 	needle, ok := datasourceKindSubstring[kind]
 	if !ok {
