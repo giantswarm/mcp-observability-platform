@@ -96,12 +96,6 @@ func CallerTokenSource(ctx context.Context) string {
 // CallerFromContext extracts the identifiers the authorizer needs to ask
 // Grafana who this caller is. Returns an empty Caller if no identity is
 // attached; the authorizer then errors downstream via ErrNoCallerIdentity.
-//
-// Subject is the OIDC sub claim. Login is deliberately left empty: OIDC sub
-// is NOT a Grafana login name, and collapsing the two here would make
-// Grafana's /api/users/lookup silently miss when the caller's email/login
-// doesn't match their sub. The authorizer falls back to Email-based lookup
-// when Login is empty.
 func CallerFromContext(ctx context.Context) Caller {
 	ui, ok := userInfoFromContext(ctx)
 	if !ok || ui == nil {

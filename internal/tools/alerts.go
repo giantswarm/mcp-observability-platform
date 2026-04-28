@@ -208,7 +208,7 @@ func paginateAlerts(raw json.RawMessage, page, pageSize int) (any, error) {
 }
 
 // findAlertByFingerprint returns the full Alertmanager record for the given
-// fingerprint, or (nil, nil) if not found. Used by the alert-detail resource.
+// fingerprint, or (nil, nil) if not found. Used by get_alert.
 func findAlertByFingerprint(raw json.RawMessage, fingerprint string) (*amAlert, error) {
 	var alerts []amAlert
 	if err := json.Unmarshal(raw, &alerts); err != nil {

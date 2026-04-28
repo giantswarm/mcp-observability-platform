@@ -29,16 +29,16 @@ type Tenant struct {
 // Organization is the domain entity backing a Grafana org, plus the caller's
 // Role once resolved.
 //
-// An Organization straight from OrgLister.List carries Role = RoleNone —
-// that's "registry-output state, pre-resolution". The authorizer fills Role
-// from the caller's Grafana membership before returning to tool handlers, so
-// any Organization a handler sees has been authorised (Role ≥ RoleViewer).
-// Code that calls OrgLister.List directly (the authorizer only) MUST NOT
-// treat a RoleNone entry as authorised.
+// An Organization straight from OrgLister.List carries Role = RoleNone
+// (pre-resolution). The authorizer fills Role from the caller's Grafana
+// membership before returning to tool handlers, so any Organization a
+// handler sees has been authorised (Role ≥ RoleViewer). Code that calls
+// OrgLister.List directly (the authorizer only) MUST NOT treat a
+// RoleNone entry as authorised.
 //
-// Handlers read Organization values returned from the authorizer's Require /
-// Resolve methods; those are always deep-cloned so handler mutations cannot
-// escape into the cache — see cloneOrganization in cache.go.
+// Handlers receive Organization values from RequireOrg / ListOrgs;
+// those are always deep-cloned so handler mutations cannot escape
+// into the cache — see cloneOrganization in cache.go.
 type Organization struct {
 	Name        string
 	DisplayName string
@@ -60,10 +60,10 @@ func (o Organization) HasTenantType(want TenantType) bool {
 	return false
 }
 
-// FindDatasource picks the datasource backing the given kind. Today the
-// kind ↔ substring rules are baked in (see grafana.MatchKind); tomorrow
-// (CR-status uid + kind publishing) the kind comes off the Datasource
-// directly.
+// FindDatasource picks the datasource backing the given kind via
+// substring matching on Datasource.Name (see grafana.MatchKind). Will
+// be replaced by direct kind-on-Datasource access once the
+// CR-status-uid+kind roadmap item lands.
 func (o Organization) FindDatasource(kind grafana.DatasourceKind) (grafana.Datasource, bool) {
 	return grafana.MatchKind(o.Datasources, kind)
 }

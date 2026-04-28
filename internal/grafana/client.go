@@ -279,7 +279,7 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*User, er
 }
 
 // LookupDatasourceUIDByID fetches the datasource UID for a numeric ID,
-// in the given org. The upstream-tool bridge calls this to translate
+// in the given org. gfBinder (in internal/tools) calls this to translate
 // our int64 ID into the UID upstream tools take.
 func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error) {
 	if id <= 0 {

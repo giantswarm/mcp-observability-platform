@@ -134,7 +134,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	apiKey := cfg.GrafanaSAToken
 	if basicAuth != nil {
-		// Bridge requires exactly one of APIKey / BasicAuth, so when
+		// gfBinder requires exactly one of APIKey / BasicAuth, so when
 		// BasicAuth is set blank the token here. Same invariant the
 		// loader enforces, expressed at construction.
 		apiKey = ""

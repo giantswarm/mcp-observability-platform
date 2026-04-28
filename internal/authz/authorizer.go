@@ -43,8 +43,8 @@ type Authorizer interface {
 }
 
 // authorizer answers "what can this caller do?" by asking Grafana for
-// the caller's org memberships and joining them against the
-// OrgLister.
+// the caller's org memberships and joining them against the org list
+// returned by OrgLister.
 //
 // The cache is keyed on OIDC subject (stable, non-spoofable) and uses
 // a single TTL. A freshly-provisioned user waits one TTL window before
@@ -75,13 +75,13 @@ func NewAuthorizer(orgs OrgLister, grafana grafana.Client, log *slog.Logger, ttl
 }
 
 // ListOrgs returns the caller's authorised orgs + role by asking Grafana
-// and enriching with the current registry metadata. The returned map is
+// and enriching each with the current org metadata. The returned map is
 // deep-cloned so handler mutations cannot leak. Caller identity is read
 // from ctx via CallerFromContext.
 //
-// The registry list is read fresh every call — only the per-caller
-// Grafana memberships are cached. A GrafanaOrganization deletion takes
-// effect immediately for every caller, not after their TTL expires.
+// The org list is read fresh every call — only the per-caller Grafana
+// memberships are cached. A GrafanaOrganization deletion takes effect
+// immediately for every caller, not after their TTL expires.
 func (r *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, error) {
 	memberships, err := r.resolveMemberships(ctx, CallerFromContext(ctx))
 	if err != nil {
@@ -101,15 +101,15 @@ func (r *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, err
 // or orgRef matches more than one Organization by DisplayName
 // (ErrAmbiguousOrgRef).
 //
-// orgRef may be either the registry name or the displayName
+// orgRef may be either the org's Name or DisplayName
 // (case-insensitive). minRole MUST be RoleViewer or higher: passing
 // RoleNone returns ErrInvalidMinRole rather than silently passing every
 // authorised caller through (Role.AtLeast(RoleNone) is always true).
 //
 // Caller identity is read from ctx via CallerFromContext. The returned
 // Organization is deep-cloned so handler mutations cannot escape. The
-// registry list is read fresh every call — a GrafanaOrganization
-// deletion is invisible to subsequent RequireOrg calls.
+// org list is read fresh every call — a GrafanaOrganization deletion
+// is invisible to subsequent RequireOrg calls.
 func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role) (Organization, error) {
 	if minRole == RoleNone {
 		return Organization{}, ErrInvalidMinRole
@@ -136,7 +136,7 @@ func (r *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 	}
 
 	// Disambiguate "org doesn't exist" vs "caller not a member of an
-	// existing org" against the freshly-listed registry, not a cached
+	// existing org" against the freshly-listed orgs, not a cached
 	// snapshot.
 	if _, knownOrg := allRefs[strings.ToLower(orgRef)]; !knownOrg {
 		return Organization{}, fmt.Errorf("%w: %q", ErrOrgNotFound, orgRef)
@@ -167,9 +167,9 @@ func (r *authorizer) resolveMemberships(ctx context.Context, caller Caller) (map
 }
 
 // projectMemberships joins per-caller Grafana memberships against the
-// current registry list. Returns the caller's accessible orgs (keyed
-// by Organization.Name, with Role filled in) plus the lowercased set
-// of every {Name, DisplayName} in the registry — used by RequireOrg to
+// current org list. Returns the caller's accessible orgs (keyed by
+// Organization.Name, with Role filled in) plus the lowercased set of
+// every {Name, DisplayName} in the org list — used by RequireOrg to
 // distinguish "org doesn't exist" from "caller not a member".
 func projectMemberships(memberships map[int64]Role, orgs []Organization) (access map[string]Organization, allRefs map[string]struct{}) {
 	access = make(map[string]Organization, len(memberships))
@@ -200,9 +200,9 @@ func projectMemberships(memberships map[int64]Role, orgs []Organization) (access
 }
 
 // load does the per-caller upstream work: ask Grafana for the user and
-// their org memberships, then cache OrgID → Role. The registry-side
-// join happens at the per-call site (projectMemberships) — load doesn't
-// see Organization values.
+// their org memberships, then cache OrgID → Role. The join with the
+// org list happens at the per-call site (projectMemberships) — load
+// doesn't see Organization values.
 func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cacheEntry, error) {
 	user, err := r.grafana.LookupUser(ctx, caller.Identity())
 	if err != nil {
@@ -241,9 +241,8 @@ func (r *authorizer) load(ctx context.Context, caller Caller, key string) (cache
 //
 // Returns ErrAmbiguousOrgRef when more than one DisplayName matches —
 // silently picking the first map-iteration hit would be unsafe for an
-// authz boundary. The returned value aliases cache-owned slices —
-// callers that hand the result to external code must clone via
-// cloneOrganization.
+// authz boundary. The returned Organization aliases cache-owned slices;
+// the caller (RequireOrg) clones before returning to handlers.
 func findOrganization(access map[string]Organization, orgRef string) (Organization, bool, error) {
 	if org, ok := access[orgRef]; ok {
 		return org, true, nil
