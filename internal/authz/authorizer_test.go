@@ -146,17 +146,16 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 }
 
 func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
-	// Grafana returns 404 on lookup → found=false → resolver returns empty
-	// without erroring, so the UX is "no access yet; log into Grafana first".
+	// Grafana returns 404 on lookup → resolver returns
+	// ErrCallerUnknownToGrafana so the caller can be told to log into
+	// Grafana once instead of seeing an opaque empty list. list_orgs
+	// translates the sentinel into an empty list + guidance message.
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
 	r := mustNewAuthorizer(t, registry(), g)
 
-	got, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("expected empty, got %v", got)
+	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	if !errors.Is(err, ErrCallerUnknownToGrafana) {
+		t.Fatalf("want ErrCallerUnknownToGrafana, got %v", err)
 	}
 }
 
@@ -587,16 +586,21 @@ func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 // the positive window so they don't wait the full 30s after their
 // first Grafana login. Distinct paths: nil-user (this test) vs
 // empty-memberships (other test below).
+//
+// A nil-user resolution surfaces ErrCallerUnknownToGrafana so callers
+// can distinguish "log into Grafana once" from "not authorised".
 func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{} /* never-seen user */}
 	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
-	// First call → 404 → nil user → cached negative.
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
-		t.Fatalf("ListOrgs#1: %v", err)
+	// First call → 404 → nil user → cached negative + sentinel.
+	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	if !errors.Is(err, ErrCallerUnknownToGrafana) {
+		t.Fatalf("ListOrgs#1: want ErrCallerUnknownToGrafana, got %v", err)
 	}
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
-		t.Fatalf("ListOrgs#2: %v", err)
+	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	if !errors.Is(err, ErrCallerUnknownToGrafana) {
+		t.Fatalf("ListOrgs#2: want ErrCallerUnknownToGrafana, got %v", err)
 	}
 	if g.calls.lookup != 1 {
 		t.Fatalf("within negative TTL: expected 1 lookup, got %d", g.calls.lookup)
@@ -604,8 +608,9 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 
 	// Negative TTL is shorter — sleep past it but not past the positive.
 	time.Sleep(60 * time.Millisecond)
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"})); err != nil {
-		t.Fatalf("ListOrgs#3: %v", err)
+	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	if !errors.Is(err, ErrCallerUnknownToGrafana) {
+		t.Fatalf("ListOrgs#3: want ErrCallerUnknownToGrafana, got %v", err)
 	}
 	if g.calls.lookup != 2 {
 		t.Errorf("after negative TTL: expected 2 lookups, got %d (negative cache failed to expire)", g.calls.lookup)

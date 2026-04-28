@@ -211,6 +211,13 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OTEL_EXPORTER_OTLP_PROTOCOL`               | no             | `http/protobuf` (default) or `grpc`                      |
 | `POD_NAME` / `POD_NAMESPACE` / `NODE_NAME`  | no             | Downward-API attributes added to OTEL resource when set  |
 | `DEBUG`                                     | no             | `true` to enable debug logging                           |
+| `LOG_FORMAT`                                | no             | `json` or `text`. Defaults to `json` when `KUBERNETES_SERVICE_HOST` is set, else `text`. |
+| `MCP_ALLOW_STDIO_IN_CLUSTER`                | no             | `true` to permit `MCP_TRANSPORT=stdio` inside Kubernetes (in-cluster integration tests only — stdio bypasses OAuth). |
+
+⚠️ **Tool-call arguments are logged verbatim** in the `tool_call` audit slog
+line and OTEL span attributes for forensics. Do not register tools that
+take secrets as arguments — look credentials up server-side from the
+caller identity instead.
 
 ### Grafana service-account token
 

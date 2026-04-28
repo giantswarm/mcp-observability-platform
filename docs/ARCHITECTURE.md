@@ -146,7 +146,7 @@ import (
 )
 
 b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir,
-    datasourceUIDArg, mcpgrafanatools.QuerySomething)
+    datasourceUIDArg, mcpgrafanatools.QueryPrometheus)
 ```
 
 `gfBinder` resolves `org → OrgID + datasource UID` server-side, so

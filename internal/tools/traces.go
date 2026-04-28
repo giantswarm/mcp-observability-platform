@@ -42,14 +42,14 @@ func registerQueryTracesTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			query, err := req.RequireString("query")
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("missing arg", err), nil
 			}
 			// TenantTypeData covers metrics, logs, *and* traces in the
 			// observability-operator CRD; the docstring on TenantType
 			// drives that grouping.
 			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindTempo)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("authz", err), nil
 			}
 
 			q := url.Values{"q": []string{query}}
@@ -84,7 +84,7 @@ func registerListTempoTagNamesTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc 
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			names, err := fetchTempoTags(ctx, az, gc, "", req)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("tempo", err), nil
 			}
 			return mcp.NewToolResultJSON(paginateStrings(names, "", 0, len(names)))
 		},
@@ -107,11 +107,11 @@ func registerListTempoTagValuesTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			tag, err := req.RequireString("tag")
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("missing arg", err), nil
 			}
 			values, err := fetchTempoTags(ctx, az, gc, tag, req)
 			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+				return mcp.NewToolResultErrorFromErr("tempo", err), nil
 			}
 			return mcp.NewToolResultJSON(paginateStrings(values, req.GetString("prefix", ""), req.GetInt("page", 0), req.GetInt("pageSize", 0)))
 		},

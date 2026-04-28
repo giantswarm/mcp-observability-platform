@@ -61,9 +61,24 @@ func TestInstrument_SuccessRecordsNoError(t *testing.T) {
 	if rec["error"] != "" {
 		t.Errorf("error = %v, want empty on success", rec["error"])
 	}
+	if rec["org"] != "acme" {
+		t.Errorf("org = %v, want top-level 'acme'", rec["org"])
+	}
 	args := rec["args"].(map[string]any)
 	if args["org"] != "acme" {
 		t.Errorf("args not captured: %+v", args)
+	}
+}
+
+func TestInstrument_OrgAttrEmptyWhenAbsent(t *testing.T) {
+	rec := applyHandler(t,
+		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, nil
+		},
+		"list_orgs", nil)
+
+	if rec["org"] != "" {
+		t.Errorf("org = %v, want empty when arg absent", rec["org"])
 	}
 }
 

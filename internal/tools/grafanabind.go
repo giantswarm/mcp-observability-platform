@@ -48,7 +48,8 @@ type gfBinder struct {
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
-// APIKey and BasicAuth are mutually exclusive; exactly one must be set.
+// APIKey/BasicAuth mutual-exclusivity is enforced upstream at config load
+// (cmd/config.go) and at grafana.New — not re-checked here.
 func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) (*gfBinder, error) {
 	if authorizer == nil {
 		return nil, errors.New("authorizer is required")
@@ -58,11 +59,6 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 	}
 	if grafanaURL == "" {
 		return nil, errors.New("grafana URL is required")
-	}
-	hasKey := apiKey != ""
-	hasBasic := basicAuth != nil
-	if hasKey == hasBasic {
-		return nil, errors.New("exactly one of APIKey or BasicAuth must be set")
 	}
 	return &gfBinder{
 		authorizer: authorizer,

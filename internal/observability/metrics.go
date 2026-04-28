@@ -62,14 +62,6 @@ var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 	[]string{"tool"},
 )
 
-var OrgCacheSize = promauto.With(registry).NewGauge(
-	prometheus.GaugeOpts{
-		Namespace: namespace,
-		Name:      "org_cache_size",
-		Help:      "Number of GrafanaOrganization CRs in the informer cache.",
-	},
-)
-
 func MetricsHandler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 }

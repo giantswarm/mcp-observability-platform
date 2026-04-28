@@ -166,8 +166,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
 	obsMux := buildObsMux(orgLister, cacheAlive)
 
-	startOrgCacheReporter(shutdownCtx, orgLister)
-
 	// IdleTimeout closes keep-alives idle past 60s on both servers.
 	// MCP omits WriteTimeout because streamable-HTTP / SSE responses are
 	// intentionally long-lived; the obs server caps writes at 10s. MCP's
