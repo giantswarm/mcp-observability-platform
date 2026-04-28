@@ -1,8 +1,4 @@
-// Package tools — logs.go: Loki query/label/stats/pattern tools, all
-// delegated to upstream grafana/mcp-grafana. The local "org" argument
-// is the only schema addition; the binder resolves it to the org's
-// Loki datasource UID and injects datasourceUid before invoking
-// upstream's handler.
+// logs.go — RoleViewer, DSKindLoki.
 package tools
 
 import (

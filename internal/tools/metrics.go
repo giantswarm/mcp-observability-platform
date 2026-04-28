@@ -1,7 +1,4 @@
-// Package tools — metrics.go: Mimir Prometheus tools, all delegated to
-// upstream grafana/mcp-grafana. The local "org" arg is the only schema
-// addition; the binder resolves it to the org's Mimir datasource UID
-// and injects datasourceUid before invoking upstream.
+// metrics.go — RoleViewer, DSKindMimir.
 package tools
 
 import (

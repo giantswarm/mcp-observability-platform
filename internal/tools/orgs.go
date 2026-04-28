@@ -1,9 +1,6 @@
-// Package tools — orgs.go: org + datasource tools.
-//
-// list_orgs is permanently local — it surfaces our GrafanaOrganization
-// CR access matrix (name, displayName, orgID, role, tenantTypes) and
-// has no upstream equivalent. list_datasources / get_datasource
-// delegate to upstream grafana/mcp-grafana.
+// orgs.go — list_orgs (local) plus list_datasources / get_datasource
+// (delegated). list_orgs surfaces our GrafanaOrganization CR access
+// matrix and has no upstream equivalent.
 package tools
 
 import (

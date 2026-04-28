@@ -55,10 +55,11 @@ type User struct {
 }
 
 // Client is the consumer-facing port onto Grafana. The implementation
-// is small by design: bridged tools talk to upstream's GrafanaClient
-// (built per-call by the registrar); local handlers use DatasourceProxy
-// for Tempo / Alertmanager v2; authz uses LookupUser + UserOrgs; the
-// registrar uses LookupDatasourceUIDByID. Anything else lives upstream.
+// is small by design: delegated tools talk to upstream's GrafanaClient
+// (built per-call by gfBinder in internal/tools); local handlers use
+// DatasourceProxy for Tempo / Alertmanager v2; authz uses LookupUser +
+// UserOrgs; gfBinder uses LookupDatasourceUIDByID. Anything else lives
+// in upstream's grafana/mcp-grafana package.
 type Client interface {
 	Ping(ctx context.Context) error
 	VerifyServerAdmin(ctx context.Context) error
@@ -68,7 +69,6 @@ type Client interface {
 	DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error)
 }
 
-// client is the concrete Grafana HTTP client.
 type client struct {
 	base       *url.URL
 	authHeader string

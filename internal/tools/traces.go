@@ -1,6 +1,8 @@
 // Package tools — traces.go: Tempo trace tools (query_traces + tag
 // discovery). Local because upstream grafana/mcp-grafana has no Tempo
-// surface today.
+// surface today. Tempo's own MCP server plus mcp-grafana's proxy
+// (proxied_tools.go, NewToolManager) is the path forward — see
+// roadmap. Local until per-tenant mcp_server.enabled is uniform.
 package tools
 
 import (

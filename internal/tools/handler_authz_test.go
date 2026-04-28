@@ -124,7 +124,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 	ctx := callerCtx(caller)
 
 	tools := s.ListTools()
-	// A handful of tools take args beyond `org` that the bridge or local
+	// A handful of tools take args beyond `org` that the binder or local
 	// handler validates BEFORE running authz; supply minimal stand-in
 	// values so the call reaches the authz boundary. Unknown args are
 	// either ignored (bridged) or used by validation we don't care about

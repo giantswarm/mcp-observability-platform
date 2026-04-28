@@ -1,5 +1,5 @@
 // Package authztest provides a single Authorizer fake shared by the
-// server, tools, and bridge tests. Centralised so the implementation of
+// server, tools, and binder tests. Centralised so the implementation of
 // the Authorizer contract has one place to evolve when the interface
 // changes.
 package authztest
@@ -20,8 +20,8 @@ import (
 // ListOrgs returns OrgsByRef when set, otherwise a single-entry map keyed
 // on Org.Name (or nil for the zero Org).
 //
-// GotRef / GotMin record the last RequireOrg arguments — used by bridge
-// tests that assert the bridge passed the right org reference and minRole
+// GotRef / GotMin record the last RequireOrg arguments — used by binder
+// tests that assert the binder passed the right org reference and minRole
 // down to the authorizer.
 type Fake struct {
 	Org       authz.Organization

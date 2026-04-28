@@ -1,4 +1,6 @@
-// Package tools — alerts.go: firing alerts from Alertmanager (list + single-fingerprint detail).
+// alerts.go — Alertmanager v2 firing-alert tools (local; upstream
+// covers OnCall, not Alertmanager). list_alerts paginates; get_alert
+// fetches one fingerprint.
 package tools
 
 import (

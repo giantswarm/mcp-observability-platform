@@ -21,13 +21,13 @@ type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	// GrafanaURL is the base URL the bridged tool handlers use to build
+	// GrafanaURL is the base URL the delegated tool handlers use to build
 	// per-request upstream GrafanaClients. Same value as the Grafana
-	// client's URL; threaded through here because the bridge constructs
+	// client's URL; threaded through here because the binder constructs
 	// upstream's client per-call.
 	GrafanaURL string
 	// GrafanaAPIKey and GrafanaBasicAuth are mutually exclusive; exactly
-	// one must be set. Threaded through for the bridge's per-request
+	// one must be set. Threaded through for the binder's per-request
 	// upstream GrafanaClient construction.
 	GrafanaAPIKey    string
 	GrafanaBasicAuth *url.Userinfo

@@ -49,9 +49,10 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 				observability.ToolCallErrorsTotal.WithLabelValues(name).Inc()
 			}
 
-			// Structured log line for setups without OTLP traces. With
-			// a gateway + traces in place this is redundant — leave
-			// logger=nil to disable.
+			// Structured log line for setups without OTLP traces. The
+			// audit pipeline (cluster Loki) is the durable record; the
+			// span is the live signal. Both fields carry trace_id +
+			// span_id so a gateway can correlate.
 			if logger != nil {
 				traceID, spanID := traceIDs(ctx)
 				logger.LogAttrs(ctx, slog.LevelInfo, "tool_call",

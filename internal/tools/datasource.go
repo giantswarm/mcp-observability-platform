@@ -1,7 +1,7 @@
-// Package tools — datasource.go: shared helpers for the surviving local
-// handlers that proxy through Grafana's datasource API (Tempo,
-// Alertmanager v2). The bridged tools have their own UID resolution;
-// this file is only for the local DatasourceProxy callers.
+// Package tools — datasource.go: shared helpers for the local handlers
+// that proxy through Grafana's datasource API (Tempo, Alertmanager v2).
+// Delegated tools have their own UID resolution in gfBinder; this file
+// is only for the local DatasourceProxy callers.
 package tools
 
 import (

@@ -8,31 +8,31 @@ Mimir / Loki / Tempo / Alertmanager datasources) to MCP clients, with
 per-caller tenant and role scoping derived from `GrafanaOrganization` CRs.
 
 One MCP per Grafana instance. Authentication via MCP OAuth (Dex as IdP).
-Authorization resolved from the caller's OIDC groups against
-`GrafanaOrganization.spec.rbac.{admins,editors,viewers}`. Role and org-
-membership changes propagate within ~30s (the resolver's positive cache
-TTL); shorter TTLs for negative results (caller-not-yet-provisioned).
+Authorization is resolved by Grafana from its `org_mapping` (which
+`observability-operator` derives from
+`GrafanaOrganization.spec.rbac.{admins,editors,viewers}`); the MCP
+asks Grafana per caller. Role and org-membership changes propagate
+within ~30s (the per-caller cache TTL).
 
 ## Roadmap
 
-See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization plan
-and [`docs/upstream-contributions.md`](./docs/upstream-contributions.md)
-for the parallel `grafana/mcp-grafana` contribution lane.
-[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) is the orientation
-doc: request flow, package layout, threat model, and where to add a new
-tool.
+See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization
+plan. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) is the
+orientation doc: request flow, package layout, threat model, and
+where to add a new tool.
 
 ## MCP surface
 
 ### Tools
 
-All tools require `role: viewer` on the target org (via the caller's OIDC
-groups intersected with `GrafanaOrganization.spec.rbac`). Write operations
+All tools require `role: viewer` on the target org (Grafana evaluates
+`org_mapping` against the caller's OIDC groups; the operator derives
+`org_mapping` from `GrafanaOrganization.spec.rbac`). Write operations
 are intentionally out of scope for this MCP.
 
-Most tool handlers are bridged to upstream
+Most tool handlers delegate to upstream
 [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
-synthetic `org` argument and the registrar resolves it to the org's
+synthetic `org` argument and `gfBinder` resolves it to the org's
 OrgID + datasource UID before delegating. Categories without a usable
 upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`) stay
 local. See `internal/tools/doc.go` for the per-category rationale.
@@ -94,14 +94,8 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 | `list_alerts`  | `api/v2/alerts` — paged, severity-sorted                   |
 | `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
 
-### Resources and prompts — deliberately not implemented
-
-LLMs handle tool calls far more reliably than resource URIs or prompts, so
-this MCP exposes only tools. A prior prototype had `observability://` /
-`grafana://` / `alertmanager://` resource URIs and an `investigate-alert`
-prompt; both were removed in favour of the equivalent tools (`get_alert`,
-`get_dashboard_by_uid`, `list_datasources`). See
-[`docs/roadmap.md`](./docs/roadmap.md#out-of-scope) for the rationale.
+This MCP exposes only tools; LLM clients invoke them more reliably
+than resource URIs or prompts.
 
 Datasource selection is per-org: tools match datasources from
 `status.dataSources[]` by name substring (`mimir`, `loki`, `tempo`,

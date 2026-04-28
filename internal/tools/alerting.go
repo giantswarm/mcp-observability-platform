@@ -1,7 +1,8 @@
-// Package tools — alerting.go: Mimir/Loki alert-rule reads via
-// upstream's alerting_manage_rules meta-tool. Read-only; the
-// `operation` enum (list/get/versions) is upstream's surface — we just
-// bind it to the caller's org → Mimir datasource.
+// alerting.go — RoleViewer, DSKindMimir.
+//
+// alerting_manage_rules is upstream's meta-tool; the `operation` enum
+// (list/get/versions) is its surface, not ours. We expose the read
+// variant only.
 package tools
 
 import (

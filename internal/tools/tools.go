@@ -29,8 +29,8 @@ func ReadOnlyAnnotation() mcp.ToolOption {
 	})
 }
 
-// orgArg is the canonical "org" argument for local tools. Bridged tools
-// build the same arg via withOrg in grafanabind.go.
+// orgArg is the canonical "org" argument for local tools. Delegated
+// tools build the same arg via withOrg in grafanabind.go.
 func orgArg() mcp.ToolOption {
 	return mcp.WithString("org", mcp.Required(), mcp.Description(orgArgDescription))
 }
@@ -38,8 +38,8 @@ func orgArg() mcp.ToolOption {
 // RegisterAll wires every category of tool into the MCP server. Tool
 // definitions themselves live in the corresponding per-category file.
 //
-// Bridged categories (delegated to upstream grafana/mcp-grafana with
-// our org→OrgID + datasource-UID resolution applied):
+// Categories delegated to upstream grafana/mcp-grafana (our org→OrgID
+// + datasource-UID resolution applied via gfBinder):
 //   - dashboards, datasources, annotations, deeplinks, panel rendering
 //   - Mimir Prometheus tools (metrics.go)
 //   - Loki tools (logs.go)

@@ -6,7 +6,7 @@ import "strings"
 // surface to tool handlers — only the fields the MCP surface actually
 // reads. The full record (URL, secureJsonData, etc.) lives behind
 // LookupDatasourceUIDByID; the GrafanaOrganization CR carries
-// {ID, Name} and the bridge resolves UID server-side.
+// {ID, Name} and the gfBinder in internal/tools resolves UID server-side.
 type Datasource struct {
 	ID   int64
 	Name string

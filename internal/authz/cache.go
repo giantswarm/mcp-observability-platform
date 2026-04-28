@@ -39,7 +39,6 @@ func (r *authorizer) cacheLookup(key string) (cacheEntry, bool) {
 	return hit, true
 }
 
-// cacheStore writes an entry to the cache.
 func (r *authorizer) cacheStore(key string, entry cacheEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

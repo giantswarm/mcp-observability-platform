@@ -1,6 +1,4 @@
-// Package tools — dashboards.go: dashboards + navigation tools, all
-// delegated to upstream grafana/mcp-grafana. Only the local "org" arg
-// is added on top of upstream's schemas.
+// dashboards.go — RoleViewer, no datasource scope.
 //
 // Skipped on purpose:
 //   - get_panel_image — LLMs can't reliably interpret PNG bytes through
