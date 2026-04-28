@@ -24,7 +24,7 @@ security boundaries are, and where to add a new tool.
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
               │ mcp-oauth ValidateToken                                        │
-              │   • verifies bearer signed by DEX_ISSUER_URL                   │
+              │   • verifies bearer signed by OAUTH_DEX_ISSUER_URL                   │
               │   • or by an OAUTH_TRUSTED_AUDIENCES client (SSO forwarding)   │
               │   • puts UserInfo on request context                           │
               └──────────────────────────┬─────────────────────────────────────┘
@@ -37,8 +37,8 @@ security boundaries are, and where to add a new tool.
               ┌────────────────────────────────────────────────────────────────┐
               │ MCP server (internal/server) — middleware stack:               │
               │   1. WithRecovery       (mcp-go panic guard)                   │
-              │   2. Instrument         span + metric + structured "tool_call" │
-              │                         slog line, single Classify             │
+              │   2. Instrument         span + counter/histogram + tool_call   │
+              │                         audit slog line                        │
               │   3. RequireCaller      fail-closed if no caller in ctx        │
               │   4. ResponseCap        replace oversized text with structured │
               │   5. ToolTimeout        per-handler context deadline           │
@@ -47,18 +47,19 @@ security boundaries are, and where to add a new tool.
               ┌────────────────────────────────────────────────────────────────┐
               │ Tool handler (internal/tools/*.go)                             │
               │                                                                │
-              │ Bridged tools (most of the surface):                           │
-              │   internal/tools/upstream.Bridge.Wrap{,Datasource}             │
+              │ Delegated tools (most of the surface):                         │
+              │   internal/tools/grafanabind.go gfBinder.{bindOrgTool,          │
+              │   bindDatasourceTool}                                          │
               │     1. read "org" from CallToolRequest                         │
               │     2. az.RequireOrg(ctx, org, role) → Organization            │
-              │     3. WrapDatasource: pick DS by Kind, look up its UID via    │
+              │     3. Datasource path: pick DS by Kind, look up its UID via   │
               │        grafana.LookupDatasourceUIDByID, inject datasourceUid   │
               │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
               │     5. delegate to upstream grafana/mcp-grafana handler        │
               │                                                                │
-              │ Local tools (Tempo, Alertmanager v2, triage, list_orgs)        │
-              │ read args, az.RequireOrg, then call                            │
-              │ grafana.Client.DatasourceProxy directly.                       │
+              │ Local tools (Tempo, Alertmanager v2, list_orgs) read args,    │
+              │ az.RequireOrg, then call grafana.Client.DatasourceProxy        │
+              │ directly.                                                      │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
@@ -73,14 +74,13 @@ security boundaries are, and where to add a new tool.
 
 | Package | Responsibility |
 |---|---|
-| `cmd/` | Cobra CLI + per-concern builders (`oauth.go`, `orgregistry.go`, `mux.go`, `serve.go`). `runServe` wires everything in deterministic phase order. |
+| `cmd/` | Cobra CLI + per-concern builders (`oauth.go`, `orglister.go`, `mux.go`, `serve.go`). `runServe` wires everything in deterministic phase order. |
 | `internal/server/` | MCP server construction; middleware composition (Instrument / RequireCaller / ResponseCap / ToolTimeout); transport wrappers for streamable-HTTP and SSE. |
-| `internal/server/middleware/` | One file per middleware. `Classify()` is the shared outcome bucketer feeding span, metric, and structured `tool_call` slog line. |
-| `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + LRU/singleflight cache. `OrgRegistry` is a domain port — the K8s informer adapter sits in `cmd/orgregistry.go`. |
-| `internal/grafana/` | Slim HTTP client — Ping, VerifyServerAdmin, LookupUser, UserOrgs, LookupDatasourceUIDByID, DatasourceProxy. Bridged tools talk to upstream's `mcpgrafana.GrafanaClient` instead. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
-| `internal/tools/` | One file per tool category. Bridged: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (and bridged datasource tools in `orgs.go`). Local: `orgs.go` (list_orgs), `alerts.go`, `traces.go`, `triage.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`. |
-| `internal/tools/upstream/` | Bridge to upstream `grafana/mcp-grafana` tool handlers. `Bridge.Wrap` covers org-only tools; `Bridge.WrapDatasource` covers tools that need a datasource UID (resolves it via `grafana.LookupDatasourceUIDByID` and injects it server-side so the LLM keeps the simple `{org, ...}` shape). `WithOrg` / `WithOrgReplacingArg` rewrite the upstream input schema accordingly. |
-| `internal/observability/` | Prometheus metrics + OTLP tracing init. Three-bucket outcome metrics (`ok` / `user_error` / `system_error`). |
+| `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
+| `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
+| `internal/grafana/` | HTTP client (`Ping`, `VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `LookupDatasourceUIDByID`, `DatasourceProxy`) plus `Datasource` and `DatasourceKind` (`MatchKind` substring matcher). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
+| `internal/tools/` | One file per tool category. Delegated to upstream: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (and the delegated datasource tools in `orgs.go`). Local: `orgs.go` (`list_orgs`), `alerts.go`, `traces.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` (`grafanabind.go`) wires upstream `grafana/mcp-grafana` handlers onto our MCP server — `bindOrgTool` covers org-only tools; `bindDatasourceTool` resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape. |
+| `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
 ## Threat model — what the boundaries protect
@@ -92,7 +92,7 @@ but a process compromise gives the attacker every org. The Phase-2 fix
 (per-org SAs, listed under "Post-v0.1.0 priorities" in the roadmap)
 needs `observability-operator` coordination and is deferred past v0.1.0.
 
-**OAuth trust boundary.** Tokens are validated against `DEX_ISSUER_URL`
+**OAuth trust boundary.** Tokens are validated against `OAUTH_DEX_ISSUER_URL`
 (or an SSO forwarder when `OAUTH_TRUSTED_AUDIENCES` is configured). The
 `RequireCaller` middleware fails closed on calls without a caller —
 catches a future tool that forgets `RequireOrg` or any other handler bug
@@ -105,17 +105,17 @@ in depth — Grafana validates again. The grafana client caps response
 bodies at 16 MiB so a misbehaving datasource can't OOM the pod.
 
 **Tool-call attribution.** `Instrument` middleware emits an OTEL span,
-a Prometheus counter+histogram (labelled by tool + outcome), and a
-structured `tool_call` slog line per invocation. The slog line carries
-the caller's OIDC subject, tool name, args, outcome, duration, error,
+a Prometheus counter+histogram per tool (plus a separate error counter),
+and a structured `tool_call` slog line per invocation. The slog line
+carries the caller's OIDC subject, tool name, args, error flag, duration,
 and `caller_token_source` (`oauth` vs `sso`) — useful when no OTLP
-endpoint is wired up. With OTEL traces the same fields live on the
-span; an MCP gateway can correlate via `trace_id`/`span_id`.
+endpoint is wired up. An MCP gateway can correlate logs and traces via
+`trace_id` / `span_id`.
 
 **Authz freshness.** Org membership and role changes propagate within
-~30s (positive cache TTL); shorter for negatives (5s). A revoked role
-can still issue tool calls until its cache entry expires — accepted
-trade-off vs paying the Grafana lookup latency on every call.
+~30s (the cache TTL). A revoked role can still issue tool calls until
+its cache entry expires — accepted trade-off vs paying the Grafana
+lookup latency on every call.
 
 **Stdio transport** bypasses OAuth — there's no HTTP listener. Tool calls
 hit `RequireCaller` and fail unless the stdio session installs a
@@ -126,14 +126,13 @@ only"; do not expose stdio to untrusted users.
 
 **First, check upstream.** Before adding a local handler, look at
 `grafana/mcp-grafana` for a tool with the same intent. If it exists,
-register it through the bridge (Loki/Prometheus/dashboards/alert-rules
-all do this). This inherits upstream maintenance for free; the
-*only* place we add local code is when upstream has no equivalent
-(today: Tempo, Alertmanager v2, silences, list_orgs, triage co-pilots,
-explain_query — see `internal/tools/doc.go` for the rationale per
-category).
+register it via `gfBinder` (Loki/Prometheus/dashboards/alert-rules all
+do this). This inherits upstream maintenance for free; the *only*
+place we add local code is when upstream has no equivalent (today:
+Tempo, Alertmanager v2, `list_orgs` — see `internal/tools/doc.go` for
+the rationale per category).
 
-### Path A — bridge an upstream tool (preferred)
+### Path A — delegate to an upstream tool (preferred)
 
 Add the registration to the matching `register*Tools` in the
 appropriate file. For tools that take an `org` and a datasource UID
@@ -143,24 +142,20 @@ upstream:
 import (
     mcpgrafanatools "github.com/grafana/mcp-grafana/tools"
     "github.com/giantswarm/mcp-observability-platform/internal/authz"
-    "github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
+    "github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-t := mcpgrafanatools.QuerySomething
-s.AddTool(
-    upstream.WithOrgReplacingDatasource(t.Tool),
-    br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, t),
-)
+b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir,
+    datasourceUIDArg, mcpgrafanatools.QuerySomething)
 ```
 
-The bridge resolves `org → OrgID + datasource UID` server-side, so
+`gfBinder` resolves `org → OrgID + datasource UID` server-side, so
 the LLM-visible schema is upstream's verbatim minus `datasourceUid`,
 plus our `org`. Tools whose upstream arg name isn't `datasourceUid`
-(e.g. `alerting_manage_rules` uses `datasource_uid`) use the
-`WithOrgReplacingArg` / `WrapDatasourceArg` pair.
+(e.g. `alerting_manage_rules` uses `datasource_uid`) pass that string
+explicitly as the `argName` parameter.
 
-For org-only upstream tools (no datasource), use `upstream.WithOrg` +
-`br.Wrap`.
+For org-only upstream tools (no datasource), use `b.bindOrgTool(s, role, t)`.
 
 ### Path B — local handler (only when upstream has no equivalent)
 
@@ -189,8 +184,9 @@ s.AddTool(
 )
 ```
 
-For datasource-proxied tools, reuse `datasourceProxyHandler(az, gc,
-datasourceSpec{...})` instead of hand-rolling.
+For datasource-proxied local tools, see `resolveDatasource` in
+`internal/tools/datasource.go` — it bundles the org→DS-ID lookup with the
+tenant-type and role checks the local handlers all need.
 
 ### Always
 
@@ -200,7 +196,7 @@ datasourceSpec{...})` instead of hand-rolling.
   would land in the cluster log pipeline.
 - **Tests.** `handler_authz_test.go` enumerates every registered
   tool that takes an `org` argument and asserts the deny path —
-  bridged tools are covered automatically. Add a happy-path
+  delegated tools are covered automatically. Add a happy-path
   integration test in `handler_integration_test.go` only for tools
   with non-trivial response shaping that's still local.
 

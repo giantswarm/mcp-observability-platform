@@ -1,7 +1,4 @@
-// Package tools — metrics.go: Mimir Prometheus tools, all delegated to
-// upstream grafana/mcp-grafana via the bridge. The local "org" arg is
-// the only schema addition; the bridge resolves it to the org's Mimir
-// datasource UID and injects datasourceUid before invoking upstream.
+// metrics.go — RoleViewer, DSKindMimir.
 package tools
 
 import (
@@ -10,19 +7,14 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // registerMetricsTools wires the upstream Mimir/Prometheus tools onto
-// our MCP server. All gate on RoleViewer; the bridge handles
+// our MCP server. All gate on RoleViewer; the binder handles
 // org→OrgID + Mimir-datasource-UID resolution and X-Grafana-User
 // caller attribution.
-//
-// query_prometheus_histogram in particular replaces our prior local
-// implementation that used string-splicing to compose the
-// histogram_quantile expression — upstream's structured-param
-// approach removes that injection vector.
-func registerMetricsTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
+func registerMetricsTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.QueryPrometheus,
 		mcpgrafanatools.QueryPrometheusHistogram,
@@ -31,6 +23,6 @@ func registerMetricsTools(s *mcpsrv.MCPServer, br *upstream.Bridge) {
 		mcpgrafanatools.ListPrometheusLabelValues,
 		mcpgrafanatools.ListPrometheusMetricMetadata,
 	} {
-		s.AddTool(upstream.WithOrgReplacingDatasource(t.Tool), br.WrapDatasource(authz.RoleViewer, authz.DSKindMimir, t))
+		b.bindDatasourceTool(s, authz.RoleViewer, grafana.DSKindMimir, datasourceUIDArg, t)
 	}
 }

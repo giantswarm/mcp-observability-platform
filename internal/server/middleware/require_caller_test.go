@@ -53,7 +53,7 @@ func TestRequireCaller_RejectsEmptyContext(t *testing.T) {
 
 func TestRequireCaller_RejectsCallerWithEmptyFields(t *testing.T) {
 	// UserInfo present in context but neither Email nor ID set — the
-	// authz.Caller.Empty() check must treat this as "no identity" and the
+	// authz.Caller.Authenticated() check must treat this as "no identity" and the
 	// middleware must reject. A token validated against the IdP but
 	// missing identifying claims is not the same as "authenticated."
 	ctx := ctxWithCaller(&providers.UserInfo{})

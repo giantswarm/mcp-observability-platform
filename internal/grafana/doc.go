@@ -1,13 +1,18 @@
-// Package grafana is a thin HTTP client for the Grafana API used by
-// this MCP. The interface is deliberately minimal — most tools are
-// bridged to upstream grafana/mcp-grafana, which builds its own HTTP
-// client per call. This package covers what the bridge can't:
+// Package grafana is the Grafana adapter for this MCP. It carries:
 //
-//   - Authz lookups (LookupUser, UserOrgs)
-//   - Bridge ID→UID resolution (LookupDatasourceUIDByID)
-//   - Health-probe Ping + startup VerifyServerAdmin
-//   - DatasourceProxy for the surviving local tools (Tempo,
-//     Alertmanager v2, triage)
+//   - A thin HTTP client (client.go) covering what gfBinder (in
+//     internal/tools) can't:
+//     authz lookups (LookupUser, UserOrgs); ID→UID resolution
+//     (LookupDatasourceUIDByID); health-probe Ping + startup
+//     VerifyServerAdmin; DatasourceProxy for the local tools (Tempo,
+//     Alertmanager v2).
+//   - Datasource + DatasourceKind taxonomy (datasource.go) — the
+//     domain projection of a Grafana datasource and its canonical-
+//     role enum, with MatchKind for substring-based selection.
+//
+// The interface is deliberately minimal — most tools are delegated to
+// upstream grafana/mcp-grafana, which builds its own HTTP client per
+// call.
 //
 // It assumes the caller provides a Grafana server-admin service-account
 // token (an SA granted the "Grafana Admin" server role), so that

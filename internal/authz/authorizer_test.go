@@ -44,33 +44,33 @@ func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organi
 		DisplayName: display,
 		OrgID:       orgID,
 		Tenants:     tenants,
-		Datasources: []Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 10, Name: "mimir-" + name},
 			{ID: 11, Name: "loki-" + name},
 		},
 	}
 }
 
-// fakeRegistry implements OrgRegistry for tests — hand-rolled instead of a
+// fakeOrgLister implements OrgLister for tests — hand-rolled instead of a
 // controller-runtime fake client so tests don't need to know about K8s or
 // the CRD package.
-type fakeRegistry struct {
+type fakeOrgLister struct {
 	descs []Organization
 }
 
-func (f *fakeRegistry) List(context.Context) ([]Organization, error) {
+func (f *fakeOrgLister) List(context.Context) ([]Organization, error) {
 	return f.descs, nil
 }
 
-func registry(descs ...Organization) *fakeRegistry {
-	return &fakeRegistry{descs: descs}
+func registry(descs ...Organization) *fakeOrgLister {
+	return &fakeOrgLister{descs: descs}
 }
 
 // mustNewAuthorizer constructs an Authorizer with default TTLs and the given
 // cache size, and fails the test if construction errors. Pass cacheSize=-1
 // to disable caching (uncached read-through every call) — the most common
 // shape for tests that assert upstream-call counts.
-func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g grafana.Client, cacheSize int) Authorizer {
+func mustNewAuthorizer(t *testing.T, reg OrgLister, g grafana.Client, cacheSize int) Authorizer {
 	t.Helper()
 	res, err := NewAuthorizer(reg, g, nil, 0, 0, cacheSize)
 	if err != nil {
@@ -81,7 +81,7 @@ func mustNewAuthorizer(t *testing.T, reg OrgRegistry, g grafana.Client, cacheSiz
 
 // mustNewAuthorizerWithTTL is the same as mustNewAuthorizer but exposes
 // the cache TTLs so expiry-window tests can use very short values.
-func mustNewAuthorizerWithTTL(t *testing.T, reg OrgRegistry, g grafana.Client, positiveTTL, negativeTTL time.Duration, cacheSize int) Authorizer {
+func mustNewAuthorizerWithTTL(t *testing.T, reg OrgLister, g grafana.Client, positiveTTL, negativeTTL time.Duration, cacheSize int) Authorizer {
 	t.Helper()
 	res, err := NewAuthorizer(reg, g, nil, positiveTTL, negativeTTL, cacheSize)
 	if err != nil {
@@ -261,29 +261,28 @@ func TestRoleFromGrafana(t *testing.T) {
 	}
 }
 
-func TestOrganization_FindDatasourceID(t *testing.T) {
+func TestOrganization_FindDatasource(t *testing.T) {
 	org := Organization{
-		Datasources: []Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 1, Name: "mimir-prod"},
 			{ID: 2, Name: "Loki-Prod"},
 			{ID: 3, Name: "tempo-prod"},
 		},
 	}
 	cases := []struct {
-		need   []string
+		kind   grafana.DatasourceKind
 		wantID int64
 		wantOK bool
 	}{
-		{[]string{"mimir"}, 1, true},
-		{[]string{"loki"}, 2, true},
-		{[]string{"tempo", "prod"}, 3, true},
-		{[]string{"prometheus"}, 0, false},
-		{[]string{"mimir", "nope"}, 0, false},
+		{grafana.DSKindMimir, 1, true},
+		{grafana.DSKindLoki, 2, true},
+		{grafana.DSKindTempo, 3, true},
+		{grafana.DSKindAlertmanager, 0, false},
 	}
 	for _, c := range cases {
-		gotID, gotOK := org.FindDatasourceID(c.need...)
-		if gotID != c.wantID || gotOK != c.wantOK {
-			t.Errorf("FindDatasourceID(%v) = (%d,%v), want (%d,%v)", c.need, gotID, gotOK, c.wantID, c.wantOK)
+		gotDS, gotOK := org.FindDatasource(c.kind)
+		if gotDS.ID != c.wantID || gotOK != c.wantOK {
+			t.Errorf("FindDatasource(%v) = (%d,%v), want (%d,%v)", c.kind, gotDS.ID, gotOK, c.wantID, c.wantOK)
 		}
 	}
 }
@@ -433,7 +432,7 @@ func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
 		t.Fatalf("Require: %v", err)
 	}
 	// Mutation simulating a handler that appends to the datasource list.
-	oa1.Datasources = append(oa1.Datasources, Datasource{ID: 999, Name: "poisoned"})
+	oa1.Datasources = append(oa1.Datasources, grafana.Datasource{ID: 999, Name: "poisoned"})
 
 	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {

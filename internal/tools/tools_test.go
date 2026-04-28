@@ -68,6 +68,3 @@ func TestClampInt(t *testing.T) {
 		}
 	}
 }
-
-// Response-cap tests moved to internal/server/middleware/response_cap_test.go
-// after the cap became a middleware rather than a per-handler helper.

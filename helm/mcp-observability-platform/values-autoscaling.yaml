@@ -41,20 +41,16 @@ networkPolicy:
   policyTypes:
     - Ingress
     - Egress
-  # Example: lock /mcp behind the ingress controller, /metrics behind
-  # the Prometheus scraper. Adjust selectors to match your cluster.
+  # Example: lock the single mcp port to ingress + Prometheus. Adjust
+  # selectors to match your cluster.
   ingress:
     - ports:
-        - port: mcp
+        - port: http
           protocol: TCP
       from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress
-    - ports:
-        - port: metrics
-          protocol: TCP
-      from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring

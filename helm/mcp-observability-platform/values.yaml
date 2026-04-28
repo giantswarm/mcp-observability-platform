@@ -33,8 +33,7 @@ containerSecurityContext:
 
 service:
   type: ClusterIP
-  mcpPort: 8080
-  metricsPort: 9091
+  port: 8080
   annotations: {}
 
 serviceAccount:
@@ -71,20 +70,17 @@ podDisruptionBudget:
 # NetworkPolicySpec — paste any shape the K8s API accepts. The chart owns
 # only the podSelector (it has to match the deployment labels).
 #
-# Default ingress allows both ports from any pod; tighten with from:
-# selectors per the upstream NetworkPolicySpec. Egress is unrestricted
-# unless you add Egress to policyTypes and supply egress rules — remember
-# to allow kube-dns + your Grafana / Dex / OTLP peers.
+# Default ingress allows the single mcp port from any pod; tighten with
+# from: selectors per the upstream NetworkPolicySpec. Egress is
+# unrestricted unless you add Egress to policyTypes and supply egress
+# rules — remember to allow kube-dns + your Grafana / Dex / OTLP peers.
 networkPolicy:
   enabled: true
   policyTypes:
     - Ingress
   ingress:
     - ports:
-        - port: mcp
-          protocol: TCP
-    - ports:
-        - port: metrics
+        - port: http
           protocol: TCP
   egress: []
 

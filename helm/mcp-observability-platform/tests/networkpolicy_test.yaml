@@ -19,30 +19,23 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: split ingress rules — /mcp port 8080 vs metrics port 9091
+  - it: default ingress allows the single http port
     asserts:
       - equal:
           path: spec.ingress[0].ports[0].port
-          value: mcp
-      - equal:
-          path: spec.ingress[1].ports[0].port
-          value: metrics
+          value: http
 
   - it: ingress is toYaml'd verbatim — operators can lock down with from selectors
     set:
       networkPolicy:
         ingress:
           - ports:
-              - port: mcp
+              - port: http
                 protocol: TCP
             from:
               - namespaceSelector:
                   matchLabels:
                     kubernetes.io/metadata.name: ingress
-          - ports:
-              - port: metrics
-                protocol: TCP
-            from:
               - namespaceSelector:
                   matchLabels:
                     kubernetes.io/metadata.name: monitoring
@@ -51,7 +44,7 @@ tests:
           path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: ingress
       - equal:
-          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          path: spec.ingress[0].from[1].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: monitoring
 
   - it: egress is toYaml'd verbatim when supplied — operator owns DNS and peer rules

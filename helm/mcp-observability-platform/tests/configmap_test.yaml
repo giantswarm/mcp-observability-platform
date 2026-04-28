@@ -18,6 +18,9 @@ tests:
       - equal:
           path: data.OAUTH_TRUSTED_REDIRECT_SCHEMES
           value: ""
+      - equal:
+          path: data.OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS
+          value: "true"
 
   - it: joins trusted audiences + schemes as CSV
     set:

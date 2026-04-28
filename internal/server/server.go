@@ -2,8 +2,10 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	mcpsrv "github.com/mark3labs/mcp-go/server"
@@ -12,7 +14,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 	"github.com/giantswarm/mcp-observability-platform/internal/tools"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // Config configures a new MCP HTTP server.
@@ -20,10 +21,17 @@ type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	// Bridge delegates org-only tools to upstream grafana/mcp-grafana
-	// handlers. Required.
-	Bridge  *upstream.Bridge
-	Version string
+	// GrafanaURL is the base URL the delegated tool handlers use to build
+	// per-request upstream GrafanaClients. Same value as the Grafana
+	// client's URL; threaded through here because the binder constructs
+	// upstream's client per-call.
+	GrafanaURL string
+	// GrafanaAPIKey and GrafanaBasicAuth are mutually exclusive; exactly
+	// one must be set. Threaded through for the binder's per-request
+	// upstream GrafanaClient construction.
+	GrafanaAPIKey    string
+	GrafanaBasicAuth *url.Userinfo
+	Version          string
 	// ToolTimeout is the per-tool-handler context deadline. 0 disables
 	// per-handler timeouts (ctx passes through unchanged).
 	ToolTimeout time.Duration
@@ -46,9 +54,6 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Grafana == nil {
 		return nil, errors.New("server: Grafana is required")
 	}
-	if cfg.Bridge == nil {
-		return nil, errors.New("server: Bridge is required")
-	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
 	}
@@ -56,8 +61,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	// Middleware stack (outermost first):
 	//   1. WithRecovery()                — panic guard (mcp-go).
 	//   2. middleware.Instrument(logger) — span + metric + structured
-	//                                      "tool_call" log line. One Classify
-	//                                      call drives all three signals.
+	//                                      "tool_call" log line.
 	//   3. middleware.RequireCaller()    — fail-closed authentication.
 	//                                      Inside Instrument so denials still
 	//                                      emit metric + log.
@@ -70,8 +74,6 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		"mcp-observability-platform",
 		cfg.Version,
 		mcpsrv.WithToolCapabilities(true),
-		mcpsrv.WithResourceCapabilities(true, true),
-		mcpsrv.WithPromptCapabilities(true),
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
@@ -79,7 +81,9 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
-	tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.Bridge)
+	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth); err != nil {
+		return nil, fmt.Errorf("server: register tools: %w", err)
+	}
 
 	return mcp, nil
 }

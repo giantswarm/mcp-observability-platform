@@ -20,7 +20,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 var serveCmd = &cobra.Command{
@@ -64,7 +63,7 @@ func validateTransport(transport string) error {
 }
 
 // runServe is the MCP server orchestration entry point. Phase-by-phase
-// helpers live in oauth.go / orgregistry.go / mux.go; runServe reads as a
+// helpers live in oauth.go / orglister.go / mux.go; runServe reads as a
 // single ordered build-then-serve flow.
 func runServe(_ *cobra.Command, _ []string) error {
 	if err := validateTransport(flagTransport); err != nil {
@@ -108,7 +107,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// entries cache 30s; negative ones (user-not-found, empty memberships)
 	// use a 5s TTL so a mid-SSO-outage failure doesn't lock anyone out for
 	// half a minute. LRU-bounded so long-running pods don't leak.
-	authorizer, err := authz.NewAuthorizer(k8sOrgRegistry{reader: ctrlCache}, grafanaClient, logger,
+	authorizer, err := authz.NewAuthorizer(k8sOrgLister{reader: ctrlCache}, grafanaClient, logger,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authz.DefaultCacheSize)
 	if err != nil {
 		return fmt.Errorf("resolver: %w", err)
@@ -137,16 +136,25 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
-	bridge, err := newUpstreamBridge(authorizer, grafanaClient, cfg)
+	basicAuth, err := parseGrafanaBasicAuth(cfg.GrafanaBasicAuth)
 	if err != nil {
-		return fmt.Errorf("upstream bridge: %w", err)
+		return err
+	}
+	apiKey := cfg.GrafanaSAToken
+	if basicAuth != nil {
+		// gfBinder requires exactly one of APIKey / BasicAuth, so when
+		// BasicAuth is set blank the token here. Same invariant the
+		// loader enforces, expressed at construction.
+		apiKey = ""
 	}
 
 	mcp, err := server.New(server.Config{
 		Logger:           logger,
 		Authorizer:       authorizer,
 		Grafana:          grafanaClient,
-		Bridge:           bridge,
+		GrafanaURL:       cfg.GrafanaURL,
+		GrafanaAPIKey:    apiKey,
+		GrafanaBasicAuth: basicAuth,
 		Version:          version,
 		ToolTimeout:      cfg.ToolTimeout,
 		MaxResponseBytes: cfg.MaxResponseBytes,
@@ -212,27 +220,18 @@ func guardStdioInCluster(transport string) error {
 	return fmt.Errorf("MCP_TRANSPORT=stdio refused inside Kubernetes (stdio bypasses OAuth); use streamable-http or set MCP_ALLOW_STDIO_IN_CLUSTER=true to override")
 }
 
-// newUpstreamBridge constructs the upstream-mcp-grafana bridge from
-// runtime config. APIKey vs BasicAuth are mutually exclusive at config-
-// load time (see cmd/config.go) so exactly one of the two will be set;
-// upstream.NewBridge enforces the same invariant in code.
-func newUpstreamBridge(az authz.Authorizer, gc grafana.Client, cfg *config) (*upstream.Bridge, error) {
-	var basicAuth *url.Userinfo
-	if cfg.GrafanaBasicAuth != "" {
-		user, pass, ok := strings.Cut(cfg.GrafanaBasicAuth, ":")
-		if !ok || user == "" {
-			return nil, fmt.Errorf("GRAFANA_BASIC_AUTH must be in the form user:password")
-		}
-		basicAuth = url.UserPassword(user, pass)
+// parseGrafanaBasicAuth parses GRAFANA_BASIC_AUTH ("user:password") into
+// a *url.Userinfo. Empty input returns (nil, nil); a malformed value is
+// a hard error.
+func parseGrafanaBasicAuth(s string) (*url.Userinfo, error) {
+	if s == "" {
+		return nil, nil
 	}
-	apiKey := cfg.GrafanaSAToken
-	if basicAuth != nil {
-		// NewBridge requires exactly one of APIKey / BasicAuth, so when
-		// BasicAuth is set blank the token here. Same invariant the
-		// loader enforces, expressed at construction.
-		apiKey = ""
+	user, pass, ok := strings.Cut(s, ":")
+	if !ok || user == "" {
+		return nil, fmt.Errorf("GRAFANA_BASIC_AUTH must be in the form user:password")
 	}
-	return upstream.NewBridge(az, gc, cfg.GrafanaURL, apiKey, basicAuth)
+	return url.UserPassword(user, pass), nil
 }
 
 // shutdownWithTimeout invokes a provider's Shutdown with a fresh 5s

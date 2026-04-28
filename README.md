@@ -8,41 +8,40 @@ Mimir / Loki / Tempo / Alertmanager datasources) to MCP clients, with
 per-caller tenant and role scoping derived from `GrafanaOrganization` CRs.
 
 One MCP per Grafana instance. Authentication via MCP OAuth (Dex as IdP).
-Authorization resolved from the caller's OIDC groups against
-`GrafanaOrganization.spec.rbac.{admins,editors,viewers}`. Role and org-
-membership changes propagate within ~30s (the resolver's positive cache
-TTL); shorter TTLs for negative results (caller-not-yet-provisioned).
+Authorization is resolved by Grafana from its `org_mapping` (which
+`observability-operator` derives from
+`GrafanaOrganization.spec.rbac.{admins,editors,viewers}`); the MCP
+asks Grafana per caller. Role and org-membership changes propagate
+within ~30s (the per-caller cache TTL).
 
 ## Roadmap
 
-See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization plan
-and [`docs/upstream-contributions.md`](./docs/upstream-contributions.md)
-for the parallel `grafana/mcp-grafana` contribution lane.
-[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) is the orientation
-doc: request flow, package layout, threat model, and where to add a new
-tool.
+See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization
+plan. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) is the
+orientation doc: request flow, package layout, threat model, and
+where to add a new tool.
 
 ## MCP surface
 
 ### Tools
 
-All tools require `role: viewer` on the target org (via the caller's OIDC
-groups intersected with `GrafanaOrganization.spec.rbac`). Write operations
+All tools require `role: viewer` on the target org (Grafana evaluates
+`org_mapping` against the caller's OIDC groups; the operator derives
+`org_mapping` from `GrafanaOrganization.spec.rbac`). Write operations
 are intentionally out of scope for this MCP.
 
-Most tool handlers are bridged to upstream
+Most tool handlers delegate to upstream
 [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
-synthetic `org` argument and the bridge resolves it to the org's
+synthetic `org` argument and `gfBinder` resolves it to the org's
 OrgID + datasource UID before delegating. Categories without a usable
-upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`, triage
-co-pilots) stay local. See `internal/tools/doc.go` for the per-category
-rationale.
+upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`) stay
+local. See `internal/tools/doc.go` for the per-category rationale.
 
 **Orgs & datasources**
 
 | Tool               | Backend     | Notes                                                          |
 | ------------------ | ----------- | -------------------------------------------------------------- |
-| `list_orgs`        | (local CRs) | Minimal projection (name / displayName / orgID / role / tenantTypes) |
+| `list_orgs`        | (local CRs) | Minimal projection (name / displayName / orgId / role / tenantTypes) |
 | `list_datasources` | Grafana API | `/api/datasources`; projected to id / uid / name / type        |
 | `get_datasource`   | Grafana API | `/api/datasources/uid/{uid}` full detail                       |
 
@@ -95,25 +94,8 @@ rationale.
 | `list_alerts`  | `api/v2/alerts` — paged, severity-sorted                   |
 | `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
 
-**Triage co-pilots**
-
-Composite tools that synthesise common SRE-triage queries from a few inputs.
-Names mirror grafana/mcp-grafana's Sift surface where an upstream equivalent
-exists; OSS-only — no Grafana Cloud Sift backend required.
-
-| Tool                       | Composes                                                                         |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `find_error_pattern_logs`  | service-label probe → `loki/api/v1/index/stats` size guard → `query_range` with error-keyword regex |
-| `find_slow_requests`       | TraceQL builder (`resource.service.name` + `duration > min` + optional `status=error`) → Tempo `api/search` |
-
-### Resources and prompts — deliberately not implemented
-
-LLMs handle tool calls far more reliably than resource URIs or prompts, so
-this MCP exposes only tools. A prior prototype had `observability://` /
-`grafana://` / `alertmanager://` resource URIs and an `investigate-alert`
-prompt; both were removed in favour of the equivalent tools (`get_alert`,
-`get_dashboard_by_uid`, `list_datasources`). See
-[`docs/roadmap.md`](./docs/roadmap.md#out-of-scope) for the rationale.
+This MCP exposes only tools; LLM clients invoke them more reliably
+than resource URIs or prompts.
 
 Datasource selection is per-org: tools match datasources from
 `status.dataSources[]` by name substring (`mimir`, `loki`, `tempo`,
@@ -149,25 +131,20 @@ whole query.
 
 ### Metrics
 
-Prometheus metrics served at `:9091/metrics`:
+Prometheus metrics served at `/metrics` on the merged HTTP port (default `:8080`):
 
-| Metric                               | Type      | Labels            |
-| ------------------------------------ | --------- | ----------------- |
-| `mcp_tool_call_total`                | counter   | `tool`, `outcome` |
-| `mcp_tool_call_duration_seconds`     | histogram | `tool`, `outcome` |
-| `mcp_grafana_proxy_total`            | counter   | `path`            |
-| `mcp_grafana_proxy_duration_seconds` | histogram | `path`, `status`  |
-| `mcp_org_cache_size`                 | gauge     | —                 |
+| Metric                               | Type      | Labels           |
+| ------------------------------------ | --------- | ---------------- |
+| `mcp_tool_call_total`                | counter   | `tool`           |
+| `mcp_tool_call_errors_total`         | counter   | `tool`           |
+| `mcp_tool_call_duration_seconds`     | histogram | `tool`           |
+
+Per-Grafana-request observation lives on the OTEL span emitted by
+`internal/grafana.client.fetch` — no separate aggregate counter.
 
 Plus default Go and process collectors.
 
-`outcome` values:
-
-- `ok` — handler returned a non-error result.
-- `user_error` — handler returned `isError: true` (user-visible failure such as a missing arg, authz denial, or `response_too_large`). Expected behaviour.
-- `system_error` — handler returned a Go error (upstream unreachable, panic caught by mcp-go's `WithRecovery`, bug). Ops-actionable.
-
-Spans mirror this on the `tool.outcome` attribute; the span is marked Error only on `system_error` (user errors are normal, same convention as HTTP servers not marking 4xx Error).
+Tool error rate is `errors_total / total` per tool — the standard two-counter pattern. Error spans are marked Error regardless of whether the handler returned a Go error or an `IsError` result.
 
 ### Tracing
 
@@ -177,7 +154,7 @@ and the W3C trace-context propagator is still installed so incoming headers
 are respected. Spans are emitted per tool call and per Grafana HTTP request.
 
 `Instrument` middleware also writes a structured `tool_call` slog line
-to the app logger (caller, tool, outcome, duration, trace_id, span_id) so
+to the app logger (caller, tool, error, duration, trace_id, span_id) so
 no-OTLP setups still get a queryable record. The cluster log pipeline
 ships stderr to Loki; an MCP gateway can correlate via the trace IDs.
 
@@ -205,21 +182,21 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `DEX_ISSUER_URL`                            | yes            | Dex issuer                                               |
-| `DEX_CLIENT_ID`                             | yes            | Dex OAuth client                                         |
-| `DEX_CLIENT_SECRET`                         | yes            | Dex OAuth client secret                                  |
+| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`)            |
+| `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
+| `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
+| `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
-| `OAUTH_REDIRECT_URL`                        | no             | Defaults to `$OAUTH_ISSUER/oauth/callback`               |
-| `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only)  |
-| `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that use loopback redirect URIs per RFC 8252. |
-| `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token encryption at rest; 64-char hex (`openssl rand -hex 32`) or 44-char standard base64 (`openssl rand -base64 32`). Rejected if entropy is too low (all-zeros, repeated byte). |
-| `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `DEX_ISSUER_URL`. Empty = own-tokens-only. |
+| `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
+| `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` to unauthenticated callers (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that self-register at runtime. |
+| `OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS`       | no             | `true` to accept loopback redirect URIs (RFC 8252) at registration. The Helm chart defaults to `true` because every MCP CLI client (Claude Code, mcp-inspector, IDE plugins) registers a loopback URI. |
+| `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
+| `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
 | `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
-| `OAUTH_STORAGE`                             | no             | `memory` (default) or `valkey`                           |
-| `VALKEY_ADDR` / `_PASSWORD` / `_TLS`        | no             | Required when `OAUTH_STORAGE=valkey`                     |
+| `OAUTH_STORAGE_BACKEND`                     | no             | `memory` (default) or `valkey` (read by `oauthconfig.StorageFromEnvWithPrefix("OAUTH_")`) |
+| `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
-| `MCP_ADDR`                                  | no             | Listen address for the MCP transport (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
-| `METRICS_ADDR`                              | no             | Listen address for `/metrics`, `/healthz`, `/readyz`, `/healthz/detailed` (default `:9091`) |
+| `MCP_ADDR`                                  | no             | Listen address for the merged HTTP surface — `/mcp`, `/oauth/*`, `/metrics`, `/healthz`, `/readyz` are all on the same port (default `:8080`). Ignored when `MCP_TRANSPORT=stdio`. |
 | `TOOL_MAX_RESPONSE_BYTES`                   | no             | Cap on tool response body (default 131072; 0 = disabled) |
 | `TOOL_TIMEOUT`                              | no             | Per-tool-call deadline (default `30s`; `0` = disabled). Go duration syntax (`500ms`, `2m`). A tool exceeding the deadline returns an IsError result with timeout text. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | no             | OTLP endpoint for span export; spans are no-op when unset |

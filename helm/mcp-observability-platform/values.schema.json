@@ -350,10 +350,7 @@
                 "annotations": {
                     "type": "object"
                 },
-                "mcpPort": {
-                    "type": "integer"
-                },
-                "metricsPort": {
+                "port": {
                     "type": "integer"
                 },
                 "type": {

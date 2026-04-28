@@ -11,6 +11,7 @@ import (
 	obsv1alpha2 "github.com/giantswarm/observability-operator/api/v1alpha2"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -96,13 +97,13 @@ func listOrgCount(c ctrlcache.Cache) func(context.Context) (int, error) {
 	}
 }
 
-// k8sOrgRegistry adapts a controller-runtime cache to authz.OrgRegistry.
+// k8sOrgLister adapts a controller-runtime cache to authz.OrgLister.
 // Lives here so the authz package never imports observability-operator
 // or controller-runtime — this is the K8s ↔ domain translation boundary.
-type k8sOrgRegistry struct{ reader ctrlclient.Reader }
+type k8sOrgLister struct{ reader ctrlclient.Reader }
 
-// List implements authz.OrgRegistry.
-func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) {
+// List implements authz.OrgLister.
+func (k k8sOrgLister) List(ctx context.Context) ([]authz.Organization, error) {
 	var list obsv1alpha2.GrafanaOrganizationList
 	if err := k.reader.List(ctx, &list); err != nil {
 		return nil, err
@@ -118,9 +119,9 @@ func (k k8sOrgRegistry) List(ctx context.Context) ([]authz.Organization, error) 
 			}
 			tenants = append(tenants, authz.Tenant{Name: string(t.Name), Types: types})
 		}
-		datasources := make([]authz.Datasource, 0, len(cr.Status.DataSources))
+		datasources := make([]grafana.Datasource, 0, len(cr.Status.DataSources))
 		for _, ds := range cr.Status.DataSources {
-			datasources = append(datasources, authz.Datasource{ID: ds.ID, Name: ds.Name})
+			datasources = append(datasources, grafana.Datasource{ID: ds.ID, Name: ds.Name})
 		}
 		out[i] = authz.Organization{
 			Name:        cr.Name,

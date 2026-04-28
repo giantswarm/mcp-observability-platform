@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,7 +23,7 @@ const (
 
 // cacheEntry is one authorizer-cache entry. It holds only the
 // Grafana-side data (user ID + per-org Role memberships) — the registry
-// join is recomputed from a fresh OrgRegistry.List on every RequireOrg /
+// join is recomputed from a fresh OrgLister.List on every RequireOrg /
 // ListOrgs call. The registry is in-memory (controller-runtime informer
 // cache) so the join is trivially cheap, and recomputing it means a
 // deleted org disappears from a caller's accessible set immediately
@@ -94,11 +95,11 @@ func buildOrgRefSet(orgs []Organization) map[string]struct{} {
 // Today the registry-side Organization values are read fresh per call
 // (the cache only holds Grafana-side memberships), so handler mutations
 // can no longer escape into the cache by definition. We still
-// deep-clone here so a single per-call OrgRegistry.List that gets
+// deep-clone here so a single per-call OrgLister.List that gets
 // projected for two concurrent callers cannot be corrupted by either.
 func cloneOrganization(o Organization) Organization {
 	o.Tenants = cloneTenants(o.Tenants)
-	o.Datasources = cloneDatasources(o.Datasources)
+	o.Datasources = slices.Clone(o.Datasources)
 	return o
 }
 

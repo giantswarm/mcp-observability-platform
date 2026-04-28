@@ -45,7 +45,7 @@ type Authorizer interface {
 }
 
 // authorizer answers "what can this caller do?" by asking Grafana for the
-// caller's org memberships and joining them against the OrgRegistry.
+// caller's org memberships and joining them against the OrgLister.
 //
 // The cache is keyed on OIDC subject (stable, non-spoofable). Email can
 // change, be unverified, or be re-owned; subject cannot. Email is still
@@ -55,7 +55,7 @@ type Authorizer interface {
 // singleflight; the LRU bounds long-running-process memory to
 // CacheSize entries. Positive and negative entries carry different TTLs.
 type authorizer struct {
-	registry OrgRegistry
+	registry OrgLister
 	grafana  grafana.Client
 	log      *slog.Logger
 
@@ -68,7 +68,7 @@ type authorizer struct {
 // NewAuthorizer constructs an Authorizer with the given cache settings. Passing
 // zero for any of the three cache parameters uses the DefaultCache*
 // constants. cacheSize of -1 disables caching entirely (useful for tests).
-func NewAuthorizer(registry OrgRegistry, grafana grafana.Client, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
+func NewAuthorizer(registry OrgLister, grafana grafana.Client, log *slog.Logger, cacheTTL, negativeCacheTTL time.Duration, cacheSize int) (Authorizer, error) {
 	if cacheTTL == 0 {
 		cacheTTL = DefaultCacheTTL
 	}

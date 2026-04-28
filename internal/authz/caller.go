@@ -35,12 +35,12 @@ func (c Caller) Identity() string {
 // one cache slot.
 func (c Caller) Empty() bool { return c.Subject == "" }
 
-// OrgRegistry is the authorizer's port onto "the set of known Grafana
+// OrgLister is the authorizer's port onto "the set of known Grafana
 // organisations". Implementations today wrap controller-runtime's informer
 // cache of GrafanaOrganization CRs; tests implement it directly in-memory.
 // Domain types only — the adapter is responsible for translating CR shapes
 // into Organization, so tests need no CR imports.
-type OrgRegistry interface {
+type OrgLister interface {
 	List(ctx context.Context) ([]Organization, error)
 }
 

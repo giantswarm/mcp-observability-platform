@@ -4,132 +4,109 @@ Forward-looking work plan. For what's already shipped:
 
 - [`README.md`](../README.md) — architecture layout, MCP surface, configuration, metrics.
 - [`CHANGELOG.md`](../CHANGELOG.md) — per-release feature list.
-- `git log` — authoritative for when and how each change landed.
-- [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — request flow, package layout, threat model, where to add a new tool.
-- [`docs/upstream-contributions.md`](./upstream-contributions.md) — parallel contribution lane to `grafana/mcp-grafana`.
+- `git log` — authoritative history.
+- [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — request flow, package layout, threat model.
 
 ## Post-v0.1.0 priorities
 
-### Per-org Grafana SA tokens — Phase-2 blast-radius fix
+### 1. Per-org Grafana SA tokens (Phase-2 blast-radius fix)
 
-Biggest unresolved security gap, deferred past v0.1.0 because it needs
-`observability-operator` coordination (new CRD / Secret conventions) —
-not purely in this repo. Today one compromised MCP pod with a
-server-admin SA exposes every Grafana org.
+Biggest unresolved security gap. Today one server-admin SA per MCP
+pod exposes every Grafana org on compromise.
 
-- Operator provisions per-`GrafanaOrganization` SAs, writes each to a
-  namespaced Secret.
-- MCP resolver picks the right SA per-request based on
-  `OrgAccess.OrgID`.
-- `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` remain as bootstrap fallback,
-  documented "dev/bootstrap only; never production".
+- `observability-operator` provisions per-`GrafanaOrganization` SAs
+  into namespaced Secrets.
+- MCP authorizer picks the right SA per-request based on
+  `Organization.OrgID`.
+- `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` remain as bootstrap
+  fallback, documented "dev/bootstrap only; never production".
 
-**Next step:** open an `observability-operator` issue describing the
-contract so the dependency is visible from both sides.
+Needs `observability-operator` coordination — open an issue there
+describing the contract so the dependency is visible from both sides.
 
-### Write tools gated on Editor / Admin
+### 2. Datasource UID + kind in `GrafanaOrganization.status`
 
-The authz model (`authz.Role` with Editor/Admin,
-`GrafanaOrganization.spec.rbac.editors/admins`) already supports this;
-`middleware.Audit` already emits the records compliance will demand for
-writes. Highest-value writes matching upstream:
+Drops the ID→UID round-trip we do per delegated tool call. Today
+`internal/grafana/client.go.LookupDatasourceUIDByID` is invoked for
+every datasource-scoped delegated tool because the CR status only
+carries `{ID, Name}` and our substring-matching kind detection
+(`internal/grafana/datasource.go.MatchKind`) compensates.
 
-- `create_silence(org, matchers, duration, comment)` — "silence this for
-  2 hours while I fix it." Gated on Editor.
-- `add_annotation(org, dashboardUid?, text, tags[])` — bot-driven deploy
-  annotations. Matches upstream `create_annotation`.
-- `update_annotation(org, id, ...)` — partial-update shape matching
-  upstream.
+- `observability-operator` publishes `status.dataSources[i].uid` and
+  `status.dataSources[i].kind` alongside the existing `id` / `name`.
+- `grafana.Datasource` grows `UID` and `Kind` fields; `Organization.
+  FindDatasource` reads `Kind` directly instead of substring-matching
+  `Name`.
+- `gfBinder.bindDatasourceTool` injects the UID directly, removing
+  the per-call Grafana lookup.
+- `internal/grafana/client.go.LookupDatasourceUIDByID` and
+  `MatchKind` become dead and are deleted.
 
-Each carries `destructiveHint: true` in MCP annotations. Rich audit
-records capture full payload for forensics.
+### 3. Write tools gated on Editor / Admin
 
-### MCP resource subscriptions for firing alerts
+The authz model (`Role` with Editor/Admin,
+`GrafanaOrganization.spec.rbac.editors/admins`) supports this;
+`Instrument` middleware already audits payloads. Highest-value
+writes that match upstream:
 
-Resources were dropped earlier in favour of tools (LLMs handle tools
-better). Subscriptions are a push model tools can't do: subscribe to
-"firing critical alerts in org X" → MCP pushes updates mid-conversation.
-Worth revisiting once MCP clients broadly support resource
-subscriptions.
+- `create_silence(org, matchers, duration, comment)` — gated on
+  Editor.
+- `create_annotation(org, dashboardUid?, text, tags[])` — bot-driven
+  deploy annotations.
+- `update_annotation(org, id, ...)` — partial-update.
 
-## Test-coverage gaps (ship when convenient)
+Each carries `destructiveHint: true` in MCP annotations; the
+`tool_call` audit line captures full payload for forensics.
 
-- `internal/tools/dashboards.go#expandGrafanaVars` — length-DESC sort
-  that stops `$cluster` corrupting `$cluster_id`. Table test.
-- `internal/tools/dashboards.go#readJSONPointer` — RFC 6901 edge cases
-  (`~0` / `~1` escapes, array indexing, non-container traversal).
-- **OAuth audience-validation contract test.** Asserts that a token
-  with an untrusted `aud` claim is rejected by `mcp-oauth.ValidateToken`.
-  Needs `mcp-oauth` to expose a usable test hook (or upstreamed test
-  helpers); skip-with-issue-link is the fallback.
-- **End-to-end OAuth flow integration test.** `httptest`-backed walk
-  through `authorize → callback → token → MCP tool call → 401-on-expiry`.
-  Currently `cmd/oauth_test.go` only covers storage configs.
+### 4. Per-tool enable/disable (deployment-time)
 
-Backfill independently if/when the helpers are touched, or once the
-upstream hook surface allows clean coverage of the OAuth flow.
+Operators should be able to disable individual tools (e.g. all write
+tools in a read-only deployment, `alerting_manage_rules` in clusters
+where alert-rule access is sensitive) without rebuilding.
 
-## Deferred from landed PRs
+- `TOOLS_DISABLED` env var (CSV) read at startup.
+- `RegisterAll` skips `s.AddTool` for matching names and logs the
+  skip set once at startup.
+- Helm chart exposes a `runtime.disabledTools: []string` value.
 
-- **ExternalSecret template** (from #5) — Dex creds via ESO. Mixing ESO
-  with the existing `existingSecret` pattern cleanly is its own design
-  call.
-- **Auto-release on main merge** (from #6) — replace manual
-  `release#vX.Y.Z` flow with an `auto-release.yaml` that patch-bumps on
-  merge. Needs skip-if-empty guard, CHANGELOG promotion back to main
-  with a bot token, concurrency-serialize.
-- **Standalone Go binaries via goreleaser** (from #6) — useful once
-  local stdio deployments become a supported use case. Container image
-  is the only distribution today.
+### 5. Delegate Tempo tools to Tempo's MCP server
+
+Tempo ships its own MCP server (`query_frontend.mcp_server.enabled`,
+`/api/mcp`, streamable-HTTP) with `traceql-search`, `get-trace`,
+`get-attribute-names`, `get-attribute-values`,
+`traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`.
+`mcp-grafana@v0.12.0` already implements the MCP-to-MCP proxy via
+Grafana's datasource proxy (`proxied_tools.go`,
+`mcpgrafana.NewToolManager`, `WithProxiedTools(true)`).
+
+**Migration gain:** four tools we don't have today (`get-trace`,
+`traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`)
+plus vocab alignment (`tag` → `attribute`).
+
+**Prereq:** Tempo's MCP server enabled uniformly across all tenants
+we serve. The per-tenant opt-in means partial coverage today —
+local handlers stay until that closes.
+
+**Migration shape:** wire
+`mcpgrafana.NewToolManager(sm, mcpServer, WithProxiedTools(true))`
+at server build, call `InitializeAndRegisterServerTools(ctx)` (or the
+per-session variant for HTTP/SSE), delete `internal/tools/traces.go`.
+Open question to revisit at migration time: ToolManager registers
+tools as `tempo_traceql-search(datasourceUid, ...)`, not
+`query_traces(org, ...)` — accept upstream's surface, or build a
+wrapper that re-emits with our `org` convention.
 
 ## Out of scope (explicitly not doing)
 
 - **Multi-cluster / federating MCP.** One MCP per Grafana is a design
-  constraint. A federator above it complicates auth, error propagation,
-  and observability for marginal benefit. Let the LLM pick the right
-  MCP per question.
-- **Generic (non-Grafana) Prometheus/Loki/Tempo clients.** The current
-  model leverages Grafana's tenant-header injection via its datasource
-  proxy; bypassing it re-implements multi-tenancy.
-- **Custom error-envelope format.** MCP's `isError: true` + plain text
-  is what LLMs are trained on.
-- **Result caching beyond the 30s resolver cache.** Invalidation
+  constraint.
+- **Generic (non-Grafana) Prometheus/Loki/Tempo clients.** The
+  current model leverages Grafana's tenant-header injection via its
+  datasource proxy.
+- **Custom error-envelope format.** MCP's `IsError: true` + plain
+  text is what LLMs are trained on.
+- **Result caching beyond the resolver TTL.** Invalidation
   complexity outweighs the savings.
-- **SBOM / cosign / CodeQL in-tree.** Handled at Giant Swarm org level.
-- **Upstream feature parity** with Pyroscope / OnCall / Incident / Sift
-  / Asserts in `grafana/mcp-grafana`. Keep the surface focused on Giant
-  Swarm's stack.
-
-## Upstream contribution lane
-
-Parallel, non-blocking. Tracked in
-[`docs/upstream-contributions.md`](./upstream-contributions.md). All
-three issues filed against `grafana/mcp-grafana`:
-
-- [#794](https://github.com/grafana/mcp-grafana/issues/794) — context-
-  aware RoundTrippers (per-request `X-Grafana-User` / `X-Grafana-Org-Id`
-  via `req.Context()` instead of frozen-at-construction config).
-- [#795](https://github.com/grafana/mcp-grafana/issues/795) — Mimir +
-  Loki recording-rule tools.
-- [#796](https://github.com/grafana/mcp-grafana/issues/796) — dedicated
-  Tempo toolset (TraceQL search, tag discovery, metrics).
-
-### v0.2 spike — depend on `grafana/mcp-grafana`
-
-Once #794 lands upstream and exposes the per-request context override,
-prototype replacing our local `internal/grafana/client.go` and the
-duplicated tool registrations (`search_dashboards`, `query_prometheus*`,
-`query_loki*`, etc.) with imports. The local code base shrinks to the
-GS-specific layer: authz, audit, multi-tenant org awareness, OSS triage
-co-pilots, middleware composition.
-
-Blockers before this is worth doing:
-
-1. #794 (context-aware RoundTrippers) merges and ships.
-2. Upstream registration functions (`AddDashboardTools`,
-   `AddPrometheusTools`, etc.) cover the categories we use.
-3. We accept Cloud-only transitive deps (`incident-go`,
-   `amixr-api-go-client`) in our binary — small bloat, no security
-   issue.
-
-If those align, the migration is ~3 PRs of mechanical wrapping.
+- **Upstream feature parity** with Pyroscope / OnCall / Incident /
+  Sift / Asserts in `grafana/mcp-grafana`. Keep the surface focused
+  on Giant Swarm's stack.

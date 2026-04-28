@@ -15,5 +15,4 @@ Required secrets you must create before the pod will become Ready:
 {{- end }}
 
 Service: {{ include "mcp-observability-platform.fullname" . }}
-  mcp:     :{{ .Values.service.mcpPort }}  (MCP traffic, OAuth-protected)
-  metrics: :{{ .Values.service.metricsPort }}  (/healthz /readyz /metrics)
+  http: :{{ .Values.service.port }}  (MCP, /healthz, /readyz, /metrics — single port)

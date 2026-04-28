@@ -8,32 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
-
-// stubBridge is a minimal *upstream.Bridge that's enough for server.New's
-// non-nil check. The bridge is never actually exercised by these tests —
-// they don't invoke tool handlers.
-func stubBridge(az authz.Authorizer) *upstream.Bridge {
-	br, err := upstream.NewBridge(az, stubGrafana{}, "http://grafana.local", "stub", nil)
-	if err != nil {
-		panic(err)
-	}
-	return br
-}
-
-// stubResolver is an authz.Authorizer implementation that's enough to pass
-// server.New's non-nil check. Methods are never invoked in these tests.
-type stubResolver struct{}
-
-func (stubResolver) RequireOrg(context.Context, string, authz.Role) (authz.Organization, error) {
-	return authz.Organization{}, nil
-}
-func (stubResolver) ListOrgs(context.Context) (map[string]authz.Organization, error) {
-	return nil, nil
-}
 
 // stubGrafana satisfies grafana.Client for server.New's non-nil check.
 // All methods return zero values; they're never invoked in these tests.
@@ -56,27 +33,37 @@ func (stubGrafana) DatasourceProxy(context.Context, grafana.RequestOpts, int64, 
 	return nil, nil
 }
 
-func TestNew_RejectsMissingDependencies(t *testing.T) {
-	log := slog.Default()
-	var resolver authz.Authorizer = stubResolver{}
-	gf := stubGrafana{}
+// goodCfg is a Config with every required field populated; tests start
+// from this and zero one field at a time to assert the validation.
+func goodCfg() Config {
+	return Config{
+		Logger:        slog.Default(),
+		Authorizer:    &authztest.Fake{},
+		Grafana:       stubGrafana{},
+		GrafanaURL:    "http://grafana.local",
+		GrafanaAPIKey: "stub",
+	}
+}
 
-	br := stubBridge(resolver)
+func TestNew_RejectsMissingDependencies(t *testing.T) {
 	cases := []struct {
 		name    string
-		cfg     Config
+		mutate  func(*Config)
 		wantErr string
 	}{
-		{"no logger", Config{Authorizer: resolver, Grafana: gf, Bridge: br}, "Logger is required"},
-		{"no authorizer", Config{Logger: log, Grafana: gf, Bridge: br}, "Authorizer is required"},
-		{"no grafana", Config{Logger: log, Authorizer: resolver, Bridge: br}, "Grafana is required"},
-		{"no bridge", Config{Logger: log, Authorizer: resolver, Grafana: gf}, "Bridge is required"},
+		{"no logger", func(c *Config) { c.Logger = nil }, "Logger is required"},
+		{"no authorizer", func(c *Config) { c.Authorizer = nil }, "Authorizer is required"},
+		{"no grafana", func(c *Config) { c.Grafana = nil }, "Grafana is required"},
+		{"no url", func(c *Config) { c.GrafanaURL = "" }, "Grafana URL is required"},
+		{"no creds", func(c *Config) { c.GrafanaAPIKey = "" }, "exactly one of APIKey or BasicAuth"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := New(c.cfg)
+			cfg := goodCfg()
+			c.mutate(&cfg)
+			_, err := New(cfg)
 			if err == nil {
-				t.Fatalf("New(%+v) = nil error, want %q", c.cfg, c.wantErr)
+				t.Fatalf("New(%+v) = nil error, want %q", cfg, c.wantErr)
 			}
 			if !strings.Contains(err.Error(), c.wantErr) {
 				t.Errorf("err = %v, want substring %q", err, c.wantErr)
@@ -87,14 +74,7 @@ func TestNew_RejectsMissingDependencies(t *testing.T) {
 
 func TestNew_DefaultsVersion(t *testing.T) {
 	// Empty Version must still construct (defaults to "dev").
-	az := stubResolver{}
-	_, err := New(Config{
-		Logger:     slog.Default(),
-		Authorizer: az,
-		Grafana:    stubGrafana{},
-		Bridge:     stubBridge(az),
-	})
-	if err != nil {
+	if _, err := New(goodCfg()); err != nil {
 		t.Fatalf("New with empty Version: %v", err)
 	}
 }

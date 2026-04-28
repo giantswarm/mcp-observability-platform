@@ -12,13 +12,9 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    - name: mcp
-      port: {{ .Values.service.mcpPort }}
-      targetPort: mcp
-      protocol: TCP
-    - name: metrics
-      port: {{ .Values.service.metricsPort }}
-      targetPort: metrics
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
       protocol: TCP
   selector:
     {{- include "mcp-observability-platform.selectorLabels" . | nindent 4 }}

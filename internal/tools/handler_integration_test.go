@@ -17,8 +17,8 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
 // newGrafanaJSONServer wraps handler with a default Content-Type:
@@ -34,29 +34,18 @@ func newGrafanaJSONServer(handler http.HandlerFunc) *httptest.Server {
 	}))
 }
 
-// fakeAuthz is a stand-in Authorizer for handler-integration tests. It
-// bypasses the Grafana user/org lookup (covered by authz tests) and hands
-// every caller the same fully-populated Organization — so tests can focus
-// on the tool-handler side of the pipeline.
-type fakeAuthz struct{ org authz.Organization }
-
-func (f fakeAuthz) RequireOrg(_ context.Context, _ string, _ authz.Role) (authz.Organization, error) {
-	return f.org, nil
-}
-
-func (f fakeAuthz) ListOrgs(_ context.Context) (map[string]authz.Organization, error) {
-	return map[string]authz.Organization{f.org.Name: f.org}, nil
-}
-
 // wireHandlerTest builds the full tool surface against an httptest.Server.
 // Returns the MCPServer (use GetTool to retrieve a handler) and a cleanup.
+// Uses authztest.Fake to bypass Grafana user/org lookup (covered by authz
+// tests) and hand every caller a fully-populated Organization — so tests
+// focus on the tool-handler side of the pipeline.
 func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 	t.Helper()
 	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: "test-token"})
 	if err != nil {
 		t.Fatalf("grafana.New: %v", err)
 	}
-	az := fakeAuthz{org: authz.Organization{
+	az := &authztest.Fake{Org: authz.Organization{
 		Name:        "acme",
 		DisplayName: "Acme",
 		OrgID:       1,
@@ -65,19 +54,17 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			Name:  "acme",
 			Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting},
 		}},
-		Datasources: []authz.Datasource{
+		Datasources: []grafana.Datasource{
 			{ID: 10, Name: "mimir-acme"},
 			{ID: 11, Name: "loki-acme"},
 			{ID: 12, Name: "tempo-acme"},
 			{ID: 13, Name: "alertmanager-acme"},
 		},
 	}}
-	br, err := upstream.NewBridge(az, gf, ts.URL, "test-token", nil)
-	if err != nil {
-		t.Fatalf("upstream.NewBridge: %v", err)
-	}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	RegisterAll(s, az, gf, br)
+	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil); err != nil {
+		t.Fatalf("RegisterAll: %v", err)
+	}
 	return s
 }
 
@@ -195,4 +182,3 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 		t.Errorf("body missing uid: %s", resultText(res))
 	}
 }
-

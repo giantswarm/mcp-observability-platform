@@ -1,9 +1,6 @@
-// Package tools — orgs.go: org + datasource tools.
-//
-// list_orgs is permanently local — it surfaces our GrafanaOrganization
-// CR access matrix (name, displayName, orgID, role, tenantTypes) and
-// has no upstream equivalent. list_datasources / get_datasource
-// delegate to upstream grafana/mcp-grafana via the bridge.
+// orgs.go — list_orgs (local) plus list_datasources / get_datasource
+// (delegated). list_orgs surfaces our GrafanaOrganization CR access
+// matrix and has no upstream equivalent.
 package tools
 
 import (
@@ -17,10 +14,9 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/tools/upstream"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bridge) {
+func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, b *gfBinder) {
 	s.AddTool(
 		mcp.NewTool("list_orgs",
 			ReadOnlyAnnotation(),
@@ -37,7 +33,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bri
 			type item struct {
 				Name        string   `json:"name"`
 				DisplayName string   `json:"displayName"`
-				OrgID       int64    `json:"orgID"`
+				OrgID       int64    `json:"orgId"`
 				Role        string   `json:"role"`
 				TenantTypes []string `json:"tenantTypes"`
 			}
@@ -78,6 +74,6 @@ func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, br *upstream.Bri
 		mcpgrafanatools.ListDatasources,
 		mcpgrafanatools.GetDatasource,
 	} {
-		s.AddTool(upstream.WithOrg(t.Tool), br.Wrap(authz.RoleViewer, t))
+		b.bindOrgTool(s, authz.RoleViewer, t)
 	}
 }

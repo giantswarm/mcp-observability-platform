@@ -1,4 +1,6 @@
-// Package tools — alerts.go: firing alerts from Alertmanager (list + single-fingerprint detail).
+// alerts.go — Alertmanager v2 firing-alert tools (local; upstream
+// covers OnCall, not Alertmanager). list_alerts paginates; get_alert
+// fetches one fingerprint.
 package tools
 
 import (
@@ -8,14 +10,12 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
 func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
@@ -25,7 +25,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 		mcp.NewTool("list_alerts",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); call get_alert with the fingerprint for full detail."),
-			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — either the Grafana displayName or the CR name. See list_orgs.")),
+			orgArg(),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'silenced' | 'inhibited' | 'all'")),
 			mcp.WithString("filter", mcp.Description("Alertmanager label matcher, e.g. 'alertname=~\"Kube.*\"' or 'severity=\"critical\"'")),
 			mcp.WithNumber("page", mcp.Description("0-based page index (default 0)")),
@@ -36,12 +36,10 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
-			defer cancel()
 
 			page := req.GetInt("page", 0)
 			pageSize := req.GetInt("pageSize", 0)
@@ -63,15 +61,15 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 	)
 }
 
-// registerAlertDetailTool exposes a per-alert read tool. Replaces the prior
-// alertmanager://org/{name}/alert/{fingerprint} resource (LLMs handle tools
-// far more reliably than resources).
+// registerAlertDetailTool exposes a per-fingerprint read after list_alerts.
+// Tool (not a resource) because LLM clients handle tool calls more reliably
+// than resource URI templates.
 func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
 	s.AddTool(
 		mcp.NewTool("get_alert",
 			ReadOnlyAnnotation(),
 			mcp.WithDescription("Return the full Alertmanager alert object for a single fingerprint: labels, annotations, timestamps, generatorURL, silencedBy/inhibitedBy. Use after list_alerts."),
-			mcp.WithString("org", mcp.Required(), mcp.Description("Organization — see list_orgs.")),
+			orgArg(),
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -83,12 +81,10 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, "alertmanager")
+			org, dsID, err := resolveDatasource(ctx, az, orgRef, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			ctx, cancel := withToolTimeout(ctx, 15*time.Second)
-			defer cancel()
 			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, filterAll, "")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
@@ -134,7 +130,6 @@ func fetchAlerts(ctx context.Context, gc grafana.Client, orgID, dsID int64, stat
 	if filter != "" {
 		q.Set("filter", filter)
 	}
-	observability.GrafanaProxyTotal.WithLabelValues("alertmanager/api/v2/alerts").Inc()
 	return gc.DatasourceProxy(ctx, grafanaOpts(ctx, orgID), dsID, "alertmanager/api/v2/alerts", q)
 }
 
@@ -175,6 +170,9 @@ func paginateAlerts(raw json.RawMessage, page, pageSize int) (any, error) {
 		Severity    string `json:"severity,omitempty"`
 		Fingerprint string `json:"fingerprint"`
 	}
+	// Out-of-range pages clamp to the empty tail rather than erroring —
+	// LLMs guess pageSize and we'd rather return zero items than confuse
+	// them with a hard error.
 	start := min(page*pageSize, len(alerts))
 	end := min(start+pageSize, len(alerts))
 	items := make([]item, 0, end-start)
@@ -206,7 +204,7 @@ func paginateAlerts(raw json.RawMessage, page, pageSize int) (any, error) {
 }
 
 // findAlertByFingerprint returns the full Alertmanager record for the given
-// fingerprint, or (nil, nil) if not found. Used by the alert-detail resource.
+// fingerprint, or (nil, nil) if not found. Used by get_alert.
 func findAlertByFingerprint(raw json.RawMessage, fingerprint string) (*amAlert, error) {
 	var alerts []amAlert
 	if err := json.Unmarshal(raw, &alerts); err != nil {

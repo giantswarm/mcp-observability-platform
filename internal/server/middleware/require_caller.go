@@ -9,21 +9,19 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-// RequireCaller fails tool calls that arrive without an authenticated caller
-// in context. Closes the framework-level "future tool forgets RequireOrg"
-// hole: per-org/role checks stay in handlers (they need the org argument
-// from tool params), but the "no caller at all" case is handled here so a
-// new tool added without explicit authz code is still gated.
+// RequireCaller fails tool calls that arrive without an authenticated
+// caller in context. It is a guard, not an authentication step — actual
+// auth happens in mcp-oauth's ValidateToken at the HTTP layer; this
+// middleware asserts the result reached us so a future tool added
+// without explicit authz code is still gated. Per-org/role checks stay
+// in handlers (they need the org arg from tool params).
 //
-// Wired between Instrument and ResponseCap so denials still emit metrics +
-// audit records and Classify() routes them as user_error (expected, not a
-// server bug). Returning an error result rather than a Go error keeps the
-// LLM-visible failure mode consistent with the rest of the tool surface.
+// Wired between Instrument and ResponseCap so denials still emit a span
+// and a tool_call audit line. Returning an error result (not a Go error)
+// keeps the LLM-visible failure mode consistent across the tool surface.
 //
-// Stdio transport bypasses OAuth; tool calls there will trip this guard
-// unless the session installs a caller via a stdio context func. That's
-// the same "stdio = local dev / trusted CLI" caveat already documented at
-// cmd/serve.go.
+// Stdio bypasses OAuth — tool calls there trip this guard unless the
+// session installs a caller via a stdio context func.
 func RequireCaller() server.ToolHandlerMiddleware {
 	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -27,3 +27,7 @@ data:
   # (e.g. "cursor,vscode"). Loopback HTTPS is always accepted. mcp-oauth
   # validates each scheme per RFC 3986.
   OAUTH_TRUSTED_REDIRECT_SCHEMES: {{ $oa.trustedRedirectSchemes | default (list) | join "," | quote }}
+  # MCP CLI clients (Claude Code, mcp-inspector, IDE plugins) register
+  # loopback redirect URIs per RFC 8252. Always-on for this MCP because
+  # the streamable-http transport is the canonical CLI integration path.
+  OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS: "true"
