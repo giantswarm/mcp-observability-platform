@@ -8,7 +8,6 @@ import (
 
 	oauth "github.com/giantswarm/mcp-oauth"
 	"github.com/giantswarm/mcp-oauth/oauthconfig"
-	"github.com/giantswarm/mcp-oauth/providers/dex"
 )
 
 // buildOAuthHandler wires the dex provider, the storage backend, the
@@ -40,14 +39,6 @@ func buildOAuthHandler(_ context.Context, logger *slog.Logger) (*oauth.Handler, 
 	if err != nil {
 		_ = storeClose()
 		return nil, nil, fmt.Errorf("oauth config: %w", err)
-	}
-	// oauthconfig.FromEnv only splits OAUTH_TRUSTED_AUDIENCES; the upstream
-	// server filters invalid entries with a warning, but a typo in a
-	// production deployment should be a startup error rather than silent
-	// SSO breakage. Hard-fail here.
-	if err := dex.ValidateAudiences(srvCfg.TrustedAudiences); err != nil {
-		_ = storeClose()
-		return nil, nil, fmt.Errorf("OAUTH_TRUSTED_AUDIENCES: %w", err)
 	}
 
 	if srvCfg.AllowInsecureHTTP {

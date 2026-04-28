@@ -67,12 +67,13 @@ spec:
 
             # Dex (IdP) — read by upstream oauthconfig.DexFromEnv. The
             # OAUTH_ prefix is the upstream contract, not optional.
+            # OAUTH_DEX_REDIRECT_URL is derived from OAUTH_ISSUER as
+            # ${OAUTH_ISSUER}/oauth/callback when unset (oauthconfig
+            # default since v0.2.117), so we don't template it here.
             - name: OAUTH_DEX_ISSUER_URL
               value: {{ .Values.oauth.dex.issuerUrl | quote }}
             - name: OAUTH_DEX_CLIENT_ID
               value: {{ .Values.oauth.dex.clientId | quote }}
-            - name: OAUTH_DEX_REDIRECT_URL
-              value: "{{ trimSuffix "/" .Values.oauth.issuer }}/oauth/callback"
             - name: OAUTH_DEX_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -84,7 +85,7 @@ spec:
             - name: OAUTH_STORAGE_BACKEND
               value: {{ .Values.oauth.storage.backend | quote }}
             {{- if eq .Values.oauth.storage.backend "valkey" }}
-            - name: OAUTH_VALKEY_ADDRESS
+            - name: OAUTH_VALKEY_ADDR
               value: {{ .Values.oauth.storage.valkey.addr | quote }}
             - name: OAUTH_VALKEY_TLS
               value: {{ .Values.oauth.storage.valkey.tls | quote }}
