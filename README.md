@@ -41,7 +41,7 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 
 | Tool               | Backend     | Notes                                                          |
 | ------------------ | ----------- | -------------------------------------------------------------- |
-| `list_orgs`        | (local CRs) | Minimal projection (name / displayName / orgID / role / tenantTypes) |
+| `list_orgs`        | (local CRs) | Minimal projection (name / displayName / orgId / role / tenantTypes) |
 | `list_datasources` | Grafana API | `/api/datasources`; projected to id / uid / name / type        |
 | `get_datasource`   | Grafana API | `/api/datasources/uid/{uid}` full detail                       |
 
