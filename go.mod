@@ -6,7 +6,7 @@ require (
 	github.com/giantswarm/mcp-oauth v0.2.117
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.3
-	github.com/grafana/mcp-grafana v0.12.1
+	github.com/grafana/mcp-grafana v0.13.0
 	github.com/mark3labs/mcp-go v0.49.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
