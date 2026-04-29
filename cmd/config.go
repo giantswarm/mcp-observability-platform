@@ -11,10 +11,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
-// config is the non-OAuth slice of process configuration. OAuth, Dex, valkey,
-// and encryption-key handling all flow through mcp-oauth/oauthconfig (see
-// oauth.go) — keeping that surface there avoids drift between this binary
-// and the upstream contract documented in the helm chart.
 type config struct {
 	GrafanaURL       string
 	GrafanaSAToken   string
@@ -36,8 +32,6 @@ type config struct {
 	LogFormat string
 }
 
-// loadConfig reads the non-OAuth env vars, validates them, and returns a
-// populated *config. Fails fast on missing required vars or unparseable values.
 func loadConfig() (*config, error) {
 	debug, err := envBool("DEBUG", false)
 	if err != nil {
@@ -88,7 +82,6 @@ func envOr(k, def string) string {
 	return def
 }
 
-// LogFormat values accepted by newLogger.
 const (
 	logFormatJSON = "json"
 	logFormatText = "text"
@@ -115,9 +108,8 @@ func resolveLogFormat() (string, error) {
 	return logFormatText, nil
 }
 
-// envDuration reads a time.Duration env var. "0"/"0s" maps to 0 (the
-// conventional "disable this feature" marker); a malformed value fails
-// startup rather than silently using the default.
+// envDuration reads a duration env var. "0"/"0s" disables; malformed
+// fails startup rather than falling back to def.
 func envDuration(k string, def time.Duration) (time.Duration, error) {
 	v := os.Getenv(k)
 	if v == "" {

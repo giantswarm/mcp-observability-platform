@@ -62,9 +62,6 @@ func validateTransport(transport string) error {
 	}
 }
 
-// runServe is the MCP server orchestration entry point. Phase-by-phase
-// helpers live in oauth.go / orglister.go / mux.go; runServe reads as a
-// single ordered build-then-serve flow.
 func runServe(_ *cobra.Command, _ []string) error {
 	if err := validateTransport(flagTransport); err != nil {
 		return err
