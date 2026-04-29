@@ -71,52 +71,69 @@ where alert-rule access is sensitive) without rebuilding.
 
 ### 5. Unified rule listing (Mimir + Loki, alerting + recording)
 
-Two gaps in today's `alerting_manage_rules` (delegated, Mimir-bound):
-recording rules are dropped at upstream's projection
-(`mcp-grafana@v0.12.1/tools/alerting_manage_rules_datasource.go:80-82`
-hits `case v1.RecordingRule: continue`), and Loki rules aren't exposed
-at all even though Loki's ruler serves the same Prometheus-shape
-endpoint as Mimir (`/prometheus/api/v1/rules`).
+Today's `alerting_manage_rules` (delegated, Mimir-bound) is broken end-to-end
+on the Giant Swarm setup. Three independent gaps stack:
 
-- Land an upstream PR against `grafana/mcp-grafana` that includes
-  recording rules in `convertPrometheusRulesToSummary`. The
-  `alertRuleSummary` projection already carries `Name`, `RuleGroup`,
-  `Labels`, `Health`, `LastEvaluation`; recording rules need only an
-  empty `State`/`For`/`Annotations`. Two-line code change + a
-  projection-shape test.
-- Once upstream releases, register `alerting_manage_rules` a second
-  time bound to `DSKindLoki`. Tool-name collision (both registrations
-  share `alerting_manage_rules`) means we either need an upstream-side
-  rename to a kind-neutral name, or a name-override hook in our binder.
-- Until then, recording rules and Loki rules are not exposed; operators
-  query the Grafana UI or the ruler endpoints directly.
+1. **Path doubling against the Mimir gateway.** observability-operator
+   provisions Grafana datasources with URL `http://mimir-gateway.mimir.svc/prometheus`
+   (the `/prometheus` is in the URL). Upstream
+   `mcp-grafana@v0.12.1/tools/alerting_manage_rules_datasource.go` hardcodes
+   `prometheus/api/v1/rules` on the path, so the proxied request becomes
+   `/prometheus/prometheus/api/v1/rules` — no nginx location matches → 404.
+   The right path against these datasources is `api/v1/rules` (relative to
+   the DS URL root). Mimir gateway nginx itself is fine — it routes
+   `/prometheus/api/v1/rules` to the ruler.
+   - **Fix**: upstream PR adding a config knob (or stripping the redundant
+     `prometheus/` when it's already in the DS URL). Confirmed against
+     graveler 2026-04-29: hitting `gs-mimir-giantswarm` with `api/v1/rules`
+     directly returns 665 rule groups; with `prometheus/api/v1/rules`
+     returns 404.
 
-### 6. Delegate Tempo tools to Tempo's MCP server
+2. **Binder picks the wrong Mimir DS.** `MatchKind("mimir")` returns the
+   first substring match, which on graveler is the multi-tenant `GS Mimir`
+   (id=2). The mono-tenant rulers (`GS Mimir (giantswarm)` id=18, `GS Mimir
+   (notempty)` id=21) are the ones that actually answer rule queries
+   without ambiguity, but the binder never reaches them. Multi-tenant
+   `gs-mimir` returns `400 no valid org id found` because the per-DS
+   X-Scope-OrgID isn't set for the gateway-routed ruler path.
+   - **Fix**: read-only fanout. `MatchKindAll(dss, kind)` returns every
+     mono-tenant ruler the org has access to; `alerting_manage_rules`
+     calls each and merges results, tagging each rule with its source
+     `datasource_uid` so the LLM can disambiguate. If only one mono-tenant
+     DS exists, hit just that one. Caller-supplied `datasource_uid` is the
+     escape hatch. Write ops (silences, future create/delete) must NOT
+     fanout — they pick a single tenant.
 
-Tempo ships its own MCP server (`query_frontend.mcp_server.enabled`,
-`/api/mcp`, streamable-HTTP) with `traceql-search`, `get-trace`,
-`get-attribute-names`, `get-attribute-values`,
-`traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`.
-`mcp-grafana@v0.12.1` already implements the MCP-to-MCP proxy via
-Grafana's datasource proxy (`proxied_tools.go`,
-`mcpgrafana.NewToolManager`, `WithProxiedTools(true)`).
+3. **Recording rules dropped at upstream's projection.**
+   `mcp-grafana@v0.12.1/tools/alerting_manage_rules_datasource.go:80-82`
+   hits `case v1.RecordingRule: continue`. The `alertRuleSummary`
+   projection already carries `Name`, `RuleGroup`, `Labels`, `Health`,
+   `LastEvaluation`; recording rules need only an empty
+   `State`/`For`/`Annotations`. Two-line upstream change + projection-shape
+   test.
 
-**Migration gain:** four tools we don't have today (`get-trace`,
-`traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`)
-plus vocab alignment (`tag` → `attribute`).
+After (1) and (3) land upstream and (2) lands locally, register
+`alerting_manage_rules` a second time bound to `DSKindLoki` for the
+mono-tenant Loki rulers (gateway path also `/prometheus/api/v1/rules`
+through the same gateway pattern). Tool-name collision means we either
+need an upstream-side rename to a kind-neutral name or a name-override
+hook in our binder.
 
-**Prereq:** Tempo's MCP server enabled uniformly across all tenants
-we serve. The per-tenant opt-in means partial coverage today —
-local handlers stay until that closes.
+**Note: this does NOT subsume our local Alertmanager v2 tools.** Upstream
+`mcp-grafana@v0.12.1` has no equivalent for `list_alerts`/`get_alert`
+(active alert instances via `/api/v2/alerts`). Its alerting tools are
+config-only (`alerting_manage_rules`, `alerting_manage_routing`,
+contact-points). Dropping our local AM tools needs a separate upstream PR
+adding AM v2 support, or stays out of scope.
 
-**Migration shape:** wire
-`mcpgrafana.NewToolManager(sm, mcpServer, WithProxiedTools(true))`
-at server build, call `InitializeAndRegisterServerTools(ctx)` (or the
-per-session variant for HTTP/SSE), delete `internal/tools/traces.go`.
-Open question to revisit at migration time: ToolManager registers
-tools as `tempo_traceql-search(datasourceUid, ...)`, not
-`query_traces(org, ...)` — accept upstream's surface, or build a
-wrapper that re-emits with our `org` convention.
+Until 1+2+3 land, recording rules and Loki rules are not exposed;
+operators query the Grafana UI or the ruler endpoints directly. Smoke
+test from a Grafana pod for a mono-tenant Mimir DS:
+
+```
+curl -H "X-Grafana-Org-Id: 2" -u "admin:$PW" \
+  http://localhost:3000/api/datasources/proxy/uid/gs-mimir-giantswarm/api/v1/rules
+```
 
 ## Out of scope (explicitly not doing)
 

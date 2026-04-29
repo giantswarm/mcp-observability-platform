@@ -33,9 +33,11 @@ are intentionally out of scope for this MCP.
 Most tool handlers delegate to upstream
 [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
 synthetic `org` argument and `gfBinder` resolves it to the org's
-OrgID + datasource UID before delegating. Categories without a usable
-upstream equivalent (Tempo, Alertmanager v2 alerts, `list_orgs`) stay
-local. See `internal/tools/doc.go` for the per-category rationale.
+OrgID + datasource UID before delegating. Tempo tools delegate to
+Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`,
+through a thin per-UID adapter that keeps the same `(org, …)` shape.
+Alertmanager v2 alerts and `list_orgs` stay local — no usable upstream
+equivalent. See `internal/tools/doc.go` for the per-category rationale.
 
 **Orgs & datasources**
 
@@ -86,13 +88,19 @@ local. See `internal/tools/doc.go` for the per-category rationale.
 | `list_loki_label_names`    | `loki/api/v1/labels`                                     |
 | `list_loki_label_values`   | `loki/api/v1/label/{label}/values`                       |
 
-**Traces (Tempo)**
+**Traces (Tempo)** — delegated to Tempo's own MCP server (`/api/mcp`) via Grafana's datasource proxy. Requires the `tempo-app` chart with `query_frontend.mcp_server.enabled=true`; if not reachable at startup the binder logs a warning and skips registration.
 
-| Tool                    | DS proxy path                       |
-| ----------------------- | ----------------------------------- |
-| `query_traces`          | `api/search`                        |
-| `list_tempo_tag_names`  | `api/v2/search/tags`                |
-| `list_tempo_tag_values` | `api/v2/search/tag/{tag}/values`    |
+Tools are exposed verbatim under their upstream Tempo MCP names (kebab-case):
+
+| Tool                      | Tempo MCP tool                |
+| ------------------------- | ----------------------------- |
+| `traceql-search`          | TraceQL search                |
+| `get-trace`               | Fetch a single trace by ID    |
+| `get-attribute-names`     | List attribute names by scope |
+| `get-attribute-values`    | List values for an attribute  |
+| `traceql-metrics-instant` | TraceQL metrics — instant     |
+| `traceql-metrics-range`   | TraceQL metrics — range       |
+| `docs-traceql`            | Embedded TraceQL reference    |
 
 **Alerts (Alertmanager)**
 
