@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	github.com/giantswarm/mcp-oauth v0.2.117
 	github.com/giantswarm/observability-operator v0.67.2
+	github.com/go-logr/logr v1.4.3
 	github.com/grafana/mcp-grafana v0.12.1
 	github.com/mark3labs/mcp-go v0.49.0
 	github.com/prometheus/client_golang v1.23.2
@@ -58,7 +59,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/analysis v0.24.3 // indirect
 	github.com/go-openapi/errors v0.22.7 // indirect

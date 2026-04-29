@@ -67,10 +67,10 @@ func TestRequireCaller_RejectsCallerWithEmptyFields(t *testing.T) {
 }
 
 func TestRequireCaller_PassesThroughAuthenticatedCaller(t *testing.T) {
-	ctx := ctxWithCaller(&providers.UserInfo{ID: "sub-1", Email: "alice@example.com"})
+	ctx := ctxWithCaller(&providers.UserInfo{ID: testSubject, Email: "alice@example.com"})
 	res, err := callRequireCaller(t, ctx, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if got := authz.CallerFromContext(ctx).Subject; got != "sub-1" {
-			t.Errorf("handler saw Subject=%q, want sub-1", got)
+		if got := authz.CallerFromContext(ctx).Subject; got != testSubject {
+			t.Errorf("handler saw Subject=%q, want %s", got, testSubject)
 		}
 		return mcp.NewToolResultText("ok"), nil
 	})
@@ -86,7 +86,7 @@ func TestRequireCaller_PassesThroughAuthenticatedCaller(t *testing.T) {
 }
 
 func TestRequireCaller_HandlerErrorPassesThrough(t *testing.T) {
-	ctx := ctxWithCaller(&providers.UserInfo{ID: "sub-1"})
+	ctx := ctxWithCaller(&providers.UserInfo{ID: testSubject})
 	wantErr := context.DeadlineExceeded
 	_, err := callRequireCaller(t, ctx, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return nil, wantErr

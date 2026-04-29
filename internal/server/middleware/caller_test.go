@@ -11,14 +11,16 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
+const testSubject = "sub-1"
+
 func TestExtractCaller_ReturnsAttachedIdentity(t *testing.T) {
-	ui := &providers.UserInfo{ID: "sub-1", Email: "alice@example.com", TokenSource: providers.TokenSourceOAuth}
+	ui := &providers.UserInfo{ID: testSubject, Email: "alice@example.com", TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
 	req = req.WithContext(oauth.ContextWithUserInfo(req.Context(), ui))
 
 	c := ExtractCaller(req)
-	if c.Subject != "sub-1" {
-		t.Errorf("Subject = %q, want sub-1", c.Subject)
+	if c.Subject != testSubject {
+		t.Errorf("Subject = %q, want %s", c.Subject, testSubject)
 	}
 	if c.Email != "alice@example.com" {
 		t.Errorf("Email = %q, want alice@example.com", c.Email)
@@ -39,14 +41,14 @@ func TestInjectCallerFromRequest_AttachesToContext(t *testing.T) {
 	// The HTTP→MCP bridge must copy mcp-oauth's UserInfo onto the MCP-level
 	// context so tool handlers can read the identity. Without it handlers
 	// see nothing and the resolver errors with ErrNoCallerIdentity.
-	ui := &providers.UserInfo{ID: "sub-1", Email: "alice@example.com", TokenSource: providers.TokenSourceOAuth}
+	ui := &providers.UserInfo{ID: testSubject, Email: "alice@example.com", TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
 	req = req.WithContext(oauth.ContextWithUserInfo(req.Context(), ui))
 
 	ctx := InjectCallerFromRequest(context.Background(), req)
 	c := authz.CallerFromContext(ctx)
-	if c.Subject != "sub-1" {
-		t.Errorf("Subject = %q, want sub-1", c.Subject)
+	if c.Subject != testSubject {
+		t.Errorf("Subject = %q, want %s", c.Subject, testSubject)
 	}
 	if c.TokenSource != "oauth" {
 		t.Errorf("TokenSource = %q, want oauth", c.TokenSource)

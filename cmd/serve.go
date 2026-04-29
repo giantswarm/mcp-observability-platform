@@ -13,8 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -79,6 +81,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
 	logger := newLogger(cfg.Debug || flagDebug, cfg.LogFormat)
+	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
 	orgLister, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
 	if err != nil {
