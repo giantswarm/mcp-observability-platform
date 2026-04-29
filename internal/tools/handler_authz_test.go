@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	oauth "github.com/giantswarm/mcp-oauth"
-	"github.com/giantswarm/mcp-oauth/providers"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -39,7 +37,7 @@ func (r staticOrgLister) List(context.Context) ([]authz.Organization, error) {
 type stubGrafanaForAuthz struct {
 	grafana.Client // embedded interface — unused methods nil-panic
 	users          map[string]int64
-	memberships    map[int64][]grafana.UserOrgMembership
+	userOrgs       map[int64][]grafana.UserOrgMembership
 }
 
 func (s stubGrafanaForAuthz) LookupUser(_ context.Context, key string) (*grafana.User, error) {
@@ -50,22 +48,21 @@ func (s stubGrafanaForAuthz) LookupUser(_ context.Context, key string) (*grafana
 }
 
 func (s stubGrafanaForAuthz) UserOrgs(_ context.Context, id int64) ([]grafana.UserOrgMembership, error) {
-	return s.memberships[id], nil
+	return s.userOrgs[id], nil
 }
 
-// callerCtx puts a UserInfo on ctx via the same path PromoteOAuthCaller
-// uses at the HTTP boundary, so the real Authorizer can derive the
-// caller from CallerFromContext.
+// callerCtx attaches a caller identity to ctx so the real Authorizer can
+// derive the caller from CallerFromContext.
 func callerCtx(email string) context.Context {
-	r := httptest.NewRequest("POST", "/mcp", nil)
-	r = r.WithContext(oauth.ContextWithUserInfo(r.Context(),
-		&providers.UserInfo{ID: "sub-" + email, Email: email}))
-	return authz.PromoteOAuthCaller(context.Background(), r)
+	return authz.WithCaller(context.Background(), authz.Caller{
+		Subject: "sub-" + email,
+		Email:   email,
+	})
 }
 
 // wireAuthzDenyTest is the non-bypass equivalent of wireHandlerTest: the
 // real Authorizer is constructed against a fake registry and a fake
-// Grafana lookup that returns a user with NO org memberships. Every tool
+// Grafana lookup that returns a user with NO org roles. Every tool
 // call with org="acme" must therefore fire ErrNotAuthorised. The
 // downstream Grafana httptest.Server is wired to fail the test on any
 // request, proving authz fires before any tool-side proxy call.
@@ -73,8 +70,8 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 	t.Helper()
 	// Authorizer client (LookupUser + UserOrgs).
 	azClient := stubGrafanaForAuthz{
-		users:       map[string]int64{callerEmail: 1},
-		memberships: map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, zero orgs
+		users:    map[string]int64{callerEmail: 1},
+		userOrgs: map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, zero orgs
 	}
 	az := authz.NewAuthorizer(
 		staticOrgLister{orgs: []authz.Organization{{
@@ -182,7 +179,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 
 // TestHandler_Authz_ListOrgsReturnsEmptyForUnauthorisedCaller covers the
 // list_orgs special case: it surfaces what the caller CAN see, which is
-// the empty list when they have no memberships. Different shape from the
+// the empty list when they have no org roles. Different shape from the
 // deny-path test above, same authz boundary.
 func TestHandler_Authz_ListOrgsReturnsEmptyForUnauthorisedCaller(t *testing.T) {
 	const caller = "alice@example.com"

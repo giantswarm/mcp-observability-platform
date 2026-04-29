@@ -297,9 +297,9 @@ func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, 
 	return out.UID, nil
 }
 
-// UserOrgs returns the org memberships Grafana has computed for the
-// given user id (Admin/Editor/Viewer per org, as resolved from SSO
-// org_mapping at the user's last login). Server-admin only.
+// UserOrgs returns the per-org roles Grafana has computed for the given
+// user id (Admin/Editor/Viewer per org, as resolved from SSO org_mapping
+// at the user's last login). Server-admin only.
 func (c *client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error) {
 	if userID <= 0 {
 		return nil, errors.New("grafana: userID is required")

@@ -83,7 +83,7 @@ func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
-		mcpsrv.WithHTTPContextFunc(authz.PromoteOAuthCaller),
+		mcpsrv.WithHTTPContextFunc(middleware.PromoteOAuthCaller),
 	)
 }
 
@@ -95,6 +95,6 @@ func SSEHandler(mcp *mcpsrv.MCPServer) http.Handler {
 		mcp,
 		mcpsrv.WithSSEEndpoint("/sse"),
 		mcpsrv.WithMessageEndpoint("/message"),
-		mcpsrv.WithSSEContextFunc(authz.PromoteOAuthCaller),
+		mcpsrv.WithSSEContextFunc(middleware.PromoteOAuthCaller),
 	)
 }

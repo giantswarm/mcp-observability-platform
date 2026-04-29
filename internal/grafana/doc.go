@@ -1,7 +1,7 @@
 // Package grafana is the Grafana adapter for this MCP. It carries:
 //
 //   - A thin HTTP client (client.go) for operations not delegated to
-//     upstream's per-call GrafanaClient: user / membership lookups
+//     upstream's per-call GrafanaClient: user / org-role lookups
 //     (LookupUser, UserOrgs); datasource UID lookup
 //     (LookupDatasourceUIDByID); the server-admin self-check
 //     (VerifyServerAdmin); and a generic datasource passthrough

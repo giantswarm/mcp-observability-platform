@@ -103,10 +103,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	logger.Info("Grafana server-admin credential verified")
 
-	// authz uses Grafana as the source of truth for org membership. Positive
-	// entries cache 30s; negative ones (user-not-found, empty memberships)
-	// use a 5s TTL so a mid-SSO-outage failure doesn't lock anyone out for
-	// half a minute.
+	// authz uses Grafana as the source of truth for per-org roles. Positive
+	// entries cache 30s; negative ones (user-not-found, no roles) use a 5s
+	// TTL so a mid-SSO-outage failure doesn't lock anyone out for half a
+	// minute.
 	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL)
 

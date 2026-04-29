@@ -9,21 +9,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/giantswarm/mcp-oauth/providers"
-
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // ctxWithCaller builds a context carrying the given caller via the
-// production withCaller path, so tests exercise the same context
-// propagation as runtime callers. Caller.Empty() requires a non-empty
-// Subject; most fixtures only care about the email-based Grafana lookup,
-// so default Subject from Email when the test didn't set one.
+// production WithCaller path, so tests exercise the same context
+// propagation as runtime callers. Caller.Authenticated() requires a
+// non-empty Subject; most fixtures only care about the email-based
+// Grafana lookup, so default Subject from Email when the test didn't
+// set one.
 func ctxWithCaller(c Caller) context.Context {
 	if c.Subject == "" && c.Email != "" {
 		c.Subject = "sub-" + c.Email
 	}
-	return withCaller(context.Background(), &providers.UserInfo{Email: c.Email, ID: c.Subject})
+	return WithCaller(context.Background(), c)
 }
 
 // newOrg builds an Organization fixture. tenantTypes populates the single
@@ -81,7 +80,7 @@ func mustNewAuthorizerWithTTL(_ *testing.T, reg OrgLister, g grafana.Client, pos
 type fakeGrafana struct {
 	grafana.Client                                       // nil — unused methods panic
 	users          map[string]int64                      // email/login -> id
-	orgs           map[int64][]grafana.UserOrgMembership // id -> memberships
+	orgs           map[int64][]grafana.UserOrgMembership // id -> per-org roles
 	calls          struct{ lookup, userOrgs int }
 }
 
@@ -231,7 +230,7 @@ func TestRoleFromGrafana(t *testing.T) {
 		"weird":  RoleNone, // unknown -> deny
 		// "Grafana Admin" is the server-admin role on /api/users/{id},
 		// not a per-org role string. roleFromGrafana parses per-org
-		// memberships only, so an unrelated string lookup must NOT
+		// role assignments only, so an unrelated string lookup must NOT
 		// elevate to RoleAdmin (catches a regression that re-adds the
 		// alias).
 		"Grafana Admin": RoleNone,
@@ -451,12 +450,12 @@ func TestAuthorizer_Role_AtLeast(t *testing.T) {
 	}
 }
 
-func TestCaller_IdentityAndEmpty(t *testing.T) {
-	if !(Caller{}).Empty() {
-		t.Error("zero Caller should be Empty")
+func TestCaller_IdentityAndAuthenticated(t *testing.T) {
+	if (Caller{}).Authenticated() {
+		t.Error("zero Caller should not be Authenticated")
 	}
-	if (Caller{Subject: "x"}).Empty() {
-		t.Error("with Subject should not be Empty")
+	if !(Caller{Subject: "x"}).Authenticated() {
+		t.Error("with Subject should be Authenticated")
 	}
 	if got := (Caller{Email: "e", Subject: "s"}).Identity(); got != "e" {
 		t.Errorf("Identity email-preferred = %q, want e", got)
@@ -547,7 +546,7 @@ func mapKeys(m map[string]Organization) []string {
 
 // TestAuthorizer_PositiveCacheTTL_Expires proves a positive cache entry
 // is re-fetched after the configured TTL elapses — the 30s positive-cache
-// TTL is the documented freshness guarantee for org membership. Uses 20ms
+// TTL is the documented freshness guarantee for per-org roles. Uses 20ms
 // TTL + 60ms sleep so the test runs well under 100ms while leaving
 // headroom against scheduler jitter.
 func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
@@ -585,7 +584,7 @@ func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 // (LookupUser returns 404 → nil user) must be re-checked sooner than
 // the positive window so they don't wait the full 30s after their
 // first Grafana login. Distinct paths: nil-user (this test) vs
-// empty-memberships (other test below).
+// no-roles (other test below).
 //
 // A nil-user resolution surfaces ErrCallerUnknownToGrafana so callers
 // can distinguish "log into Grafana once" from "not authorised".
@@ -617,10 +616,10 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 	}
 }
 
-// TestAuthorizer_NegativeCacheTTL_Expires_EmptyMemberships covers the
-// other negative path: user found but with no org memberships. Same
+// TestAuthorizer_NegativeCacheTTL_Expires_NoRoles covers the
+// other negative path: user found but with no per-org roles. Same
 // short-TTL semantics as the not-yet-provisioned case.
-func TestAuthorizer_NegativeCacheTTL_Expires_EmptyMemberships(t *testing.T) {
+func TestAuthorizer_NegativeCacheTTL_Expires_NoRoles(t *testing.T) {
 	g := &fakeGrafana{
 		users: map[string]int64{"u@e.com": 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, no orgs
@@ -647,7 +646,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_EmptyMemberships(t *testing.T) {
 // GrafanaOrganization removed from the registry is invisible to
 // RequireOrg / ListOrgs IMMEDIATELY, not after the per-caller cache
 // TTL. The registry list is read fresh on every authz call, so a
-// caller with a cached membership for org X cannot still RequireOrg
+// caller with a cached role for org X cannot still RequireOrg
 // it after X is deleted.
 func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
@@ -690,22 +689,22 @@ func TestRequireOrg_RejectsRoleNone(t *testing.T) {
 	}
 }
 
-// TestCallerEmpty_RejectsSubjectlessCaller proves a Caller with only an
-// email and no subject is treated as empty — email is unsafe as a cache
-// key (mutable in some IdPs, mappable to a different user) so cacheKey
-// trusts only Subject.
-func TestCallerEmpty_RejectsSubjectlessCaller(t *testing.T) {
-	if !(Caller{Email: "u@e.com"}).Empty() {
-		t.Error("Caller with email and no Subject must be Empty (subject required)")
+// TestCallerAuthenticated_RequiresSubject proves a Caller with only an
+// email and no subject is treated as unauthenticated — email is unsafe as
+// a cache key (mutable in some IdPs, mappable to a different user) so the
+// cache trusts only Subject.
+func TestCallerAuthenticated_RequiresSubject(t *testing.T) {
+	if (Caller{Email: "u@e.com"}).Authenticated() {
+		t.Error("Caller with email and no Subject must NOT be Authenticated (subject required)")
 	}
-	if !(Caller{}).Empty() {
-		t.Error("zero Caller must be Empty")
+	if (Caller{}).Authenticated() {
+		t.Error("zero Caller must NOT be Authenticated")
 	}
-	if (Caller{Subject: "sub-1"}).Empty() {
-		t.Error("Caller with Subject must NOT be Empty")
+	if !(Caller{Subject: "sub-1"}).Authenticated() {
+		t.Error("Caller with Subject must be Authenticated")
 	}
-	if (Caller{Email: "u@e.com", Subject: "sub-1"}).Empty() {
-		t.Error("Caller with both Subject and Email must NOT be Empty")
+	if !(Caller{Email: "u@e.com", Subject: "sub-1"}).Authenticated() {
+		t.Error("Caller with both Subject and Email must be Authenticated")
 	}
 }
 

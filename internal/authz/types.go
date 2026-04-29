@@ -31,9 +31,9 @@ type Tenant struct {
 //
 // An Organization straight from OrgLister.List carries Role = RoleNone
 // (pre-resolution). The authorizer fills Role from the caller's Grafana
-// membership before returning to tool handlers, so any Organization a
-// handler sees has been authorised (Role ≥ RoleViewer). Code that calls
-// OrgLister.List directly (the authorizer only) MUST NOT treat a
+// role assignment before returning to tool handlers, so any Organization
+// a handler sees has been authorised (Role ≥ RoleViewer). Code that
+// calls OrgLister.List directly (the authorizer only) MUST NOT treat a
 // RoleNone entry as authorised.
 //
 // Handlers receive Organization values from RequireOrg / ListOrgs;
@@ -66,9 +66,7 @@ func (o Organization) FindDatasource(kind grafana.DatasourceKind) (grafana.Datas
 	return grafana.MatchKind(o.Datasources, kind)
 }
 
-// cloneTenants returns a deep copy of a Tenant slice: the outer slice and
-// each entry's Types slice are newly allocated so handler-side mutations
-// cannot escape into the cache.
+// cloneTenants deep-copies the slice and each entry's Types slice.
 func cloneTenants(in []Tenant) []Tenant {
 	if len(in) == 0 {
 		return nil

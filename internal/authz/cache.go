@@ -2,12 +2,11 @@ package authz
 
 import (
 	"slices"
-	"strings"
 	"time"
 )
 
 // Cache defaults. Positive entries are cached `DefaultCacheTTL`; negative
-// entries (user-not-found, empty-memberships) use `DefaultNegativeCacheTTL`.
+// entries (user-not-found, no roles) use `DefaultNegativeCacheTTL`.
 // Negative TTL is deliberately short so a mid-SSO-outage failed lookup
 // doesn't lock a user out for the full positive window.
 const (
@@ -15,19 +14,29 @@ const (
 	DefaultNegativeCacheTTL = 5 * time.Second
 )
 
+// cacheStatus distinguishes the two negative shapes a cached entry can
+// have. statusUnknownToGrafana means the IdP knows the user but Grafana
+// doesn't — surfaced as ErrCallerUnknownToGrafana so list_orgs can tell
+// them to log into Grafana once. statusKnown covers everything else,
+// including "user has zero org roles".
+type cacheStatus int
+
+const (
+	statusUnknownToGrafana cacheStatus = iota
+	statusKnown
+)
+
 // cacheEntry is one authorizer-cache entry. Holds only Grafana-side data
-// (per-org Role memberships) — the registry join is recomputed from a
+// (per-org Role assignments) — the registry join is recomputed from a
 // fresh OrgLister.List on every RequireOrg / ListOrgs call so a deleted
 // org disappears from a caller's accessible set immediately instead of
-// hanging around for the rest of the cached caller's TTL.
-//
-// memberships nil → user not yet provisioned in Grafana (negative entry,
-// short TTL); empty non-nil → user found, no org memberships (also
-// negative). expiresAt is per-entry so positive and negative entries can
-// age out at different rates.
+// hanging around for the rest of the cached caller's TTL. expiresAt is
+// per-entry so positive and negative entries can age out at different
+// rates.
 type cacheEntry struct {
-	expiresAt   time.Time
-	memberships map[int64]Role
+	expiresAt time.Time
+	status    cacheStatus
+	roles     map[int64]Role
 }
 
 // cacheLookup returns the cached entry for key if one exists and is still
@@ -43,16 +52,17 @@ func (a *authorizer) cacheLookup(key string) (cacheEntry, bool) {
 }
 
 // cacheStore writes an entry under key, picking the positive or negative
-// TTL based on memberships emptiness. ttl<=0 disables caching for that
+// TTL based on status + emptiness. ttl<=0 disables caching for that
 // entry (used by tests that count upstream calls).
-func (a *authorizer) cacheStore(key string, memberships map[int64]Role) cacheEntry {
+func (a *authorizer) cacheStore(key string, status cacheStatus, roles map[int64]Role) cacheEntry {
 	ttl := a.cacheTTL
-	if len(memberships) == 0 {
+	if status == statusUnknownToGrafana || len(roles) == 0 {
 		ttl = a.negativeCacheTTL
 	}
 	entry := cacheEntry{
-		expiresAt:   time.Now().Add(ttl),
-		memberships: memberships,
+		expiresAt: time.Now().Add(ttl),
+		status:    status,
+		roles:     roles,
 	}
 	if ttl <= 0 {
 		return entry
@@ -63,42 +73,15 @@ func (a *authorizer) cacheStore(key string, memberships map[int64]Role) cacheEnt
 	return entry
 }
 
-// cacheKey returns the key under which Caller's access is cached. OIDC
-// subject is the stable, non-spoofable identifier — and the only thing
-// the cache trusts. resolveMemberships rejects empty-subject callers
-// (Caller.Empty()) before this is reached, so the key is always non-empty.
-func cacheKey(c Caller) string {
-	return "sub:" + c.Subject
-}
-
-// buildOrgRefSet returns the set of lowercased Name + DisplayName values,
-// used by RequireOrg to disambiguate "org not found" vs "not authorised"
-// without a second upstream call.
-func buildOrgRefSet(orgs []Organization) map[string]struct{} {
-	out := make(map[string]struct{}, len(orgs)*2)
-	for _, o := range orgs {
-		out[strings.ToLower(o.Name)] = struct{}{}
-		if o.DisplayName != "" {
-			out[strings.ToLower(o.DisplayName)] = struct{}{}
-		}
-	}
-	return out
-}
-
-// cloneOrganization returns a deep copy suitable for handing to external
-// callers. Two concurrent callers projecting the same OrgLister.List
-// slice must not be able to corrupt each other's view, so Tenants and
-// Datasources are deep-copied. Strings and value-typed fields are copied
-// by the struct-copy idiom at the call site.
+// cloneOrganization deep-copies the Tenants and Datasources slices so
+// handler-side mutations cannot leak back into the cached registry view.
 func cloneOrganization(o Organization) Organization {
 	o.Tenants = cloneTenants(o.Tenants)
 	o.Datasources = slices.Clone(o.Datasources)
 	return o
 }
 
-// cloneOrganizations deep-clones every Organization value in the map.
-// maps.Clone isn't a fit — it's shallow, and an Organization carries
-// Tenants/Datasources slices.
+// cloneOrganizations deep-clones every Organization in the map.
 func cloneOrganizations(in map[string]Organization) map[string]Organization {
 	if in == nil {
 		return nil
