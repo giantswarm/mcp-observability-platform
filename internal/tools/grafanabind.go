@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"sync"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,16 +31,28 @@ const datasourceUIDArg = "datasourceUid"
 // authz, per-request Grafana context injection, and (for
 // datasource-scoped tools) datasource UID resolution.
 //
-// upstream is a single shared client; mcp-grafana's RoundTrippers read
-// OrgID/ExtraHeaders/Auth from GrafanaConfigFromContext on each call,
-// so per-caller state moves through ctx via attachGrafana.
+// One mcp-grafana GrafanaClient is cached per (resolved) OrgID. Two
+// reasons for that, both in mcpgrafana.OrgIDRoundTripper:
+//   - On HTTP-style calls the round-tripper reads OrgID from
+//     GrafanaConfigFromContext(req.Context()) and overrides per-request.
+//   - On openapi-runtime calls (e.g. c.Datasources.GetDataSources()),
+//     params.Context is nil and the runtime falls back to
+//     context.Background(), so the override branch never fires — only
+//     the orgID baked at construction (t.orgID) reaches the wire.
+//
+// Caching by OrgID makes the second path correct: every per-org client
+// has the right t.orgID baked in, so /api/datasources answers for the
+// caller's org rather than the SA's home org. Cache is unbounded, but
+// |orgs| is small (per Grafana install).
 type gfBinder struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
 	url        string
 	apiKey     string
 	basicAuth  *url.Userinfo
-	upstream   *mcpgrafana.GrafanaClient
+
+	clientsMu sync.Mutex
+	clients   map[int64]*mcpgrafana.GrafanaClient // key: OrgID
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
@@ -61,11 +74,23 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 		url:        grafanaURL,
 		apiKey:     apiKey,
 		basicAuth:  basicAuth,
-		// Eager: the /api/frontend/settings round-trip is no worse than
-		// VerifyServerAdmin already paying at startup, and lazy-init lets
-		// the first request's ctx bleed into the long-lived client.
-		upstream: mcpgrafana.NewGrafanaClient(context.Background(), grafanaURL, apiKey, basicAuth),
+		clients:    make(map[int64]*mcpgrafana.GrafanaClient),
 	}, nil
+}
+
+// clientFor returns the GrafanaClient with t.orgID == orgID baked in,
+// creating + caching one on miss. The /api/frontend/settings probe
+// inside NewGrafanaClient runs once per (new) OrgID.
+func (b *gfBinder) clientFor(orgID int64) *mcpgrafana.GrafanaClient {
+	b.clientsMu.Lock()
+	defer b.clientsMu.Unlock()
+	if c, ok := b.clients[orgID]; ok {
+		return c
+	}
+	cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth, OrgID: orgID}
+	c := mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.apiKey, b.basicAuth)
+	b.clients[orgID] = c
+	return c
 }
 
 // bindOrgTool registers an upstream tool that needs only org→OrgID
@@ -163,10 +188,11 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, kind grafa
 	}
 }
 
-// attachGrafana stashes our GrafanaConfig and the shared upstream
-// GrafanaClient on ctx. mcp-grafana v0.12.1's RoundTrippers read OrgID
-// and ExtraHeaders from this config per-request, so the same client is
-// safe to share across orgs.
+// attachGrafana stashes a per-request GrafanaConfig and the per-OrgID
+// GrafanaClient on ctx. The HTTP-style mcp-grafana round-trippers read
+// OrgID/ExtraHeaders from the config; the openapi-runtime path can't
+// (its req.Context() is background), but the per-OrgID client baked
+// t.orgID at construction so the right header still ships.
 func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Context {
 	cfg := mcpgrafana.GrafanaConfig{
 		URL:       b.url,
@@ -180,7 +206,7 @@ func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Conte
 		cfg.ExtraHeaders = map[string]string{"X-Grafana-User": subj}
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	ctx = mcpgrafana.WithGrafanaClient(ctx, b.upstream)
+	ctx = mcpgrafana.WithGrafanaClient(ctx, b.clientFor(orgID))
 	return ctx
 }
 

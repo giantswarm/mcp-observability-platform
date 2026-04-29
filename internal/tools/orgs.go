@@ -1,6 +1,12 @@
 // orgs.go — list_orgs (local) plus list_datasources / get_datasource
 // (delegated). list_orgs surfaces our GrafanaOrganization CR access
 // matrix and has no upstream equivalent.
+//
+// list_datasources / get_datasource go through gfBinder.bindOrgTool.
+// The per-call X-Grafana-Org-Id is correct because gfBinder caches
+// one mcp-grafana GrafanaClient per OrgID with t.orgID baked in — see
+// gfBinder docstring for the openapi-runtime fallback that makes the
+// per-call ctx override path unreliable.
 package tools
 
 import (
