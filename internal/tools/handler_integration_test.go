@@ -8,6 +8,7 @@ package tools
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,12 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
+
+// emptyOrgLister returns no orgs, so the Tempo binder finds no seed
+// datasource and skips registration. Tempo's MCP server isn't runnable
+// in-process; integration coverage of the binder is the deploy-time
+// smoke test in the PR description.
+var emptyOrgLister = staticOrgLister{}
 
 // newGrafanaJSONServer wraps handler with a default Content-Type:
 // application/json so the production fetchJSON content-type guard is
@@ -62,7 +69,7 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 		},
 	}}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil); err != nil {
+	if err := RegisterAll(context.Background(), s, slog.Default(), az, emptyOrgLister, gf, ts.URL, "test-token", nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s

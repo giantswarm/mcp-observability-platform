@@ -57,9 +57,15 @@ security boundaries are, and where to add a new tool.
               │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
               │     5. delegate to upstream grafana/mcp-grafana handler        │
               │                                                                │
-              │ Local tools (Tempo, Alertmanager v2) call az.RequireOrg then  │
+              │ Local tools (Alertmanager v2) call az.RequireOrg then          │
               │ grafana.Client.DatasourceProxy directly. list_orgs uses        │
               │ az.ListOrgs (no datasource).                                   │
+              │                                                                │
+              │ Tempo tools delegate to Tempo's own MCP server                 │
+              │ (internal/tools/tempo.go): registered via                      │
+              │ gfBinder.bindDatasourceTool with a per-UID ProxiedClient cache │
+              │ behind the handler. Endpoint:                                  │
+              │ /api/datasources/proxy/uid/<uid>/api/mcp.                      │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
@@ -79,7 +85,7 @@ security boundaries are, and where to add a new tool.
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
 | `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `LookupDatasourceUIDByID`, `DatasourceProxy`) plus `Datasource` and `DatasourceKind` (`MatchKind` substring matcher). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
-| `internal/tools/` | One file per tool category. Delegated to upstream: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (plus the delegated datasource tools in `orgs.go`). Local: `orgs.go` (`list_orgs`), `alerts.go`, `traces.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). |
+| `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (plus the delegated datasource tools in `orgs.go`). Delegated to Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`, registered through the same `gfBinder.bindDatasourceTool` path: `tempo.go`. Local: `orgs.go` (`list_orgs`), `alerts.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -127,10 +133,11 @@ only"; do not expose stdio to untrusted users.
 **First, check upstream.** Before adding a local handler, look at
 `grafana/mcp-grafana` for a tool with the same intent. If it exists,
 register it via `gfBinder` (Loki/Prometheus/dashboards/alert-rules all
-do this). This inherits upstream maintenance for free; the *only*
-place we add local code is when upstream has no equivalent (today:
-Tempo, Alertmanager v2, `list_orgs` — see `internal/tools/doc.go` for
-the rationale per category).
+do this). For Tempo, the corresponding tool likely already lives in
+Tempo's own MCP server (`/api/mcp`); the `tempo.go` bridge picks it up
+automatically. The *only* place we add local code is when neither
+upstream surface has an equivalent (today: Alertmanager v2, `list_orgs` —
+see `internal/tools/doc.go` for the rationale per category).
 
 ### Path A — delegate to an upstream tool (preferred)
 

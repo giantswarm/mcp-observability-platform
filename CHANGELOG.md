@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Tempo tools delegate to Tempo's own MCP server (`/api/mcp`) via Grafana's datasource proxy. `query_traces` and `list_tempo_tag_*` become `traceql-search`, `get-trace`, `get-attribute-names`, `get-attribute-values`, `traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`. Requires `tempo-app` chart with `query_frontend.mcp_server.enabled=true`; if not reachable at startup the binder logs a warning and skips registration.
+
 ## [0.1.0] - 2026-04-29
 
 ### Added
