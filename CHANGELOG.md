@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-29
+
 ### Added
 
 - Read-only MCP tool surface across Grafana, Mimir, Loki, Tempo, and Alertmanager v2. Most tools delegate to upstream `grafana/mcp-grafana` via `gfBinder` (`internal/tools/grafanabind.go`), which adds the `org` argument and resolves OrgID + datasource UID server-side; Tempo, Alertmanager v2, and `list_orgs` stay local.
@@ -15,4 +17,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/tree/main
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/giantswarm/mcp-observability-platform/releases/tag/v0.1.0
