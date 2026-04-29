@@ -11,10 +11,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
-// config is the non-OAuth slice of process configuration. OAuth, Dex, valkey,
-// and encryption-key handling all flow through mcp-oauth/oauthconfig (see
-// oauth.go) — keeping that surface there avoids drift between this binary
-// and the upstream contract documented in the helm chart.
 type config struct {
 	GrafanaURL       string
 	GrafanaSAToken   string

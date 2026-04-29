@@ -10,11 +10,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-// readyzChecker probes only pod-local state. Shared downstreams
-// (Grafana, Dex) are excluded on purpose: a flap there would fail
-// /readyz on every replica at once and remove the Service's last
-// endpoint. cacheAlive guards against the informer goroutine having
-// exited — without it, List would silently return stale snapshots.
+// readyzChecker probes only pod-local state and ensures the pods can list grafana organization CRs.
 func readyzChecker(lister authz.OrgLister, cacheAlive *atomic.Bool) healthz.Checker {
 	return func(req *http.Request) error {
 		if !cacheAlive.Load() {
