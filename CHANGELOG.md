@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `list_datasources`, `get_datasource`, and any future delegated upstream tool that goes through grafana-openapi-client-go's no-ctx convenience methods now respect the caller's `org`. `gfBinder` now caches one `mcp-grafana` `GrafanaClient` per resolved OrgID, so `OrgIDRoundTripper` ships the correct `X-Grafana-Org-Id` even when go-openapi's runtime falls back to `context.Background()` and the per-call ctx override path can't fire.
+
 ### Changed
 
 - Tempo tools delegate to Tempo's own MCP server (`/api/mcp`) via Grafana's datasource proxy. `query_traces` and `list_tempo_tag_*` become `traceql-search`, `get-trace`, `get-attribute-names`, `get-attribute-values`, `traceql-metrics-instant`, `traceql-metrics-range`, `docs-traceql`. Requires `tempo-app` chart with `query_frontend.mcp_server.enabled=true`; if not reachable at startup the binder logs a warning and skips registration.
