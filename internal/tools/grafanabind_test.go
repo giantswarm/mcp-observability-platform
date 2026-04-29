@@ -14,9 +14,6 @@ import (
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	oauth "github.com/giantswarm/mcp-oauth"
-	"github.com/giantswarm/mcp-oauth/providers"
-
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -62,12 +59,9 @@ func (f *fakeGrafana) LookupDatasourceUIDByID(_ context.Context, opts grafana.Re
 	return f.uid, nil
 }
 
-// oauthCtx attaches an OAuth caller to ctx using the same plumbing the
-// HTTP boundary uses. authz.CallerSubject(ctx) then returns sub.
+// oauthCtx attaches a caller identity to ctx; CallerSubject(ctx) returns sub.
 func oauthCtx(sub, email string) context.Context {
-	r := httptest.NewRequest("POST", "/mcp", nil)
-	r = r.WithContext(oauth.ContextWithUserInfo(r.Context(), &providers.UserInfo{ID: sub, Email: email}))
-	return authz.PromoteOAuthCaller(context.Background(), r)
+	return authz.WithCaller(context.Background(), authz.Caller{Subject: sub, Email: email})
 }
 
 // stubTool builds a minimal mcpgrafana.Tool whose handler records what the

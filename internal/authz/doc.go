@@ -18,7 +18,7 @@
 // # Layout
 //
 //   - authorizer.go — Authorizer + RequireOrg / ListOrgs.
-//   - cache.go      — TTL'd per-caller membership cache + clone discipline.
+//   - cache.go      — TTL'd per-caller role cache + clone discipline.
 //   - role.go       — Role enum.
 //   - caller.go     — Caller + OrgLister port + context helpers.
 //   - types.go      — Organization + Tenant + Datasource + TenantType domain

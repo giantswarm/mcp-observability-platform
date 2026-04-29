@@ -2,11 +2,9 @@ package middleware
 
 import (
 	"context"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
-	oauth "github.com/giantswarm/mcp-oauth"
 	"github.com/giantswarm/mcp-oauth/providers"
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -22,9 +20,14 @@ func callRequireCaller(t *testing.T, ctx context.Context, handler func(context.C
 }
 
 func ctxWithCaller(ui *providers.UserInfo) context.Context {
-	r := httptest.NewRequest("POST", "/mcp", nil)
-	r = r.WithContext(oauth.ContextWithUserInfo(r.Context(), ui))
-	return authz.PromoteOAuthCaller(context.Background(), r)
+	if ui == nil {
+		return context.Background()
+	}
+	return authz.WithCaller(context.Background(), authz.Caller{
+		Subject:     ui.ID,
+		Email:       ui.Email,
+		TokenSource: string(ui.TokenSource),
+	})
 }
 
 func TestRequireCaller_RejectsEmptyContext(t *testing.T) {

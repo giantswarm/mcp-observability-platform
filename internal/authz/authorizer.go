@@ -27,8 +27,8 @@ var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/inter
 // (tenants, datasources, role) in one shot. Returned Organizations are
 // deep-cloned; handler mutations cannot escape into any internal cache.
 //
-// Caller is derived from ctx via CallerFromContext; an empty Caller (no
-// Subject) returns ErrNoCallerIdentity.
+// Caller is derived from ctx via CallerFromContext; an unauthenticated
+// Caller (no Subject) returns ErrNoCallerIdentity.
 type Authorizer interface {
 	// RequireOrg returns the caller's Organization access to orgRef
 	// (matched case-insensitively against Organization.Name or
@@ -76,10 +76,10 @@ func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL
 // to an empty list with a guidance message.
 //
 // The registry list is read fresh every call — only the per-caller
-// Grafana memberships are cached. A GrafanaOrganization deletion takes
+// Grafana role assignments are cached. A GrafanaOrganization deletion takes
 // effect immediately for every caller, not after their TTL expires.
 func (a *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, error) {
-	memberships, err := a.resolveMemberships(ctx, CallerFromContext(ctx))
+	roles, err := a.resolveRoles(ctx, CallerFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +87,7 @@ func (a *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, err
 	if err != nil {
 		return nil, fmt.Errorf("list orgs: %w", err)
 	}
-	out, _ := projectMemberships(memberships, orgs)
-	return cloneOrganizations(out), nil
+	return cloneOrganizations(accessibleOrgs(roles, orgs)), nil
 }
 
 // RequireOrg returns the caller's access to orgRef, erroring with
@@ -117,7 +116,7 @@ func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 		span.SetStatus(codes.Error, ErrInvalidMinRole.Error())
 		return Organization{}, ErrInvalidMinRole
 	}
-	memberships, err := a.resolveMemberships(ctx, CallerFromContext(ctx))
+	roles, err := a.resolveRoles(ctx, CallerFromContext(ctx))
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return Organization{}, err
@@ -127,7 +126,7 @@ func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 		span.SetStatus(codes.Error, err.Error())
 		return Organization{}, fmt.Errorf("list orgs: %w", err)
 	}
-	access, allRefs := projectMemberships(memberships, orgs)
+	access := accessibleOrgs(roles, orgs)
 
 	org, ok, err := findOrganization(access, orgRef)
 	if err != nil {
@@ -143,63 +142,63 @@ func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 		return cloneOrganization(org), nil
 	}
 
-	if _, knownOrg := allRefs[strings.ToLower(orgRef)]; !knownOrg {
-		err := fmt.Errorf("%w: %q", ErrOrgNotFound, orgRef)
-		span.SetStatus(codes.Error, err.Error())
-		return Organization{}, err
+	// Distinguish "org doesn't exist" from "caller has no role on it"
+	// without a second upstream call.
+	target := strings.ToLower(orgRef)
+	for _, o := range orgs {
+		if strings.ToLower(o.Name) == target || strings.ToLower(o.DisplayName) == target {
+			err := notAuthorisedFor(orgRef)
+			span.SetStatus(codes.Error, err.Error())
+			return Organization{}, err
+		}
 	}
-	err = notAuthorisedFor(orgRef)
+	err = fmt.Errorf("%w: %q", ErrOrgNotFound, orgRef)
 	span.SetStatus(codes.Error, err.Error())
 	return Organization{}, err
 }
 
-// resolveMemberships returns the caller's per-org Role assignments
+// resolveRoles returns the caller's per-org Role assignments
 // (OrgID → Role) as observed by Grafana. Hits the per-caller cache before
-// falling back to load(). Returns ErrNoCallerIdentity for an empty caller
-// and ErrCallerUnknownToGrafana when Grafana has no user record yet
-// (negative cache hit with nil memberships).
-func (a *authorizer) resolveMemberships(ctx context.Context, caller Caller) (map[int64]Role, error) {
-	if caller.Empty() {
+// falling back to load(). Returns ErrNoCallerIdentity for an
+// unauthenticated caller and ErrCallerUnknownToGrafana when Grafana has no
+// user record yet.
+func (a *authorizer) resolveRoles(ctx context.Context, caller Caller) (map[int64]Role, error) {
+	if !caller.Authenticated() {
 		return nil, ErrNoCallerIdentity
 	}
-	key := cacheKey(caller)
-	if hit, ok := a.cacheLookup(key); ok {
-		if hit.memberships == nil {
+	if hit, ok := a.cacheLookup(caller.Subject); ok {
+		if hit.status == statusUnknownToGrafana {
 			return nil, ErrCallerUnknownToGrafana
 		}
-		return hit.memberships, nil
+		return hit.roles, nil
 	}
-	entry, err := a.load(ctx, caller, key)
+	entry, err := a.load(ctx, caller)
 	if err != nil {
 		return nil, err
 	}
-	if entry.memberships == nil {
+	if entry.status == statusUnknownToGrafana {
 		return nil, ErrCallerUnknownToGrafana
 	}
-	return entry.memberships, nil
+	return entry.roles, nil
 }
 
-// projectMemberships joins per-caller Grafana memberships against the
-// current registry list. Returns the caller's accessible orgs (keyed by
-// Organization.Name, with Role filled in) plus the lowercased set of
-// every {Name, DisplayName} in the registry — used by RequireOrg to
-// distinguish "org doesn't exist" from "caller not a member".
-func projectMemberships(memberships map[int64]Role, orgs []Organization) (access map[string]Organization, allRefs map[string]struct{}) {
-	allRefs = buildOrgRefSet(orgs)
-	access = make(map[string]Organization, len(memberships))
-	if len(memberships) == 0 {
-		return access, allRefs
+// accessibleOrgs joins Grafana's per-caller role assignments against the
+// current registry list, returning the orgs the caller can act on (keyed
+// by Organization.Name, with Role filled in).
+//
+// Grafana evaluated org_mapping at the caller's last login; the role map
+// arrives from /api/users/{id}/orgs. We just hydrate it with our local
+// metadata (tenants, datasources).
+func accessibleOrgs(roles map[int64]Role, orgs []Organization) map[string]Organization {
+	access := make(map[string]Organization, len(roles))
+	if len(roles) == 0 {
+		return access
 	}
 	byOrgID := make(map[int64]Organization, len(orgs))
 	for _, o := range orgs {
 		byOrgID[o.OrgID] = o
 	}
-	for orgID, role := range memberships {
-		// Defensive: load filters RoleNone, but memberships is map-valued
-		// and a future code path could insert.
-		if role == RoleNone {
-			continue
-		}
+	for orgID, role := range roles {
 		org, ok := byOrgID[orgID]
 		if !ok {
 			// Grafana knows about this org but the registry doesn't —
@@ -209,41 +208,35 @@ func projectMemberships(memberships map[int64]Role, orgs []Organization) (access
 		org.Role = role
 		access[org.Name] = org
 	}
-	return access, allRefs
+	return access
 }
 
-// load asks Grafana for the user and their org memberships, then caches
-// OrgID → Role with the appropriate positive-or-negative TTL. The
-// registry-side join happens at the per-call site (projectMemberships).
-func (a *authorizer) load(ctx context.Context, caller Caller, key string) (cacheEntry, error) {
+// load asks Grafana for the user and their org roles, then caches OrgID →
+// Role with the appropriate positive-or-negative TTL.
+func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error) {
 	user, err := a.grafana.LookupUser(ctx, caller.Identity())
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana lookup: %w", err)
 	}
-
 	if user == nil {
 		// User exists in our IdP but has never logged into Grafana yet —
-		// negative-cache nil memberships so the caller hits a brief "log
-		// into Grafana first" window, not the full positive window.
-		// Distinct from len(memberships)==0 (user found, in no orgs) —
-		// same TTL but different semantics.
-		return a.cacheStore(key, nil), nil
+		// negative-cache so they hit a brief "log into Grafana first"
+		// window, not the full positive window.
+		return a.cacheStore(caller.Subject, statusUnknownToGrafana, nil), nil
 	}
-
-	rawMemberships, err := a.grafana.UserOrgs(ctx, user.ID)
+	entries, err := a.grafana.UserOrgs(ctx, user.ID)
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana user orgs: %w", err)
 	}
-
-	memberships := make(map[int64]Role, len(rawMemberships))
-	for _, m := range rawMemberships {
-		role := roleFromGrafana(m.Role)
+	roles := make(map[int64]Role, len(entries))
+	for _, e := range entries {
+		role := roleFromGrafana(e.Role)
 		if role == RoleNone {
 			continue
 		}
-		memberships[m.OrgID] = role
+		roles[e.OrgID] = role
 	}
-	return a.cacheStore(key, memberships), nil
+	return a.cacheStore(caller.Subject, statusKnown, roles), nil
 }
 
 // findOrganization locates an Organization by Name or DisplayName,

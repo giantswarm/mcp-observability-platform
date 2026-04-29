@@ -46,7 +46,7 @@ func (r Role) AtLeast(other Role) bool { return r >= other }
 //
 // Note: Grafana's server-admin status ("Grafana Admin") is NOT a
 // per-org role — it lives on /api/users/{id}.isGrafanaAdmin and is
-// orthogonal to org membership. We deliberately do not honour it here:
+// orthogonal to per-org role assignments. We deliberately do not honour it here:
 // a server-admin SA may need full access to administer the system, but
 // callers SHOULD have an explicit per-org role to act through this MCP.
 func roleFromGrafana(s string) Role {
