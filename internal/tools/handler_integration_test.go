@@ -165,6 +165,46 @@ func TestHandler_SearchDashboards(t *testing.T) {
 	}
 }
 
+// TestHandler_ListDatasources_PropagatesOrgID is the regression test for
+// the multi-org bug fix: the local list_datasources handler MUST send
+// X-Grafana-Org-Id from the caller's resolved OrgID. Upstream
+// mcp-grafana's openapi-based handler dropped this header, so this test
+// pins the new behaviour.
+func TestHandler_ListDatasources_PropagatesOrgID(t *testing.T) {
+	var sawPath, sawOrgID string
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		sawOrgID = r.Header.Get("X-Grafana-Org-Id")
+		_, _ = w.Write([]byte(`[
+			{"id":1,"uid":"mimir-uid","name":"GS Mimir","type":"prometheus","isDefault":true},
+			{"id":2,"uid":"loki-uid","name":"GS Loki","type":"loki","isDefault":false},
+			{"id":3,"uid":"tempo-uid","name":"GS Tempo","type":"tempo","isDefault":false}
+		]`))
+	})
+	defer ts.Close()
+
+	res := callTool(t, wireHandlerTest(t, ts), "list_datasources", map[string]any{
+		"org": "acme", "type": "loki",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %s", resultText(res))
+	}
+	if sawPath != "/api/datasources" {
+		t.Errorf("Grafana path = %q, want /api/datasources", sawPath)
+	}
+	if sawOrgID != "1" {
+		t.Errorf("X-Grafana-Org-Id = %q, want %q (the resolved OrgID for caller's org)", sawOrgID, "1")
+	}
+	body := resultText(res)
+	// Type filter applied; only the loki entry should remain.
+	if !strings.Contains(body, "loki-uid") {
+		t.Errorf("response missing loki entry: %s", body)
+	}
+	if strings.Contains(body, "mimir-uid") || strings.Contains(body, "tempo-uid") {
+		t.Errorf("type filter did not exclude non-loki entries: %s", body)
+	}
+}
+
 // TestHandler_GetDashboardByUID covers the get_dashboard_by_uid tool — the
 // simplest fetcher in the surface, but the one a regression in uid-escaping
 // or org-header forwarding would first surface in.
