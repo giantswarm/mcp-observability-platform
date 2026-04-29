@@ -20,10 +20,8 @@ const (
 	envOAuthStorageBackend = "OAUTH_STORAGE_BACKEND"
 )
 
-// buildOAuthHandler resolves the dex provider, server config, storage
-// backend, and optional encryptor from OAUTH_* env vars via the upstream
-// loaders, then assembles an mcp-oauth handler. storeClose drains the
-// storage backend on shutdown.
+// buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
+// storeClose drains the storage backend on shutdown.
 func buildOAuthHandler(logger *slog.Logger) (*oauth.Handler, func(), error) {
 	provider, err := oauthconfig.DexFromEnv()
 	if err != nil {
