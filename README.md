@@ -36,8 +36,8 @@ synthetic `org` argument and `gfBinder` resolves it to the org's
 OrgID + datasource UID before delegating. Tempo tools delegate to
 Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`,
 through a thin per-UID adapter that keeps the same `(org, …)` shape.
-Alertmanager v2 alerts and `list_orgs` stay local — no usable upstream
-equivalent. See `internal/tools/doc.go` for the per-category rationale.
+Alertmanager v2 alerts/silences and `list_orgs` stay local — no usable
+upstream equivalent. See `internal/tools/doc.go` for the per-category rationale.
 
 **Orgs & datasources**
 
@@ -58,6 +58,8 @@ equivalent. See `internal/tools/doc.go` for the per-category rationale.
 | `get_dashboard_panel_queries`  | Grafana API | Queries for one panel (by id or title substring) or all        |
 | `get_dashboard_property`       | Grafana API | Sub-tree of the dashboard JSON by RFC 6901 JSON Pointer        |
 | `generate_deeplink`            | Grafana URL | Builds `/d/{uid}?orgId=…&from=…&to=…&viewPanel=…&var-…`        |
+| `run_panel_query`              | Grafana API | Executes one or more dashboard panels with template-var substitution; returns results keyed by panel id (partial failures allowed) |
+| `get_panel_image`              | Grafana `/render` | Renders a panel (or full dashboard) as PNG and returns an MCP `ImageContent`. Requires the [Grafana Image Renderer](https://grafana.com/docs/grafana/latest/setup-grafana/image-rendering/) service; without it, callers see a structured "image renderer not available" error. |
 
 **Metrics (Mimir)**
 
@@ -104,10 +106,18 @@ Tools are exposed verbatim under their upstream Tempo MCP names (kebab-case):
 
 **Alerts (Alertmanager)**
 
-| Tool           | DS proxy path                                              |
-| -------------- | ---------------------------------------------------------- |
-| `list_alerts`  | `api/v2/alerts` — paged, severity-sorted                   |
-| `get_alert`    | Single alert by fingerprint (derived from `list_alerts`)   |
+| Tool             | DS proxy path                                                                    |
+| ---------------- | -------------------------------------------------------------------------------- |
+| `list_alerts`    | `api/v2/alerts` — paged, severity-sorted                                         |
+| `get_alert`      | Single alert by fingerprint (derived from `list_alerts`)                         |
+| `list_silences`  | `api/v2/silences` — paged, ends-soonest-first; resolves `silencedBy` from alerts |
+| `get_silence`    | `api/v2/silence/{id}` — full record by id                                        |
+
+**Query syntax**
+
+| Tool                   | Notes                                                          |
+| ---------------------- | -------------------------------------------------------------- |
+| `get_query_examples`   | Static PromQL/LogQL/SQL/CloudWatch/InfluxDB syntax reference   |
 
 This MCP exposes only tools; LLM clients invoke them more reliably
 than resource URIs or prompts.

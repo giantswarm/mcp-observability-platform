@@ -58,6 +58,8 @@ func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, 
 	registerLogTools(s, b)
 	registerAlertingTools(s, b)
 	registerAlertTools(s, az, gc)
+	registerSilenceTools(s, az, gc)
+	registerExampleTools(s, b)
 	if err := registerTempoTools(ctx, s, logger, b, ol); err != nil {
 		return err
 	}

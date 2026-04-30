@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tool surface completion (roadmap §0): `run_panel_query`, `get_query_examples`, and `get_panel_image` (delegated), plus local `list_silences` / `get_silence` (AM v2 silences via Grafana's datasource proxy, with optional `datasourceUid` override).
+
 ### Fixed
 
 - `alerting_manage_rules` no longer 400s on multi-tenant Mimir setups: it now fans out across every datasource where Grafana's "Manage alerts" toggle is on (Mimir + Loki), tagging each entry by source. Pin a single datasource with `datasource_uid` to skip the fanout.

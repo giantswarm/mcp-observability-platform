@@ -223,3 +223,100 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 		t.Errorf("body missing uid: %s", resultText(res))
 	}
 }
+
+// alertmanagerListResp is the live /api/datasources payload the live-fetch
+// resolver expects: one alertmanager-typed datasource with a known id so
+// the proxy URL is predictable.
+const alertmanagerListResp = `[{"id":42,"uid":"am-acme","name":"alertmanager-acme","type":"alertmanager"}]`
+
+// TestHandler_ListSilences asserts live datasource resolution, the AM v2
+// proxy path, server-side filter passthrough, default-state filter (active
+// only), and minimal projection.
+func TestHandler_ListSilences(t *testing.T) {
+	var sawPath, sawFilter string
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasources":
+			_, _ = w.Write([]byte(alertmanagerListResp))
+		default:
+			sawPath = r.URL.Path
+			sawFilter = r.URL.Query().Get("filter")
+			_, _ = w.Write([]byte(`[
+				{"id":"s-active","status":{"state":"active"},"endsAt":"2026-05-02T00:00:00Z","createdBy":"alice","matchers":[{"name":"alertname","value":"X","isRegex":false,"isEqual":true}],"comment":"c1"},
+				{"id":"s-pending","status":{"state":"pending"},"endsAt":"2026-06-01T00:00:00Z","createdBy":"bob","matchers":[],"comment":""},
+				{"id":"s-expired","status":{"state":"expired"},"endsAt":"2026-04-01T00:00:00Z","createdBy":"carol","matchers":[],"comment":""}
+			]`))
+		}
+	})
+	defer ts.Close()
+
+	res := callTool(t, wireHandlerTest(t, ts), "list_silences", map[string]any{
+		"org":     "acme",
+		"matcher": `alertname="X"`,
+	})
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %s", resultText(res))
+	}
+	if sawPath != "/api/datasources/proxy/42/alertmanager/api/v2/silences" {
+		t.Errorf("path = %q, want AM v2 silences via DS proxy at id 42", sawPath)
+	}
+	if sawFilter != `alertname="X"` {
+		t.Errorf("filter query = %q, want alertname=\"X\"", sawFilter)
+	}
+	body := resultText(res)
+	if !strings.Contains(body, "s-active") {
+		t.Errorf("default state should include active silence: %s", body)
+	}
+	if strings.Contains(body, "s-pending") || strings.Contains(body, "s-expired") {
+		t.Errorf("default state should not include pending/expired: %s", body)
+	}
+}
+
+// TestHandler_GetSilence asserts the singular AM v2 path
+// /api/v2/silence/{id} (not silences) and full-record passthrough.
+func TestHandler_GetSilence(t *testing.T) {
+	var sawPath string
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/datasources":
+			_, _ = w.Write([]byte(alertmanagerListResp))
+		default:
+			sawPath = r.URL.Path
+			_, _ = w.Write([]byte(`{"id":"abc","status":{"state":"active"},"startsAt":"2026-04-30T00:00:00Z","endsAt":"2026-05-01T00:00:00Z","createdBy":"alice","comment":"hush","matchers":[{"name":"alertname","value":"X","isEqual":true}]}`))
+		}
+	})
+	defer ts.Close()
+
+	res := callTool(t, wireHandlerTest(t, ts), "get_silence", map[string]any{
+		"org": "acme",
+		"id":  "abc",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %s", resultText(res))
+	}
+	if sawPath != "/api/datasources/proxy/42/alertmanager/api/v2/silence/abc" {
+		t.Errorf("path = %q, want singular silence/{id} path at id 42", sawPath)
+	}
+	body := resultText(res)
+	for _, want := range []string{`"id":"abc"`, `"createdBy":"alice"`, `"comment":"hush"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q: %s", want, body)
+		}
+	}
+}
+
+// TestHandler_RegistersNewTools is a low-cost guard that the new tools
+// from roadmap §0 actually reach the MCP server's tool registry. Catches
+// a missed wire-in in tools.RegisterAll.
+func TestHandler_RegistersNewTools(t *testing.T) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	defer ts.Close()
+	s := wireHandlerTest(t, ts)
+	for _, name := range []string{"run_panel_query", "get_query_examples", "list_silences", "get_silence", "get_panel_image"} {
+		if s.GetTool(name) == nil {
+			t.Errorf("tool %q not registered", name)
+		}
+	}
+}

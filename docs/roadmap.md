@@ -15,30 +15,41 @@ Gaps from `mcp-grafana@v0.13.0` that fit the read-only scope but are
 not bound today, plus one custom AM v2 surface upstream does not
 cover.
 
-Delegated (upstream, bind via `gfBinder`):
+Landed:
 
-- `alerting_manage_routing` (read mode) — answers "where will this
-  alert notify?". Sibling of `alerting_manage_rules`. Bound against
-  prometheus-typed datasources (Mimir).
-- `run_panel_query` — execute saved panel queries with template-var
-  substitution. Org-scoped. Pairs with `get_dashboard_panel_queries`.
-- `get_query_examples` — PromQL/LogQL syntax helper. Org-scoped only
-  because `gfBinder` is the path of least resistance.
-- `get_panel_image` (optional, off by default) — returns proper MCP
-  `ImageContent` (base64 PNG); vision-capable LLM clients render it
-  natively. Requires the Grafana Image Renderer service alongside
-  Grafana. Ship disabled in the chart's `runtime.disabledTools` so
-  clusters opt in only after the renderer is deployed.
-
-Custom (no upstream equivalent in v0.13.0):
-
+- `run_panel_query` — delegated (`mcpgrafanatools.RunPanelQuery`).
+  Bound org-only; the upstream handler resolves its target datasource
+  from the dashboard JSON. Pairs with `get_dashboard_panel_queries`.
+- `get_query_examples` — delegated. Org-binding is for surface
+  uniformity only; the upstream handler is Grafana-independent (it
+  returns canned PromQL / LogQL / SQL strings).
 - `list_silences(org, state?, matcher?)` and `get_silence(org, id)` —
-  Alertmanager v2 `/api/v2/silences{,/{id}}`. Today `list_alerts`
-  returns `silencedBy: [<id>]` fingerprints that have no resolver.
-  Same custom pattern as `list_alerts` / `get_alert`.
+  custom AM v2 `/api/v2/silences` and `/api/v2/silence/{id}` via
+  Grafana's datasource proxy. Same pattern as `list_alerts` /
+  `get_alert`: live-fetch picks the alertmanager-typed datasource
+  (optional `datasourceUid` overrides). State narrowing
+  (`active|pending|expired|all`, default `active`) is applied
+  client-side because AM v2 only honours a label-matcher `filter`
+  server-side. Resolves the `silencedBy` ids `list_alerts` surfaces.
+- `get_panel_image` — delegated. Hits Grafana's `/render` endpoint
+  and returns an MCP `ImageContent`. Always-on: clusters without the
+  Grafana Image Renderer surface a clear "image renderer not
+  available" error from upstream, same failure shape as any tool
+  called on a missing backend.
 
-Depends on §4 (per-tool enable/disable) for `get_panel_image` to ship
-disabled by default.
+Deferred:
+
+- `alerting_manage_routing` — upstream tool only covers
+  Grafana-managed routing for most operations
+  (`get_notification_policies`, `get_contact_point`,
+  `get_time_intervals`, `get_time_interval` all hit Grafana's
+  Provisioning API; only `get_contact_points` accepts a
+  `datasource_uid`). For Mimir-AM-backed orgs, the route tree, mute
+  timings, and most contact-point details stay invisible — binding
+  it as-is would mislead the LLM into thinking it has answered "where
+  will this alert notify?" when it has not. Belongs upstream so every
+  `mcp-grafana` user benefits, not just us. File the upstream issue
+  and revisit once landed.
 
 ### 1. Per-org Grafana SA tokens (Phase-2 blast-radius fix)
 
