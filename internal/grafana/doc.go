@@ -3,9 +3,9 @@
 //   - A thin HTTP client (client.go) for operations not delegated to
 //     upstream's per-call GrafanaClient: user / org-role lookups
 //     (LookupUser, UserOrgs); the live datasource list
-//     (ListDatasources, LookupDatasourceByUID); the server-admin
-//     self-check (VerifyServerAdmin); and a generic datasource
-//     passthrough (DatasourceProxy).
+//     (ListDatasources, LookupDatasourceByUID — both cached per-OrgID
+//     for 30s); the server-admin self-check (VerifyServerAdmin); and
+//     a generic datasource passthrough (DatasourceProxy).
 //   - Datasource + DatasourceType taxonomy (datasource.go) — the
 //     domain projection of a Grafana datasource and its plugin-type
 //     enum, with MatchesType / FilterDatasourcesByType for
