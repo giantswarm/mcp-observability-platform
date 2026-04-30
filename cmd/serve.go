@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,10 +41,11 @@ const (
 )
 
 var (
-	flagTransport   string
-	flagMCPAddr     string
-	flagMetricsAddr string
-	flagDebug       bool
+	flagTransport     string
+	flagMCPAddr       string
+	flagMetricsAddr   string
+	flagDebug         bool
+	flagDisabledTools []string
 )
 
 func init() {
@@ -53,6 +55,30 @@ func init() {
 	// DEBUG env is read inside runServe (via loadConfig) so a malformed value
 	// fails startup with a clear error rather than silently defaulting.
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", false, "enable debug logging (overrides DEBUG env)")
+	serveCmd.Flags().StringSliceVar(&flagDisabledTools, "disabled-tools", nil,
+		"comma-separated MCP tool names to skip at startup "+
+			"(e.g. --disabled-tools=alerting_manage_rules,get_panel_image)")
+}
+
+// toSet collapses a flag-supplied list into a lookup map: trims
+// whitespace, drops empty entries, dedupes. Returns nil for an empty
+// effective set so downstream nil-checks (maybeAddTool) fast-path.
+func toSet(xs []string) map[string]bool {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(xs))
+	for _, x := range xs {
+		x = strings.TrimSpace(x)
+		if x == "" {
+			continue
+		}
+		out[x] = true
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func validateTransport(transport string) error {
@@ -138,6 +164,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 		apiKey = ""
 	}
 
+	disabledTools := toSet(flagDisabledTools)
+	if len(disabledTools) > 0 {
+		names := make([]string, 0, len(disabledTools))
+		for n := range disabledTools {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		logger.Info("disabled tools at startup", "names", names)
+	}
+
 	mcp, err := server.New(shutdownCtx, server.Config{
 		Logger:           logger,
 		Authorizer:       authorizer,
@@ -149,6 +185,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		Version:          version,
 		ToolTimeout:      cfg.ToolTimeout,
 		MaxResponseBytes: cfg.MaxResponseBytes,
+		DisabledTools:    disabledTools,
 	})
 	if err != nil {
 		return fmt.Errorf("mcp server: %w", err)

@@ -44,21 +44,33 @@ func orgArg() mcp.ToolOption {
 	return mcp.WithString("org", mcp.Required(), mcp.Description(orgArgDescription))
 }
 
+// maybeAddTool wraps s.AddTool with a --disabled-tools check. Mirrors
+// mcp-grafana's maybeAddTools (cmd/mcp-grafana/main.go) but at
+// tool-name granularity. nil disabled = no filter.
+func maybeAddTool(s *mcpsrv.MCPServer, disabled map[string]bool, t mcp.Tool, h mcpsrv.ToolHandlerFunc) {
+	if disabled[t.Name] {
+		return
+	}
+	s.AddTool(t, h)
+}
+
 // RegisterAll wires every category of tool into the MCP server. See
 // doc.go for the per-category breakdown. ctx is used only for the
-// Tempo binder's one-shot startup discovery.
-func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, az authz.Authorizer, ol authz.OrgLister, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) error {
-	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth)
+// Tempo binder's one-shot startup discovery. disabled (typically
+// sourced from --disabled-tools) is consulted at every s.AddTool site
+// via maybeAddTool; nil = no filter.
+func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, az authz.Authorizer, ol authz.OrgLister, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
+	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth, disabled)
 	if err != nil {
 		return err
 	}
-	registerOrgTools(s, az, b)
+	registerOrgTools(s, disabled, az, b)
 	registerDashboardTools(s, b)
 	registerMetricsTools(s, b)
 	registerLogTools(s, b)
 	registerAlertingTools(s, b)
-	registerAlertTools(s, az, gc)
-	registerSilenceTools(s, az, gc)
+	registerAlertTools(s, disabled, az, gc)
+	registerSilenceTools(s, disabled, az, gc)
 	registerExampleTools(s, b)
 	if err := registerTempoTools(ctx, s, logger, b, ol); err != nil {
 		return err

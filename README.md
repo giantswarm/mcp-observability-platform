@@ -254,6 +254,16 @@ line and OTEL span attributes for forensics. Do not register tools that
 take secrets as arguments — look credentials up server-side from the
 caller identity instead.
 
+### Flags
+
+| Flag                 | Purpose                                                  |
+| -------------------- | -------------------------------------------------------- |
+| `--disabled-tools`   | CSV of MCP tool names to skip at startup (e.g. `--disabled-tools=alerting_manage_rules,get_panel_image`). Surfaced as `tools.disabled` in the Helm chart. Empty = all tools registered. |
+| `--debug`            | Enable debug logging (overrides `DEBUG` env).            |
+| `--transport`        | `streamable-http` (default), `sse`, or `stdio`. Mirrors `MCP_TRANSPORT`. |
+| `--mcp-addr`         | Listen address for the MCP HTTP surface. Mirrors `MCP_ADDR`. |
+| `--metrics-addr`     | Listen address for the observability surface. Mirrors `METRICS_ADDR`. |
+
 ### Grafana service-account token
 
 Phase 1 uses a single **server-admin** Grafana service account. In Grafana:

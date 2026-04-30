@@ -173,6 +173,36 @@ func TestEnvInt(t *testing.T) {
 	}
 }
 
+func TestToSet(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want map[string]bool
+	}{
+		{"nil", nil, nil},
+		{"empty", []string{}, nil},
+		{"all-empty-after-trim", []string{"", "  ", "\t"}, nil},
+		{"single", []string{"a"}, map[string]bool{"a": true}},
+		{"multiple", []string{"a", "b"}, map[string]bool{"a": true, "b": true}},
+		{"trims-whitespace", []string{" a ", "\tb\n"}, map[string]bool{"a": true, "b": true}},
+		{"dedupes", []string{"a", "a", "b"}, map[string]bool{"a": true, "b": true}},
+		{"drops-blanks", []string{"a", "", "b"}, map[string]bool{"a": true, "b": true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := toSet(c.in)
+			if len(got) != len(c.want) {
+				t.Fatalf("toSet(%v) = %v, want %v", c.in, got, c.want)
+			}
+			for k := range c.want {
+				if !got[k] {
+					t.Errorf("toSet(%v) missing %q", c.in, k)
+				}
+			}
+		})
+	}
+}
+
 func TestEnvBool(t *testing.T) {
 	cases := []struct {
 		name, env string

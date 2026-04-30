@@ -23,8 +23,8 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, az authz.Authorizer, b *gfBinder) {
-	s.AddTool(
+func registerOrgTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, b *gfBinder) {
+	maybeAddTool(s, disabled,
 		mcp.NewTool("list_orgs",
 			readOnlyAnnotation(),
 			mcp.WithDescription("List orgs the caller can access. Call this first to discover the 'org' value other tools need. Returns name, displayName, orgId, role, and tenantTypes (e.g. [\"data\",\"alerting\"])."),

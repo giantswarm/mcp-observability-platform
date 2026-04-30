@@ -100,6 +100,13 @@ runtime:
   # Cap on tool response body size in bytes. 0 disables the cap.
   maxResponseBytes: 131072
 
+# --- Tool registration ---
+# `disabled` is a list of MCP tool names to skip at startup, e.g.
+# ["alerting_manage_rules", "get_panel_image"]. Names match the tool
+# identifier exposed in tools/list. Empty = all tools registered.
+tools:
+  disabled: []
+
 # --- Autoscaling (both opt-in, off by default) ---
 autoscaling:
   hpa:
