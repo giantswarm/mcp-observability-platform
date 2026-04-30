@@ -231,7 +231,27 @@ func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
 // Properties map and Required slice are deep-copied; the input is never
 // mutated. Panic at registration, not per-request — every wrapped tool
 // is enumerated by RegisterAll, so a collision shows up at process start.
+//
+// Upstream mcp-grafana tools are produced by MustTool, which stores the
+// schema as RawInputSchema (json.RawMessage). mcp.Tool.MarshalJSON emits
+// RawInputSchema verbatim and ignores the structured InputSchema, so we
+// normalize raw→structured up front. The function body then operates on
+// a single representation and the tool ships with our org arg visible.
 func withOrg(t mcp.Tool, demoteArg string) mcp.Tool {
+	if len(t.RawInputSchema) > 0 {
+		var raw struct {
+			Properties map[string]any `json:"properties"`
+			Required   []string       `json:"required"`
+		}
+		if err := json.Unmarshal(t.RawInputSchema, &raw); err != nil {
+			panic(fmt.Sprintf("tools: tool %q has invalid RawInputSchema: %v", t.Name, err))
+		}
+		t.InputSchema.Type = "object"
+		t.InputSchema.Properties = raw.Properties
+		t.InputSchema.Required = raw.Required
+		t.RawInputSchema = nil
+	}
+
 	out := t
 	props := make(map[string]any, len(t.InputSchema.Properties)+1)
 	maps.Copy(props, t.InputSchema.Properties)
