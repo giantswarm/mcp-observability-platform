@@ -30,9 +30,6 @@ func (stubGrafana) VerifyServerAdmin(context.Context) error { return nil }
 func (stubGrafana) LookupUser(context.Context, string) (*grafana.User, error) {
 	return nil, nil
 }
-func (stubGrafana) LookupDatasourceUIDByID(context.Context, grafana.RequestOpts, int64) (string, error) {
-	return "", nil
-}
 func (stubGrafana) UserOrgs(context.Context, int64) ([]grafana.UserOrgMembership, error) {
 	return nil, nil
 }

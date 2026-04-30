@@ -18,7 +18,8 @@ cover.
 Delegated (upstream, bind via `gfBinder`):
 
 - `alerting_manage_routing` (read mode) — answers "where will this
-  alert notify?". Sibling of `alerting_manage_rules`. DSKindMimir.
+  alert notify?". Sibling of `alerting_manage_rules`. Bound against
+  prometheus-typed datasources (Mimir).
 - `run_panel_query` — execute saved panel queries with template-var
   substitution. Org-scoped. Pairs with `get_dashboard_panel_queries`.
 - `get_query_examples` — PromQL/LogQL syntax helper. Org-scoped only

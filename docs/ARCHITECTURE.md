@@ -49,11 +49,13 @@ security boundaries are, and where to add a new tool.
               │                                                                │
               │ Delegated tools (most of the surface):                         │
               │   internal/tools/grafanabind.go gfBinder.{bindOrgTool,          │
-              │   bindDatasourceTool}                                          │
+              │   bindDatasourceTool, bindDatasourceFanoutTool}                │
               │     1. read "org" from CallToolRequest                         │
               │     2. az.RequireOrg(ctx, org, role) → Organization            │
-              │     3. Datasource path: pick DS by Kind, look up its UID via   │
-              │        grafana.LookupDatasourceUIDByID, inject datasourceUid   │
+              │     3. Datasource path: caller-supplied datasourceUid wins     │
+              │        (validated via grafana.LookupDatasourceByUID); else     │
+              │        first match from grafana.ListDatasources by plugin     │
+              │        type, UID injected server-side                          │
               │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
               │     5. delegate to upstream grafana/mcp-grafana handler        │
               │                                                                │
@@ -84,7 +86,7 @@ security boundaries are, and where to add a new tool.
 | `internal/server/` | MCP server construction; middleware composition (Instrument / RequireCaller / ResponseCap / ToolTimeout); transport wrappers for streamable-HTTP and SSE. |
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
-| `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `LookupDatasourceUIDByID`, `DatasourceProxy`) plus `Datasource` and `DatasourceKind` (`MatchKind` substring matcher). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
+| `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `ListDatasources`, `LookupDatasourceByUID`, `DatasourceProxy`) plus `Datasource` and `DatasourceType` (`MatchesType` / `FilterDatasourcesByType`). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. |
 | `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (plus the delegated datasource tools in `orgs.go`). Delegated to Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`, registered through the same `gfBinder.bindDatasourceTool` path: `tempo.go`. Local: `orgs.go` (`list_orgs`), `alerts.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
@@ -153,17 +155,22 @@ import (
 )
 
 b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData,
-    grafana.DSKindMimir, datasourceUIDArg, mcpgrafanatools.QueryPrometheus)
+    grafana.DSTypePrometheus, datasourceUIDArg, mcpgrafanatools.QueryPrometheus)
 ```
 
-`gfBinder` resolves `org → OrgID + datasource UID` server-side, so
-the LLM-visible schema is upstream's verbatim minus `datasourceUid`,
-plus our `org`. The `tenantType` argument gates the call to orgs that
-carry that tenant type (`TenantTypeData` for metrics/logs/traces/rules;
-`TenantTypeAlerting` is reserved for Alertmanager-shaped tools, which
-today are local). Tools whose upstream arg name isn't `datasourceUid`
-(e.g. `alerting_manage_rules` uses `datasource_uid`) pass that string
-explicitly as the `argName` parameter.
+`gfBinder` picks the org's first datasource of the given plugin type
+via live `ListDatasources` and injects its UID server-side. The
+LLM-visible schema keeps upstream's `datasourceUid` (demoted to
+optional, with a hint pointing at `list_datasources`) so the LLM can
+override the default to scope a query to a specific tenant; caller-
+supplied UIDs are validated against the org's live list and the
+expected plugin type. The `tenantType` argument gates the call to
+orgs that carry that tenant type (`TenantTypeData` for
+metrics/logs/traces/rules; `TenantTypeAlerting` is reserved for
+Alertmanager-shaped tools, which today are local). Tools whose
+upstream arg name isn't `datasourceUid` (e.g. `alerting_manage_rules`
+uses `datasource_uid`) pass that string explicitly as the `argName`
+parameter.
 
 For org-only upstream tools (no datasource), use `b.bindOrgTool(s, role, t)`.
 

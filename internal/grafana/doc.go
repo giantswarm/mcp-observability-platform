@@ -6,10 +6,12 @@
 //     (ListDatasources, LookupDatasourceByUID); the server-admin
 //     self-check (VerifyServerAdmin); and a generic datasource
 //     passthrough (DatasourceProxy).
-//   - Datasource + DatasourceKind taxonomy (datasource.go) — the
-//     domain projection of a Grafana datasource and its canonical-
-//     role enum, with MatchesKind / FilterDatasourcesByKind for
-//     plugin-type-based selection (with Name disambiguation for Mimir).
+//   - Datasource + DatasourceType taxonomy (datasource.go) — the
+//     domain projection of a Grafana datasource and its plugin-type
+//     enum, with MatchesType / FilterDatasourcesByType for
+//     type-substring filtering. Mimir registers as "prometheus", so
+//     callers with both a Mimir DS and a vanilla Prometheus DS in the
+//     same org must disambiguate via an explicit datasourceUid.
 //
 // The surface is deliberately minimal — most Grafana operations are
 // delegated to upstream grafana/mcp-grafana, which builds its own HTTP
