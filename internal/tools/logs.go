@@ -1,4 +1,4 @@
-// logs.go — RoleViewer, DSKindLoki.
+// logs.go — RoleViewer, loki-typed datasources.
 package tools
 
 import (
@@ -18,6 +18,6 @@ func registerLogTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.ListLokiLabelNames,
 		mcpgrafanatools.ListLokiLabelValues,
 	} {
-		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindLoki, datasourceUIDArg, t)
+		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSTypeLoki, datasourceUIDArg, t)
 	}
 }

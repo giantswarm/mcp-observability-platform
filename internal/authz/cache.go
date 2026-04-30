@@ -1,7 +1,6 @@
 package authz
 
 import (
-	"slices"
 	"time"
 )
 
@@ -73,11 +72,10 @@ func (a *authorizer) cacheStore(key string, status cacheStatus, roles map[int64]
 	return entry
 }
 
-// cloneOrganization deep-copies the Tenants and Datasources slices so
-// handler-side mutations cannot leak back into the cached registry view.
+// cloneOrganization deep-copies the Tenants slice so handler-side
+// mutations cannot leak back into the cached registry view.
 func cloneOrganization(o Organization) Organization {
 	o.Tenants = cloneTenants(o.Tenants)
-	o.Datasources = slices.Clone(o.Datasources)
 	return o
 }
 

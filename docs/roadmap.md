@@ -54,23 +54,26 @@ pod exposes every Grafana org on compromise.
 Needs `observability-operator` coordination — open an issue there
 describing the contract so the dependency is visible from both sides.
 
-### 2. Datasource UID + kind in `GrafanaOrganization.status`
+### 2. Cache `ListDatasources` per OrgID
 
-Drops the ID→UID round-trip we do per delegated tool call. Today
-`internal/grafana/client.go.LookupDatasourceUIDByID` is invoked for
-every datasource-scoped delegated tool because the CR status only
-carries `{ID, Name}` and our substring-matching kind detection
-(`internal/grafana/datasource.go.MatchKind`) compensates.
+The alerting fanout and every single-DS tool (after the live-fetch
+migration) call `grafana.Client.ListDatasources` per request — one
+extra Grafana RTT each. A small per-OrgID TTL cache (~30s) inside
+`grafana.Client` would amortise this without invalidation complexity.
 
-- `observability-operator` publishes `status.dataSources[i].uid` and
-  `status.dataSources[i].kind` alongside the existing `id` / `name`.
-- `grafana.Datasource` grows `UID` and `Kind` fields; `Organization.
-  FindDatasource` reads `Kind` directly instead of substring-matching
-  `Name`.
-- `gfBinder.bindDatasourceTool` injects the UID directly, removing
-  the per-call Grafana lookup.
-- `internal/grafana/client.go.LookupDatasourceUIDByID` and
-  `MatchKind` become dead and are deleted.
+- Wrap `ListDatasources` with a `sync.Map`-backed cache keyed by
+  OrgID; entries carry a deadline. Cache misses fetch and store; hits
+  return the slice unchanged.
+- TTL stays short enough that a freshly added/removed datasource
+  surfaces within ~30s — matches the cadence of operator-driven
+  datasource provisioning.
+- `LookupDatasourceByUID` reuses the cached list (already does — it
+  iterates `ListDatasources` output).
+
+No operator-side change required. The wider §2-migration (live-fetch
+for every single-DS tool, deleting `MatchKind` /
+`LookupDatasourceUIDByID` / `Organization.Datasources`) shipped with
+the optional `datasourceUid` override.
 
 ### 3. Write tools gated on Editor / Admin
 

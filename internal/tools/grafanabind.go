@@ -31,6 +31,15 @@ const (
 	datasourceUIDArgSnake = "datasource_uid"
 )
 
+// datasourceUIDHint is appended to the LLM-visible description of every
+// datasource-UID argument the binder demotes to optional. The hint
+// teaches the LLM the operator naming convention so it can resolve
+// "the giantswarm tenant" → gs-{kind}-giantswarm via list_datasources
+// without us baking name-parsing into server code.
+const datasourceUIDHint = "Optional: override the default datasource — pass this when the user asks about a specific tenant. " +
+	"Operator-managed datasources follow `gs-{kind}-{tenant}` (mono-tenant); the unsuffixed `gs-{kind}` is the multi-tenant aggregate. " +
+	"Call list_datasources to discover available UIDs for the org."
+
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
 // datasource-scoped tools) datasource UID resolution.
@@ -105,10 +114,9 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 }
 
 // bindDatasourceTool registers an upstream tool that needs a datasource
-// UID. Replaces upstream's argName in the schema with our "org";
-// resolves the org's datasource of kind, looks its UID up via Grafana,
-// and injects argName=<uid> server-side so the LLM never sees a
-// datasourceUid arg.
+// UID. The schema retains argName as an optional override; absent the
+// override, the binder picks the first live datasource matching dsType
+// and injects its UID server-side.
 //
 // tenantType gates the call to orgs that carry that tenant type
 // (TenantTypeData for metrics/logs/traces/rules; TenantTypeAlerting is
@@ -116,8 +124,8 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 //
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
 // "datasource_uid" (snake_case) for alerting_manage_rules.
-func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind, argName string, t mcpgrafana.Tool) {
-	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, tenantType, kind, argName, t))
+func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
+	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, tenantType, dsType, argName, t))
 }
 
 // bindDatasourceFanoutTool registers a read-only upstream tool that
@@ -182,7 +190,7 @@ func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argN
 // Cortex-style ruler API. Mimir registers as plugin type "prometheus".
 func isRulerType(t string) bool {
 	t = strings.ToLower(t)
-	return strings.Contains(t, grafana.DSTypePrometheus) || strings.Contains(t, grafana.DSTypeLoki)
+	return strings.Contains(t, string(grafana.DSTypePrometheus)) || strings.Contains(t, string(grafana.DSTypeLoki))
 }
 
 func textOf(r *mcp.CallToolResult) string {
@@ -210,20 +218,27 @@ func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
 }
 
 // withOrg returns a copy of an upstream tool definition with an "org"
-// argument prepended (string, required). When replaceArg is non-empty,
-// that argument is removed from the LLM-visible schema (Properties +
-// Required) — used for the datasource-uid arg the binder fills
-// server-side.
+// argument prepended (string, required). When demoteArg is non-empty,
+// that argument is kept in the schema but moved out of Required and
+// its description gets datasourceUIDHint appended — the LLM sees it as
+// an optional override and the binder fills it server-side when
+// omitted.
 //
 // Properties map and Required slice are deep-copied; the input is never
 // mutated. Panic at registration, not per-request — every wrapped tool
 // is enumerated by RegisterAll, so a collision shows up at process start.
-func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
+func withOrg(t mcp.Tool, demoteArg string) mcp.Tool {
 	out := t
 	props := make(map[string]any, len(t.InputSchema.Properties)+1)
 	maps.Copy(props, t.InputSchema.Properties)
-	if replaceArg != "" {
-		delete(props, replaceArg)
+	if demoteArg != "" {
+		if cur, ok := props[demoteArg].(map[string]any); ok {
+			merged := make(map[string]any, len(cur))
+			maps.Copy(merged, cur)
+			desc, _ := merged["description"].(string)
+			merged["description"] = strings.TrimSpace(desc + " " + datasourceUIDHint)
+			props[demoteArg] = merged
+		}
 	}
 	if _, collides := props["org"]; collides {
 		panic(fmt.Sprintf("tools: tool %q already declares an 'org' argument; binder cannot add its own", t.Name))
@@ -237,7 +252,7 @@ func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 	req := make([]string, 0, len(t.InputSchema.Required)+1)
 	req = append(req, "org")
 	for _, r := range t.InputSchema.Required {
-		if r == replaceArg {
+		if r == demoteArg {
 			continue
 		}
 		req = append(req, r)
@@ -247,31 +262,48 @@ func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 }
 
 // wrap builds the tool-handler that performs authz + context setup, then
-// delegates to upstream's tool handler. kind == "" skips the datasource
-// resolution and tenant-type checks (org-only path); kind != "" requires
-// argName to be the schema arg the upstream handler reads the UID from
-// and a tenantType the org must carry.
-func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
+// delegates to upstream's tool handler. dsType == "" skips the
+// datasource resolution and tenant-type checks (org-only path); a
+// non-empty dsType triggers datasource resolution: caller-supplied
+// argName overrides; otherwise the first live datasource of dsType is
+// picked and its UID injected.
+func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		needsTenant := kind != ""
+		needsTenant := dsType != ""
 		org, errRes := b.requireOrg(ctx, req, role, tenantType, needsTenant)
 		if errRes != nil {
 			return errRes, nil
 		}
-		if kind != "" {
-			ds, ok := org.FindDatasource(kind)
-			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("org %q has no %s datasource configured", org.Name, kind)), nil
-			}
-			uid, err := b.grafana.LookupDatasourceUIDByID(ctx, grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}, ds.ID)
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("datasource lookup", err), nil
-			}
-			if err := injectArg(&req, argName, uid); err != nil {
-				return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
-			}
+		ctx = b.attachGrafana(ctx, org.OrgID)
+		if dsType == "" {
+			return upstream.Handler(ctx, req)
 		}
-		return upstream.Handler(b.attachGrafana(ctx, org.OrgID), req)
+
+		opts := grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}
+
+		if uid := req.GetString(argName, ""); uid != "" {
+			ds, err := b.grafana.LookupDatasourceByUID(ctx, opts, uid)
+			if err != nil {
+				return mcp.NewToolResultErrorFromErr(argName, err), nil
+			}
+			if !grafana.MatchesType(ds, dsType) {
+				return mcp.NewToolResultError(fmt.Sprintf("datasource %q is type %q, not compatible with %s tools", uid, ds.Type, dsType)), nil
+			}
+			return upstream.Handler(ctx, req)
+		}
+
+		dss, err := b.grafana.ListDatasources(ctx, opts)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("list datasources", err), nil
+		}
+		matches := grafana.FilterDatasourcesByType(dss, dsType)
+		if len(matches) == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("org %q has no %s datasource", org.Name, dsType)), nil
+		}
+		if err := injectArg(&req, argName, matches[0].UID); err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		}
+		return upstream.Handler(ctx, req)
 	}
 }
 

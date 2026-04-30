@@ -2,8 +2,6 @@ package authz
 
 import (
 	"slices"
-
-	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 // TenantType is the authz-owned enum of what a tenant can access. Mirrors
@@ -45,7 +43,6 @@ type Organization struct {
 	OrgID       int64
 	Role        Role
 	Tenants     []Tenant
-	Datasources []grafana.Datasource
 }
 
 // HasTenantType returns true if any tenant on this org supports the given type
@@ -58,12 +55,6 @@ func (o Organization) HasTenantType(want TenantType) bool {
 		}
 	}
 	return false
-}
-
-// FindDatasource picks the datasource backing the given kind via
-// substring matching on Datasource.Name (see grafana.MatchKind).
-func (o Organization) FindDatasource(kind grafana.DatasourceKind) (grafana.Datasource, bool) {
-	return grafana.MatchKind(o.Datasources, kind)
 }
 
 // cloneTenants deep-copies the slice and each entry's Types slice.

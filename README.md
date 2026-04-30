@@ -112,11 +112,26 @@ Tools are exposed verbatim under their upstream Tempo MCP names (kebab-case):
 This MCP exposes only tools; LLM clients invoke them more reliably
 than resource URIs or prompts.
 
-Datasource selection is per-org: tools match datasources from
-`status.dataSources[]` by name substring (`mimir`, `loki`, `tempo`,
-`alertmanager`). The tenant header is already baked into the datasource JSON
-by observability-operator, so the MCP only picks the right datasource and
-lets Grafana apply the header.
+Datasource selection is per-org and live: each tool call fetches the
+org's datasource list from Grafana (`/api/datasources`) and picks the
+first entry whose plugin type matches the tool's backend (Mimir tools
+take `prometheus`, Loki tools take `loki`, etc.). The tenant header is
+baked into the datasource JSON by observability-operator, so the MCP
+only picks the right datasource and lets Grafana apply the header.
+
+The default first-match is the multi-tenant aggregate (`gs-mimir`,
+`gs-loki`) — the right choice for org-wide queries. To scope a query
+to a specific tenant, pass the optional `datasourceUid` argument
+(snake-case `datasource_uid` on `alerting_manage_rules`, which keeps
+upstream's quirk). Operator-managed mono-tenant datasources
+follow the convention `gs-{kind}-{tenant}`; call `list_datasources` to
+discover available UIDs. Caller-supplied UIDs are validated against
+the org's live datasource list and the expected plugin type — a UID
+from another org or wrong type is rejected before the upstream call.
+
+`alerting_manage_rules` is the exception: with no `datasource_uid` it
+fans out across every datasource where Grafana's `manageAlerts` flag
+is set, returning per-DS results merged into a stable envelope.
 
 Caller identity is propagated to Grafana via `X-Grafana-User` on every
 downstream request so Grafana's audit log attributes to the OIDC subject

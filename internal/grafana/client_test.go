@@ -329,67 +329,6 @@ func TestClient_LookupUser_ErrorPaths(t *testing.T) {
 	}
 }
 
-// TestClient_LookupDatasourceUIDByID covers the GET /api/datasources/{id}
-// flow that resolves a numeric ID into a UID. Three branches matter:
-// happy path returns uid; an empty uid in the response is rejected;
-// a 404 propagates as error (not silently empty — a missing datasource
-// at lookup time is a real failure).
-func TestClient_LookupDatasourceUIDByID(t *testing.T) {
-	cases := []struct {
-		name    string
-		status  int
-		body    string
-		wantUID string
-		wantErr string
-	}{
-		{"happy", http.StatusOK, `{"uid":"abc-123","name":"mimir"}`, "abc-123", ""},
-		{"missing_uid", http.StatusOK, `{"name":"mimir"}`, "", "no uid"},
-		{"not_found", http.StatusNotFound, `{"message":"not found"}`, "", "404"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			var gotPath string
-			ts, client := newTestServer(func(w http.ResponseWriter, r *http.Request) {
-				gotPath = r.URL.Path
-				w.WriteHeader(c.status)
-				_, _ = w.Write([]byte(c.body))
-			})
-			defer ts.Close()
-
-			uid, err := client.LookupDatasourceUIDByID(context.Background(), RequestOpts{OrgID: 7}, 42)
-			if c.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
-					t.Fatalf("err = %v, want substring %q", err, c.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if uid != c.wantUID {
-				t.Errorf("uid = %q, want %q", uid, c.wantUID)
-			}
-			if gotPath != "/api/datasources/42" {
-				t.Errorf("path = %q, want /api/datasources/42", gotPath)
-			}
-		})
-	}
-}
-
-// TestClient_LookupDatasourceUIDByID_RejectsBadID guards the cheap input
-// validation: a non-positive ID would otherwise produce /api/datasources/0
-// or /api/datasources/-1, both of which Grafana 404s on, but the error
-// would be confusing.
-func TestClient_LookupDatasourceUIDByID_RejectsBadID(t *testing.T) {
-	c, _ := New(Config{URL: "http://x", Token: "t"})
-	if _, err := c.LookupDatasourceUIDByID(context.Background(), RequestOpts{}, 0); err == nil {
-		t.Fatal("expected error for id=0")
-	}
-	if _, err := c.LookupDatasourceUIDByID(context.Background(), RequestOpts{}, -5); err == nil {
-		t.Fatal("expected error for id=-5")
-	}
-}
-
 // TestClient_ErrorBodyCapped proves the error-path readLimited call obeys
 // the body cap. A compromised or misbehaving upstream returning a multi-GiB
 // error response must not OOM the MCP.
@@ -462,6 +401,71 @@ func TestClient_ListDatasources_ErrorOnNon2xx(t *testing.T) {
 	defer ts.Close()
 	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err == nil {
 		t.Fatal("expected error on 403, got nil")
+	}
+}
+
+func TestClient_LookupDatasourceByUID(t *testing.T) {
+	const listBody = `[
+		{"id":1,"uid":"u1","name":"prom","type":"prometheus","jsonData":{"manageAlerts":true}},
+		{"id":2,"uid":"u2","name":"loki","type":"loki","jsonData":{"manageAlerts":false}}
+	]`
+	cases := []struct {
+		name    string
+		uid     string
+		body    string
+		wantDS  Datasource
+		wantErr string
+	}{
+		{
+			name:   "hit",
+			uid:    "u2",
+			body:   listBody,
+			wantDS: Datasource{ID: 2, UID: "u2", Name: "loki", Type: "loki", ManageAlerts: false},
+		},
+		{
+			name:    "miss with non-empty list",
+			uid:     "unknown",
+			body:    listBody,
+			wantErr: `datasource "unknown" not found in org`,
+		},
+		{
+			name:    "miss with empty list",
+			uid:     "u1",
+			body:    `[]`,
+			wantErr: `datasource "u1" not found in org`,
+		},
+		{
+			name:    "empty uid is rejected without HTTP call",
+			uid:     "",
+			body:    listBody,
+			wantErr: "datasource uid is required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits int
+			ts, c := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
+				hits++
+				_, _ = w.Write([]byte(tc.body))
+			})
+			defer ts.Close()
+			got, err := c.LookupDatasourceByUID(context.Background(), RequestOpts{OrgID: 1}, tc.uid)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
+				}
+				if tc.uid == "" && hits != 0 {
+					t.Errorf("empty uid must not hit Grafana; hits=%d", hits)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.wantDS {
+				t.Errorf("ds = %+v, want %+v", got, tc.wantDS)
+			}
+		})
 	}
 }
 

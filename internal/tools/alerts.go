@@ -30,9 +30,10 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 			mcp.WithString("filter", mcp.Description("Alertmanager label matcher, e.g. 'alertname=~\"Kube.*\"' or 'severity=\"critical\"'")),
 			mcp.WithNumber("page", mcp.Description("0-based page index (default 0)")),
 			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
+			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
+			org, dsID, err := resolveDatasource(ctx, az, gc, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("authz", err), nil
 			}
@@ -66,13 +67,14 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 			mcp.WithDescription("Return the full Alertmanager alert object for a single fingerprint: labels, annotations, timestamps, generatorURL, silencedBy/inhibitedBy. Use after list_alerts."),
 			orgArg(),
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
+			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			fp, err := req.RequireString("fingerprint")
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("missing arg", err), nil
 			}
-			org, dsID, err := resolveDatasource(ctx, az, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSKindAlertmanager)
+			org, dsID, err := resolveDatasource(ctx, az, gc, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
 			if err != nil {
 				return mcp.NewToolResultErrorFromErr("authz", err), nil
 			}

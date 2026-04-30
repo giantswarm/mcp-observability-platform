@@ -41,27 +41,17 @@ func fakeGrafanaServer(t *testing.T) *httptest.Server {
 }
 
 // fakeGrafana implements grafana.Client by embedding the interface (so any
-// method we don't override panics) plus a stub for the one method the
-// binder calls.
+// method we don't override panics) plus stubs for the methods the binder
+// calls. listDS drives both ListDatasources and LookupDatasourceByUID
+// so tests need to configure only one source of truth per fixture.
 type fakeGrafana struct {
 	grafana.Client // embedded — unused methods nil-panic
-	uid            string
-	uidErr         error
-	gotID          int64
-	gotOpts        grafana.RequestOpts
 
-	listDS  []grafana.Datasource
-	listErr error
-	gotList grafana.RequestOpts
-}
-
-func (f *fakeGrafana) LookupDatasourceUIDByID(_ context.Context, opts grafana.RequestOpts, id int64) (string, error) {
-	f.gotID = id
-	f.gotOpts = opts
-	if f.uidErr != nil {
-		return "", f.uidErr
-	}
-	return f.uid, nil
+	listDS    []grafana.Datasource
+	listErr   error
+	lookupErr error
+	gotList   grafana.RequestOpts
+	gotLookup string
 }
 
 func (f *fakeGrafana) ListDatasources(_ context.Context, opts grafana.RequestOpts) ([]grafana.Datasource, error) {
@@ -70,6 +60,19 @@ func (f *fakeGrafana) ListDatasources(_ context.Context, opts grafana.RequestOpt
 		return nil, f.listErr
 	}
 	return f.listDS, nil
+}
+
+func (f *fakeGrafana) LookupDatasourceByUID(_ context.Context, _ grafana.RequestOpts, uid string) (grafana.Datasource, error) {
+	f.gotLookup = uid
+	if f.lookupErr != nil {
+		return grafana.Datasource{}, f.lookupErr
+	}
+	for _, ds := range f.listDS {
+		if ds.UID == uid {
+			return ds, nil
+		}
+	}
+	return grafana.Datasource{}, fmt.Errorf("datasource %q not found in org", uid)
 }
 
 // oauthCtx attaches a caller identity to ctx; CallerSubject(ctx) returns sub.
@@ -104,10 +107,12 @@ type capturedCall struct {
 	toolName string
 }
 
-// orgWithDatasources is a stock authz.Organization fixture. Tenants
-// carry both data and alerting types so the binder's tenant-type gate
-// passes regardless of which kind a test exercises.
-func orgWithDatasources() authz.Organization {
+// orgFixture is a stock authz.Organization. Tenants carry both data and
+// alerting types so the binder's tenant-type gate passes regardless of
+// which kind a test exercises. Datasources are no longer part of the
+// authz domain entity — fixtures configure them on the fakeGrafana via
+// listDS.
+func orgFixture() authz.Organization {
 	return authz.Organization{
 		Name:        "acme",
 		DisplayName: "Acme",
@@ -115,10 +120,6 @@ func orgWithDatasources() authz.Organization {
 		Role:        authz.RoleViewer,
 		Tenants: []authz.Tenant{
 			{Name: "acme", Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting}},
-		},
-		Datasources: []grafana.Datasource{
-			{ID: 11, Name: "mimir-acme"},
-			{ID: 22, Name: "loki-acme"},
 		},
 	}
 }
@@ -159,24 +160,26 @@ func TestWithOrg_PanicsOnOrgCollision(t *testing.T) {
 	_ = withOrg(in, "")
 }
 
-func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
+func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
 	in := mcp.NewTool("foo", mcp.WithDescription("d"))
 	in.InputSchema.Properties = map[string]any{
-		"datasourceUid": map[string]any{"type": "string"},
+		"datasourceUid": map[string]any{"type": "string", "description": "Upstream desc."},
 		"y":             map[string]any{"type": "number"},
 	}
 	in.InputSchema.Required = []string{"datasourceUid", "y"}
 
 	out := withOrg(in, datasourceUIDArg)
 
-	if _, has := out.InputSchema.Properties["datasourceUid"]; has {
-		t.Error("output still exposes datasourceUid in Properties; binder fills it server-side")
+	prop, ok := out.InputSchema.Properties["datasourceUid"].(map[string]any)
+	if !ok {
+		t.Fatal("output dropped datasourceUid; demote should keep it visible")
+	}
+	desc, _ := prop["description"].(string)
+	if !strings.Contains(desc, "Upstream desc.") || !strings.Contains(desc, "list_datasources") {
+		t.Errorf("description = %q, want upstream prefix + datasourceUIDHint suffix", desc)
 	}
 	if slices.Contains(out.InputSchema.Required, "datasourceUid") {
-		t.Error("output still requires datasourceUid")
-	}
-	if _, ok := out.InputSchema.Properties["org"]; !ok {
-		t.Error("output missing 'org' in Properties")
+		t.Error("output still requires datasourceUid; demote moves it out of Required")
 	}
 	if got := out.InputSchema.Required; len(got) != 2 || got[0] != "org" || got[1] != "y" {
 		t.Errorf("Required = %v, want [org y]", got)
@@ -184,6 +187,9 @@ func TestWithOrg_ReplaceArg_RemovesDatasourceUid(t *testing.T) {
 	// Input must not have been mutated.
 	if _, has := in.InputSchema.Properties["org"]; has {
 		t.Error("withOrg mutated input.Properties")
+	}
+	if origDesc, _ := in.InputSchema.Properties["datasourceUid"].(map[string]any)["description"].(string); origDesc != "Upstream desc." {
+		t.Errorf("withOrg mutated input description: %q", origDesc)
 	}
 	if !slices.Contains(in.InputSchema.Required, "datasourceUid") {
 		t.Error("withOrg mutated input.Required")
@@ -267,7 +273,7 @@ func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 }
 
 func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
-	az := &authztest.Fake{Org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgFixture()}
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
@@ -294,7 +300,7 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 }
 
 func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
-	az := &authztest.Fake{Org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgFixture()}
 	ts := fakeGrafanaServer(t)
 	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
 	captured := &capturedCall{}
@@ -316,14 +322,28 @@ func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 
 // ---------- Datasource path ----------
 
-func TestBinder_Datasource_InjectsUID(t *testing.T) {
+// threeMimirsAndOneLoki mirrors the graveler/giantswarm shape: a
+// multi-tenant aggregate, two mono-tenant rulers, plus a Loki for
+// type-mismatch tests. Order is the order Grafana would return.
+func threeMimirsAndOneLoki() []grafana.Datasource {
+	return []grafana.Datasource{
+		{ID: 2, UID: "u-mimir", Name: "GS Mimir", Type: "prometheus", ManageAlerts: false},
+		{ID: 18, UID: "u-mimir-gs", Name: "GS Mimir (giantswarm)", Type: "prometheus", ManageAlerts: true},
+		{ID: 21, UID: "u-mimir-ne", Name: "GS Mimir (notempty)", Type: "prometheus", ManageAlerts: true},
+		{ID: 30, UID: "u-loki", Name: "GS Loki", Type: "loki", ManageAlerts: true},
+	}
+}
+
+// Default behaviour: no datasourceUid arg → first matching DS by type
+// is picked (the multi-tenant aggregate on graveler).
+func TestBinder_Single_DefaultPicksFirstMatch(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	az := &authztest.Fake{Org: orgWithDatasources()}
-	gc := &fakeGrafana{uid: "mimir-uid-xyz"}
+	az := &authztest.Fake{Org: orgFixture()}
+	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg,
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool("query_prometheus", []string{"datasourceUid"}, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up"}}}
@@ -334,31 +354,111 @@ func TestBinder_Datasource_InjectsUID(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %+v", res)
 	}
-	if got := gc.gotID; got != 11 {
-		t.Errorf("looked up datasource id %d, want 11 (mimir-acme)", got)
+	if got := captured.args["datasourceUid"]; got != "u-mimir" {
+		t.Errorf("datasourceUid = %v, want u-mimir (first prometheus match)", got)
 	}
-	if captured.args["datasourceUid"] != "mimir-uid-xyz" {
-		t.Errorf("datasourceUid = %v, want mimir-uid-xyz", captured.args["datasourceUid"])
-	}
-	// Original args preserved.
 	if captured.args["expr"] != "up" {
 		t.Errorf("expr arg lost: %v", captured.args["expr"])
 	}
-	// org arg preserved (visible to upstream too — harmless since upstream ignores unknown args).
-	if captured.args["org"] != "acme" {
-		t.Errorf("org arg lost: %v", captured.args["org"])
+	if gc.gotLookup != "" {
+		t.Errorf("LookupDatasourceByUID called with %q on default path; expected ListDatasources only", gc.gotLookup)
 	}
 }
 
-func TestBinder_Datasource_NoMatchingDatasource(t *testing.T) {
-	org := orgWithDatasources()
-	org.Datasources = []grafana.Datasource{{ID: 99, Name: "tempo-only"}} // no mimir
-	az := &authztest.Fake{Org: org}
+// Caller-supplied UID overrides the first-match default and is forwarded
+// to upstream verbatim, after type validation.
+func TestBinder_Single_ExplicitUIDOverrides(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil)
+	az := &authztest.Fake{Org: orgFixture()}
+	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
+		stubTool("query_prometheus", nil, captured))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "expr": "up", "datasourceUid": "u-mimir-gs"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %+v", res)
+	}
+	if got := captured.args["datasourceUid"]; got != "u-mimir-gs" {
+		t.Errorf("upstream got datasourceUid = %v, want u-mimir-gs", got)
+	}
+	if gc.gotLookup != "u-mimir-gs" {
+		t.Errorf("LookupDatasourceByUID called with %q, want u-mimir-gs", gc.gotLookup)
+	}
+	if gc.gotList.OrgID != 0 {
+		t.Errorf("ListDatasources should not be called on explicit-UID path; OrgID=%d", gc.gotList.OrgID)
+	}
+}
+
+// Caller-supplied UID of the wrong type → error before upstream is hit.
+func TestBinder_Single_RejectsUIDFromOtherType(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgFixture()}
+	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+
+	captured := &capturedCall{}
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
+		stubTool("query_prometheus", nil, captured))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "datasourceUid": "u-loki"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError on type mismatch")
+	}
+	if !strings.Contains(textOf(res), "loki") {
+		t.Errorf("error should mention actual type; got %q", textOf(res))
+	}
+	if captured.toolName != "" {
+		t.Error("upstream handler must not run on type mismatch")
+	}
+}
+
+// Caller-supplied UID not in the org's datasource list → error.
+func TestBinder_Single_RejectsUIDNotInOrg(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgFixture()}
+	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+
+	captured := &capturedCall{}
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
+		stubTool("query_prometheus", nil, captured))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": "acme", "datasourceUid": "forged-uid"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError on unknown UID")
+	}
+	if captured.toolName != "" {
+		t.Error("upstream handler must not run on unknown UID")
+	}
+}
+
+// No live datasource of dsType → error before upstream is hit.
+func TestBinder_Single_NoMatchingDatasource(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgFixture()}
+	gc := &fakeGrafana{listDS: []grafana.Datasource{
+		{ID: 99, UID: "u-tempo", Name: "tempo-only", Type: "tempo"},
+	}}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+
+	captured := &capturedCall{}
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
+		stubTool("query_prometheus", nil, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -373,13 +473,16 @@ func TestBinder_Datasource_NoMatchingDatasource(t *testing.T) {
 	}
 }
 
-func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
-	az := &authztest.Fake{Org: orgWithDatasources()}
-	gc := &fakeGrafana{uidErr: errors.New("grafana down")}
-	b, _ := newGFBinder(az, gc, "http://g", "tok", nil)
+// ListDatasources error → tool error, upstream not called.
+func TestBinder_Single_ListDatasourcesError(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgFixture()}
+	gc := &fakeGrafana{listErr: errors.New("grafana down")}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 
 	captured := &capturedCall{}
-	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg, stubTool("t", []string{"datasourceUid"}, captured))
+	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
+		stubTool("query_prometheus", nil, captured))
 
 	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": "acme"}}}
 	res, err := h(context.Background(), req)
@@ -387,10 +490,10 @@ func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
 		t.Fatalf("Go error: %v", err)
 	}
 	if !res.IsError {
-		t.Fatal("expected IsError on UID lookup failure")
+		t.Fatal("expected IsError when ListDatasources fails")
 	}
 	if captured.toolName != "" {
-		t.Error("upstream handler should not be called when UID lookup fails")
+		t.Error("upstream handler must not run when ListDatasources fails")
 	}
 }
 
@@ -428,7 +531,7 @@ func stubFanoutTool(name string, cap *fanoutStub) mcpgrafana.Tool {
 
 func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	az := &authztest.Fake{Org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{
 		listDS: []grafana.Datasource{
 			{ID: 1, UID: "u1", Name: "mimir-mt", Type: "prometheus", ManageAlerts: false},
@@ -494,7 +597,7 @@ func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 
 func TestBinder_Fanout_EscapeHatch_BypassesListing(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	az := &authztest.Fake{Org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listErr: errors.New("ListDatasources should not be called")}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 	cap := &fanoutStub{}
@@ -521,7 +624,7 @@ func TestBinder_Fanout_EscapeHatch_BypassesListing(t *testing.T) {
 
 func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	az := &authztest.Fake{Org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{
 		listDS: []grafana.Datasource{
 			{ID: 1, UID: "u1", Name: "good", Type: "prometheus", ManageAlerts: true},
@@ -570,7 +673,7 @@ func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 
 func TestBinder_Fanout_ListDatasourcesError(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	az := &authztest.Fake{Org: orgWithDatasources()}
+	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listErr: errors.New("grafana down")}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
 	cap := &fanoutStub{}

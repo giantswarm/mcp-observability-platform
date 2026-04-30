@@ -20,11 +20,12 @@ func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
 	return grafana.RequestOpts{OrgID: orgID, Caller: authz.CallerSubject(ctx)}
 }
 
-// resolveDatasource reads "org" from req, runs the three checks every
-// datasource-facing tool needs (role on org, tenant type, datasource
-// of kind), and returns (org, dsID). Errors are caller-ready strings
-// so handlers can surface them unchanged via mcp.NewToolResultError.
-func resolveDatasource(ctx context.Context, az authz.Authorizer, req mcp.CallToolRequest, role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind) (authz.Organization, int64, error) {
+// resolveDatasource reads "org" from req, runs authz + tenant-type
+// gating, then resolves the target datasource via live ListDatasources:
+// caller-supplied datasource_uid overrides; otherwise the first DS of
+// dsType wins. Returns (org, dsID). Errors are caller-ready strings so
+// handlers can surface them unchanged via mcp.NewToolResultError.
+func resolveDatasource(ctx context.Context, az authz.Authorizer, gc grafana.Client, req mcp.CallToolRequest, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType) (authz.Organization, int64, error) {
 	orgRef, err := req.RequireString("org")
 	if err != nil {
 		return authz.Organization{}, 0, err
@@ -36,9 +37,24 @@ func resolveDatasource(ctx context.Context, az authz.Authorizer, req mcp.CallToo
 	if tenantType != "" && !org.HasTenantType(tenantType) {
 		return authz.Organization{}, 0, fmt.Errorf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType)
 	}
-	ds, ok := org.FindDatasource(kind)
-	if !ok {
-		return authz.Organization{}, 0, fmt.Errorf("org %q has no %s datasource", orgRef, kind)
+	opts := grafanaOpts(ctx, org.OrgID)
+	if uid := req.GetString(datasourceUIDArg, ""); uid != "" {
+		ds, err := gc.LookupDatasourceByUID(ctx, opts, uid)
+		if err != nil {
+			return authz.Organization{}, 0, fmt.Errorf("%s: %w", datasourceUIDArg, err)
+		}
+		if !grafana.MatchesType(ds, dsType) {
+			return authz.Organization{}, 0, fmt.Errorf("datasource %q is type %q, not %s", uid, ds.Type, dsType)
+		}
+		return org, ds.ID, nil
 	}
-	return org, ds.ID, nil
+	dss, err := gc.ListDatasources(ctx, opts)
+	if err != nil {
+		return authz.Organization{}, 0, fmt.Errorf("list datasources: %w", err)
+	}
+	matches := grafana.FilterDatasourcesByType(dss, dsType)
+	if len(matches) == 0 {
+		return authz.Organization{}, 0, fmt.Errorf("org %q has no %s datasource", orgRef, dsType)
+	}
+	return org, matches[0].ID, nil
 }
