@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -28,6 +29,13 @@ var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/inter
 // body can't OOM the MCP pod. 16 MiB is well above any realistic
 // query payload and far below pod RSS.
 const maxResponseBytes = 16 << 20
+
+// defaultDatasourceCacheTTL bounds how stale a cached ListDatasources
+// response may be. 30s matches the cadence at which observability-operator
+// reconciles datasources, so a freshly added/removed DS surfaces within
+// one TTL without paying a Grafana RTT on every alerting fanout or
+// single-DS resolve.
+const defaultDatasourceCacheTTL = 30 * time.Second
 
 // redactedHeader wraps a secret header value (auth token) so that %v / %#v
 // prints of the Client never leak the credential. Use string(r) to get the
@@ -77,6 +85,23 @@ type client struct {
 	base       *url.URL
 	authHeader redactedHeader
 	http       *http.Client
+
+	// dsCache caches ListDatasources by OrgID. sync.Map fits because
+	// the keyspace (one entry per org seen) is small and writes are
+	// rare relative to reads. now/dsCacheTTL are pluggable for tests;
+	// defaults are set in New.
+	dsCache    sync.Map
+	dsCacheTTL time.Duration
+	now        func() time.Time
+}
+
+// dsCacheEntry is the value half of client.dsCache. dss is shared
+// across callers — Datasource fields are value types, so mutation via
+// one caller's slice would be visible to another's. Treat the slice as
+// read-only at every call site (current call sites only iterate).
+type dsCacheEntry struct {
+	dss      []Datasource
+	deadline time.Time
 }
 
 // New validates cfg and returns a Client. Token and BasicAuth are
@@ -121,7 +146,13 @@ func New(cfg Config) (Client, error) {
 	if cfg.BasicAuth != "" {
 		authHeader = redactedHeader("Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.BasicAuth)))
 	}
-	return &client{base: u, authHeader: authHeader, http: hc}, nil
+	return &client{
+		base:       u,
+		authHeader: authHeader,
+		http:       hc,
+		dsCacheTTL: defaultDatasourceCacheTTL,
+		now:        time.Now,
+	}, nil
 }
 
 // RequestOpts controls org scoping and audit attribution on a single request.
@@ -292,7 +323,24 @@ func (c *client) LookupDatasourceByUID(ctx context.Context, opts RequestOpts, ui
 // ListDatasources returns every datasource visible to the SA in the
 // given org, with the jsonData.manageAlerts flag parsed. Grafana
 // defaults manageAlerts to true and omits it when true; absent ⇒ true.
+//
+// Results are cached per-OrgID for dsCacheTTL (30s by default). Errors
+// are not cached.
 func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error) {
+	if v, ok := c.dsCache.Load(opts.OrgID); ok {
+		if entry := v.(dsCacheEntry); c.now().Before(entry.deadline) {
+			return entry.dss, nil
+		}
+	}
+	dss, err := c.fetchDatasources(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	c.dsCache.Store(opts.OrgID, dsCacheEntry{dss: dss, deadline: c.now().Add(c.dsCacheTTL)})
+	return dss, nil
+}
+
+func (c *client) fetchDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error) {
 	body, err := c.fetchJSON(ctx, "/api/datasources", nil, opts)
 	if err != nil {
 		return nil, err
