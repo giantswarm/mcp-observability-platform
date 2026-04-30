@@ -10,7 +10,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // newTestServer wraps handler with a default Content-Type: application/json
@@ -466,6 +469,162 @@ func TestClient_LookupDatasourceByUID(t *testing.T) {
 				t.Errorf("ds = %+v, want %+v", got, tc.wantDS)
 			}
 		})
+	}
+}
+
+// onePromDatasourceBody is the minimal /api/datasources response shared
+// by the simple cache tests. Tests that need richer payloads (multiple
+// datasources, manageAlerts variants) inline their own body.
+const onePromDatasourceBody = `[{"id":1,"uid":"u1","name":"prom","type":"prometheus"}]`
+
+// newCacheTestServer is newTestServer + a hit counter and a fixed-clock
+// hook. It returns the *client so cache TTL / clock can be driven from
+// the test deterministically.
+func newCacheTestServer(t *testing.T, body string) (*httptest.Server, *client, *int64, *atomic.Int64) {
+	t.Helper()
+	var hits int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	c, err := New(Config{URL: ts.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	impl := c.(*client)
+	var nowNs atomic.Int64
+	nowNs.Store(time.Now().UnixNano())
+	impl.now = func() time.Time { return time.Unix(0, nowNs.Load()) }
+	return ts, impl, &hits, &nowNs
+}
+
+func TestClient_ListDatasources_CachesPerOrg(t *testing.T) {
+	body := `[{"id":1,"uid":"u1","name":"prom","type":"prometheus","jsonData":{"manageAlerts":true}}]`
+	ts, c, hits, _ := newCacheTestServer(t, body)
+	defer ts.Close()
+
+	for i := 0; i < 3; i++ {
+		if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if got := atomic.LoadInt64(hits); got != 1 {
+		t.Errorf("upstream hit %d times, want 1 (TTL not honoured)", got)
+	}
+}
+
+func TestClient_ListDatasources_CacheTTLExpiry(t *testing.T) {
+	ts, c, hits, nowNs := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+
+	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	nowNs.Add(int64(c.dsCacheTTL) + int64(time.Second))
+	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+		t.Fatalf("post-TTL: %v", err)
+	}
+	if got := atomic.LoadInt64(hits); got != 2 {
+		t.Errorf("upstream hit %d times, want 2 (TTL did not expire)", got)
+	}
+}
+
+func TestClient_ListDatasources_CachePerOrgIsolation(t *testing.T) {
+	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+
+	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+		t.Fatalf("org 1: %v", err)
+	}
+	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 2}); err != nil {
+		t.Fatalf("org 2: %v", err)
+	}
+	if got := atomic.LoadInt64(hits); got != 2 {
+		t.Errorf("upstream hit %d times, want 2 (per-org isolation broken)", got)
+	}
+}
+
+// Errors must NOT poison the cache: a transient 5xx followed by a 200
+// should result in two upstream hits (no stale-error replay) and the
+// caller should see the success.
+func TestClient_ListDatasources_ErrorNotCached(t *testing.T) {
+	var hits int64
+	var fail atomic.Bool
+	fail.Store(true)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&hits, 1)
+		if fail.Load() {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`upstream down`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(onePromDatasourceBody))
+	}))
+	defer ts.Close()
+	c, _ := New(Config{URL: ts.URL, Token: "t"})
+
+	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err == nil {
+		t.Fatal("expected error from 502")
+	}
+	fail.Store(false)
+	got, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1})
+	if err != nil {
+		t.Fatalf("retry after recovery: %v", err)
+	}
+	if len(got) != 1 || got[0].UID != "u1" {
+		t.Errorf("retry result = %+v, want u1", got)
+	}
+	if h := atomic.LoadInt64(&hits); h != 2 {
+		t.Errorf("upstream hit %d times, want 2 (error was cached)", h)
+	}
+}
+
+// LookupDatasourceByUID is implemented in terms of ListDatasources, so
+// the cache must transparently apply: two consecutive lookups for the
+// same org should result in a single /api/datasources fetch.
+func TestClient_LookupDatasourceByUID_SharesCache(t *testing.T) {
+	body := `[
+		{"id":1,"uid":"u1","name":"prom","type":"prometheus"},
+		{"id":2,"uid":"u2","name":"loki","type":"loki"}
+	]`
+	ts, c, hits, _ := newCacheTestServer(t, body)
+	defer ts.Close()
+
+	if _, err := c.LookupDatasourceByUID(context.Background(), RequestOpts{OrgID: 1}, "u1"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if _, err := c.LookupDatasourceByUID(context.Background(), RequestOpts{OrgID: 1}, "u2"); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if got := atomic.LoadInt64(hits); got != 1 {
+		t.Errorf("upstream hit %d times, want 1 (LookupDatasourceByUID does not reuse cache)", got)
+	}
+}
+
+// Concurrent ListDatasources calls for the same org must not race the
+// cache map. With -race this exercises the sync.Map path; without it
+// the test still asserts no goroutine returned an error.
+func TestClient_ListDatasources_ConcurrentSafe(t *testing.T) {
+	ts, c, _, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 32)
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(orgID int64) {
+			defer wg.Done()
+			if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: orgID}); err != nil {
+				errs <- err
+			}
+		}(int64(i % 4))
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent call: %v", err)
 	}
 }
 

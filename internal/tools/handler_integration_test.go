@@ -183,7 +183,7 @@ func TestHandler_ListDatasources_PropagatesOrgID(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
 	}
-	if sawPath != "/api/datasources" {
+	if sawPath != dsListPath {
 		t.Errorf("Grafana path = %q, want /api/datasources", sawPath)
 	}
 	if sawOrgID != "1" {
@@ -224,6 +224,10 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 	}
 }
 
+// dsListPath is Grafana's REST endpoint for the live datasource list —
+// hit by the resolver before any single-DS tool can fan out.
+const dsListPath = "/api/datasources"
+
 // alertmanagerListResp is the live /api/datasources payload the live-fetch
 // resolver expects: one alertmanager-typed datasource with a known id so
 // the proxy URL is predictable.
@@ -236,7 +240,7 @@ func TestHandler_ListSilences(t *testing.T) {
 	var sawPath, sawFilter string
 	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/datasources":
+		case dsListPath:
 			_, _ = w.Write([]byte(alertmanagerListResp))
 		default:
 			sawPath = r.URL.Path
@@ -278,7 +282,7 @@ func TestHandler_GetSilence(t *testing.T) {
 	var sawPath string
 	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/datasources":
+		case dsListPath:
 			_, _ = w.Write([]byte(alertmanagerListResp))
 		default:
 			sawPath = r.URL.Path

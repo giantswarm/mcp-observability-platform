@@ -66,28 +66,7 @@ pod exposes every Grafana org on compromise.
 Needs `observability-operator` coordination — open an issue there
 describing the contract so the dependency is visible from both sides.
 
-### 2. Cache `ListDatasources` per OrgID
-
-The alerting fanout and every single-DS tool (after the live-fetch
-migration) call `grafana.Client.ListDatasources` per request — one
-extra Grafana RTT each. A small per-OrgID TTL cache (~30s) inside
-`grafana.Client` would amortise this without invalidation complexity.
-
-- Wrap `ListDatasources` with a `sync.Map`-backed cache keyed by
-  OrgID; entries carry a deadline. Cache misses fetch and store; hits
-  return the slice unchanged.
-- TTL stays short enough that a freshly added/removed datasource
-  surfaces within ~30s — matches the cadence of operator-driven
-  datasource provisioning.
-- `LookupDatasourceByUID` reuses the cached list (already does — it
-  iterates `ListDatasources` output).
-
-No operator-side change required. The wider §2-migration (live-fetch
-for every single-DS tool, deleting `MatchKind` /
-`LookupDatasourceUIDByID` / `Organization.Datasources`) shipped with
-the optional `datasourceUid` override.
-
-### 3. Write tools gated on Editor / Admin
+### 2. Write tools gated on Editor / Admin
 
 The authz model (`Role` with Editor/Admin,
 `GrafanaOrganization.spec.rbac.editors/admins`) supports this;
@@ -96,7 +75,7 @@ writes that match upstream:
 
 - `create_silence(org, matchers, duration, comment)` — first slice,
   Editor-gated. Custom (no upstream equivalent), AM v2
-  `POST /api/v2/silences`. Depends on §4 landing first so the tool
+  `POST /api/v2/silences`. Depends on §3 landing first so the tool
   ships in the chart's `runtime.disabledTools` and clusters opt in.
 - `create_annotation(org, dashboardUid?, text, tags[])` — bot-driven
   deploy annotations. Delegated (`mcpgrafanatools.CreateAnnotationTool`).
@@ -106,7 +85,7 @@ writes that match upstream:
 Each carries `destructiveHint: true` in MCP annotations; the
 `tool_call` audit line captures full payload for forensics.
 
-### 4. Per-tool enable/disable (deployment-time)
+### 3. Per-tool enable/disable (deployment-time)
 
 Operators should be able to disable individual tools (e.g. all write
 tools in a read-only deployment, `alerting_manage_rules` in clusters
@@ -117,7 +96,7 @@ where alert-rule access is sensitive) without rebuilding.
   skip set once at startup.
 - Helm chart exposes a `runtime.disabledTools: []string` value.
 
-### 5. Self-observability of the MCP itself
+### 4. Self-observability of the MCP itself
 
 Shipped today: per-tool counter + duration histogram + error counter
 on `/metrics` (`internal/observability/`), OTEL tracing, ServiceMonitor
