@@ -196,6 +196,52 @@ func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
 	}
 }
 
+// Regression: upstream mcp-grafana tools are built with MustTool, which
+// stores the schema as RawInputSchema. mcp.Tool.MarshalJSON ignores the
+// structured InputSchema in that case, so the synthetic "org" arg never
+// reached the wire and clients couldn't pass it. withOrg must normalize
+// the raw schema and emit a structured one whose marshaled JSON includes
+// "org" under properties and required.
+func TestWithOrg_HandlesRawInputSchema(t *testing.T) {
+	in := mcp.NewTool("foo", mcp.WithDescription("d"))
+	in.InputSchema = mcp.ToolInputSchema{}
+	in.RawInputSchema = json.RawMessage(`{
+		"type":"object",
+		"properties":{"datasourceUid":{"type":"string","description":"Upstream desc."},"y":{"type":"number"}},
+		"required":["datasourceUid","y"]
+	}`)
+
+	out := withOrg(in, datasourceUIDArg)
+
+	blob, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshal output tool: %v", err)
+	}
+	var marshaled struct {
+		InputSchema struct {
+			Properties map[string]any `json:"properties"`
+			Required   []string       `json:"required"`
+		} `json:"inputSchema"`
+	}
+	if err := json.Unmarshal(blob, &marshaled); err != nil {
+		t.Fatalf("unmarshal marshaled tool: %v", err)
+	}
+	if _, ok := marshaled.InputSchema.Properties["org"].(map[string]any); !ok {
+		t.Errorf("marshaled schema missing 'org' under properties: %s", blob)
+	}
+	if !slices.Contains(marshaled.InputSchema.Required, "org") {
+		t.Errorf("marshaled schema missing 'org' in required: %v", marshaled.InputSchema.Required)
+	}
+	if slices.Contains(marshaled.InputSchema.Required, "datasourceUid") {
+		t.Errorf("demote should drop datasourceUid from required: %v", marshaled.InputSchema.Required)
+	}
+	dsProp, _ := marshaled.InputSchema.Properties["datasourceUid"].(map[string]any)
+	desc, _ := dsProp["description"].(string)
+	if !strings.Contains(desc, "Upstream desc.") || !strings.Contains(desc, "list_datasources") {
+		t.Errorf("description = %q, want upstream prefix + datasourceUIDHint suffix", desc)
+	}
+}
+
 // ---------- newGFBinder ----------
 
 func TestNewGFBinder_Validation(t *testing.T) {
