@@ -36,6 +36,10 @@ type Config struct {
 	ToolTimeout time.Duration
 	// MaxResponseBytes: 0 disables response capping.
 	MaxResponseBytes int
+	// DisabledTools is a name lookup of tools to skip at registration.
+	// Sourced from the --disabled-tools flag (cmd/serve.go); nil = no
+	// filter.
+	DisabledTools map[string]bool
 }
 
 // New constructs the tools-only MCP server. Transport wrapping is the
@@ -78,7 +82,7 @@ func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
 	)
 
-	if err := tools.RegisterAll(ctx, mcp, cfg.Logger, cfg.Authorizer, cfg.OrgLister, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth); err != nil {
+	if err := tools.RegisterAll(ctx, mcp, cfg.Logger, cfg.Authorizer, cfg.OrgLister, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth, cfg.DisabledTools); err != nil {
 		return nil, fmt.Errorf("server: register tools: %w", err)
 	}
 

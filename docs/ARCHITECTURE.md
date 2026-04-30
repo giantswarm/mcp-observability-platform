@@ -87,7 +87,7 @@ security boundaries are, and where to add a new tool.
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
 | `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `ListDatasources`, `LookupDatasourceByUID`, `DatasourceProxy`) plus `Datasource` and `DatasourceType` (`MatchesType` / `FilterDatasourcesByType`). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. `ListDatasources` is cached per-OrgID (30s TTL); `LookupDatasourceByUID` inherits transparently. |
-| `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go` (plus the delegated datasource tools in `orgs.go`). Delegated to Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`, registered through the same `gfBinder.bindDatasourceTool` path: `tempo.go`. Local: `orgs.go` (`list_orgs`), `alerts.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). |
+| `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go`, `examples.go` (plus the delegated datasource tools in `orgs.go`). Delegated to Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`, registered through the same `gfBinder.bindDatasourceTool` path: `tempo.go`. Local: `orgs.go` (`list_orgs`), `alerts.go`, `silences.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). Every `s.AddTool` call site goes through `maybeAddTool`, which honours the `--disabled-tools` filter wired in from `cmd/serve.go` so operators can drop individual tools at deployment time. |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -176,10 +176,11 @@ For org-only upstream tools (no datasource), use `b.bindOrgTool(s, role, t)`.
 
 ### Path B — local handler (only when upstream has no equivalent)
 
-Document why in the file header. Then add the registration:
+Document why in the file header. Then add the registration through
+`maybeAddTool` so the tool honours `--disabled-tools`:
 
 ```go
-s.AddTool(
+maybeAddTool(s, disabled,
     mcp.NewTool("your_tool_name",
         readOnlyAnnotation(),
         mcp.WithDescription("..."),

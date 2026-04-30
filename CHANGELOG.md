@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Tool surface completion (roadmap §0): `run_panel_query`, `get_query_examples`, and `get_panel_image` (delegated), plus local `list_silences` / `get_silence` (AM v2 silences via Grafana's datasource proxy, with optional `datasourceUid` override).
+- `--disabled-tools` flag on the `serve` command (CSV of MCP tool names) skips matching tools at registration; surfaced as `tools.disabled` in the Helm chart so operators can drop e.g. `alerting_manage_rules` or `get_panel_image` without rebuilding.
 
 ### Fixed
 

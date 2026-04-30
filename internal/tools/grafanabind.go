@@ -63,6 +63,7 @@ type gfBinder struct {
 	url        string
 	apiKey     string
 	basicAuth  *url.Userinfo
+	disabled   map[string]bool // --disabled-tools lookup; nil = no filter
 
 	clientsMu sync.Mutex
 	clients   map[int64]*mcpgrafana.GrafanaClient // key: OrgID
@@ -70,8 +71,10 @@ type gfBinder struct {
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
 // APIKey/BasicAuth mutual-exclusivity is enforced upstream at config load
-// (cmd/config.go) and at grafana.New — not re-checked here.
-func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo) (*gfBinder, error) {
+// (cmd/config.go) and at grafana.New — not re-checked here. disabled may
+// be nil; bind* methods route s.AddTool through maybeAddTool, which is
+// nil-safe.
+func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) (*gfBinder, error) {
 	if authorizer == nil {
 		return nil, errors.New("authorizer is required")
 	}
@@ -87,6 +90,7 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 		url:        grafanaURL,
 		apiKey:     apiKey,
 		basicAuth:  basicAuth,
+		disabled:   disabled,
 		clients:    make(map[int64]*mcpgrafana.GrafanaClient),
 	}, nil
 }
@@ -110,7 +114,7 @@ func (b *gfBinder) clientFor(orgID int64) *mcpgrafana.GrafanaClient {
 // resolution. The synthetic "org" argument is prepended to the
 // LLM-visible schema; every other arg passes through unchanged.
 func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
-	s.AddTool(withOrg(t.Tool, ""), b.wrap(role, "", "", "", t))
+	maybeAddTool(s, b.disabled, withOrg(t.Tool, ""), b.wrap(role, "", "", "", t))
 }
 
 // bindDatasourceTool registers an upstream tool that needs a datasource
@@ -125,7 +129,7 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
 // "datasource_uid" (snake_case) for alerting_manage_rules.
 func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
-	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, tenantType, dsType, argName, t))
+	maybeAddTool(s, b.disabled, withOrg(t.Tool, argName), b.wrap(role, tenantType, dsType, argName, t))
 }
 
 // bindDatasourceFanoutTool registers a read-only upstream tool that
@@ -133,7 +137,7 @@ func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tena
 // per-DS results. Caller-supplied argName (e.g. "datasource_uid")
 // short-circuits to a single upstream call.
 func (b *gfBinder) bindDatasourceFanoutTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, argName string, t mcpgrafana.Tool) {
-	s.AddTool(withOrg(t.Tool, ""), b.wrapFanout(role, tenantType, argName, t))
+	maybeAddTool(s, b.disabled, withOrg(t.Tool, ""), b.wrapFanout(role, tenantType, argName, t))
 }
 
 func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
