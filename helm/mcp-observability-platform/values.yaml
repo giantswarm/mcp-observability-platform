@@ -128,7 +128,7 @@ autoscaling:
 # All of these become env vars on the deployment. Secrets are mounted from
 # existing Kubernetes Secrets — do not put secret values inline here.
 mcp:
-  transport: "streamable-http" # stdio | sse | streamable-http
+  transport: "streamable-http"  # stdio | sse | streamable-http
   debug: false
 
 oauth:
@@ -148,7 +148,7 @@ oauth:
     # existingSecret must contain: clientSecret
     existingSecret: "mcp-observability-platform-oauth"
   storage:
-    backend: "memory" # "memory" | "valkey"
+    backend: "memory"  # "memory" | "valkey"
     valkey:
       addr: ""
       tls: false
@@ -187,7 +187,7 @@ grafana:
 # OpenTelemetry tracing — leave endpoint empty to disable.
 otel:
   endpoint: ""              # e.g. "http://alloy-otlp.monitoring:4318"
-  protocol: "http/protobuf" # "http/protobuf" | "grpc"
+  protocol: "http/protobuf"  # "http/protobuf" | "grpc"
   insecure: true            # set false for TLS collectors
   extraEnv: []
 
