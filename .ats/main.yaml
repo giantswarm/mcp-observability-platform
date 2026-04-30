@@ -1,0 +1,13 @@
+app-tests-app-config-file: tests/test-values.yaml
+app-tests-deploy-namespace: mcp-observability-platform
+
+smoke-tests-cluster-type: kind
+upgrade-tests-cluster-type: kind
+upgrade-tests-app-catalog-url: https://giantswarm.github.io/giantswarm-catalog
+
+# The pod requires three external Secrets (Grafana SA token, Dex client
+# secret, encryption key) before it can become Ready. None of those exist
+# inside the kind cluster app-test-suite spins up, so smoke / upgrade /
+# functional are skipped — the chart is exercised at install time only,
+# which is enough to catch template regressions and schema drift.
+skip-steps: [smoke, functional, upgrade]

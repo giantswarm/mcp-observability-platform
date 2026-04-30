@@ -1,0 +1,10 @@
+# Overrides applied during app-test-suite (`helm install` step). The
+# chart's defaults assume an in-cluster Grafana, Dex and a populated
+# encryption Secret — none of those exist inside the throwaway kind
+# cluster, so we relax NetworkPolicy / ServiceMonitor / RBAC bits that
+# would otherwise fail to render in a vanilla kind environment.
+networkPolicy:
+  enabled: false
+
+serviceMonitor:
+  enabled: false
