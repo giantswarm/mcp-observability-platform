@@ -6,6 +6,7 @@ version: 0.1.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/giantswarm/mcp-observability-platform
+icon: https://s.giantswarm.io/app-icons/giantswarm/1/light.svg
 maintainers:
   - name: Giant Swarm
     url: https://giantswarm.io
