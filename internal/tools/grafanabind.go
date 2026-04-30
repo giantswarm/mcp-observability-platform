@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"strings"
 	"sync"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -24,8 +25,11 @@ const orgArgDescription = "Organization — either the GrafanaOrganization CR na
 
 // datasourceUIDArg is upstream's conventional argument name for the
 // datasource UID. Most upstream tools use this; alerting_manage_rules
-// uses "datasource_uid" (snake_case) — pass that string explicitly.
-const datasourceUIDArg = "datasourceUid"
+// uses datasourceUIDArgSnake.
+const (
+	datasourceUIDArg      = "datasourceUid"
+	datasourceUIDArgSnake = "datasource_uid"
+)
 
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
@@ -116,6 +120,95 @@ func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tena
 	s.AddTool(withOrg(t.Tool, argName), b.wrap(role, tenantType, kind, argName, t))
 }
 
+// bindDatasourceFanoutTool registers a read-only upstream tool that
+// runs once per ruler-capable datasource the org has, merging the
+// per-DS results. Caller-supplied argName (e.g. "datasource_uid")
+// short-circuits to a single upstream call.
+func (b *gfBinder) bindDatasourceFanoutTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, argName string, t mcpgrafana.Tool) {
+	s.AddTool(withOrg(t.Tool, ""), b.wrapFanout(role, tenantType, argName, t))
+}
+
+func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		org, errRes := b.requireOrg(ctx, req, role, tenantType, true)
+		if errRes != nil {
+			return errRes, nil
+		}
+		ctx = b.attachGrafana(ctx, org.OrgID)
+
+		if uid := req.GetString(argName, ""); uid != "" {
+			return upstream.Handler(ctx, req)
+		}
+
+		opts := grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}
+		dss, err := b.grafana.ListDatasources(ctx, opts)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("list datasources", err), nil
+		}
+
+		type entry struct {
+			Name  string          `json:"name"`
+			UID   string          `json:"uid"`
+			Type  string          `json:"type"`
+			Rules json.RawMessage `json:"rules,omitempty"`
+			Error string          `json:"error,omitempty"`
+		}
+		entries := make([]entry, 0, len(dss))
+		for _, ds := range dss {
+			if !ds.ManageAlerts || !isRulerType(ds.Type) {
+				continue
+			}
+			sub := req
+			if err := injectArg(&sub, argName, ds.UID); err != nil {
+				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: err.Error()})
+				continue
+			}
+			res, err := upstream.Handler(ctx, sub)
+			switch {
+			case err != nil:
+				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: err.Error()})
+			case res != nil && res.IsError:
+				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: textOf(res)})
+			default:
+				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Rules: rulesPayload(res)})
+			}
+		}
+		return mcp.NewToolResultJSON(map[string]any{"datasources": entries})
+	}
+}
+
+// isRulerType mirrors mcp-grafana's isRulerDatasource: only datasources
+// whose plugin type contains DSTypePrometheus or DSTypeLoki expose a
+// Cortex-style ruler API. Mimir registers as plugin type "prometheus".
+func isRulerType(t string) bool {
+	t = strings.ToLower(t)
+	return strings.Contains(t, grafana.DSTypePrometheus) || strings.Contains(t, grafana.DSTypeLoki)
+}
+
+func textOf(r *mcp.CallToolResult) string {
+	for _, c := range r.Content {
+		if tc, ok := c.(mcp.TextContent); ok {
+			return tc.Text
+		}
+	}
+	return ""
+}
+
+// rulesPayload extracts upstream's text content. Embedded as raw JSON
+// when valid; falls back to a JSON-encoded string so the merged result
+// is always well-formed.
+func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
+	s := textOf(r)
+	if s == "" {
+		return nil
+	}
+	if json.Valid([]byte(s)) {
+		return json.RawMessage(s)
+	}
+	enc, _ := json.Marshal(s)
+	return enc
+}
+
 // withOrg returns a copy of an upstream tool definition with an "org"
 // argument prepended (string, required). When replaceArg is non-empty,
 // that argument is removed from the LLM-visible schema (Properties +
@@ -160,21 +253,15 @@ func withOrg(t mcp.Tool, replaceArg string) mcp.Tool {
 // and a tenantType the org must carry.
 func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, kind grafana.DatasourceKind, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		orgRef, err := req.RequireString("org")
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("missing arg", err), nil
-		}
-		org, err := b.authorizer.RequireOrg(ctx, orgRef, role)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("authz", err), nil
+		needsTenant := kind != ""
+		org, errRes := b.requireOrg(ctx, req, role, tenantType, needsTenant)
+		if errRes != nil {
+			return errRes, nil
 		}
 		if kind != "" {
-			if tenantType != "" && !org.HasTenantType(tenantType) {
-				return mcp.NewToolResultError(fmt.Sprintf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType)), nil
-			}
 			ds, ok := org.FindDatasource(kind)
 			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("org %q has no %s datasource configured", orgRef, kind)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("org %q has no %s datasource configured", org.Name, kind)), nil
 			}
 			uid, err := b.grafana.LookupDatasourceUIDByID(ctx, grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}, ds.ID)
 			if err != nil {
@@ -186,6 +273,25 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, kind grafa
 		}
 		return upstream.Handler(b.attachGrafana(ctx, org.OrgID), req)
 	}
+}
+
+// requireOrg resolves the "org" arg, runs authz, and (when checkTenant
+// is true) gates on tenantType. Returns a populated *CallToolResult on
+// failure that the caller should propagate; otherwise (Organization,
+// nil).
+func (b *gfBinder) requireOrg(ctx context.Context, req mcp.CallToolRequest, role authz.Role, tenantType authz.TenantType, checkTenant bool) (authz.Organization, *mcp.CallToolResult) {
+	orgRef, err := req.RequireString("org")
+	if err != nil {
+		return authz.Organization{}, mcp.NewToolResultErrorFromErr("missing arg", err)
+	}
+	org, err := b.authorizer.RequireOrg(ctx, orgRef, role)
+	if err != nil {
+		return authz.Organization{}, mcp.NewToolResultErrorFromErr("authz", err)
+	}
+	if checkTenant && tenantType != "" && !org.HasTenantType(tenantType) {
+		return authz.Organization{}, mcp.NewToolResultError(fmt.Sprintf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType))
+	}
+	return org, nil
 }
 
 // attachGrafana stashes a per-request GrafanaConfig and the per-OrgID

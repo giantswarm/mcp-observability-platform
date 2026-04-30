@@ -68,6 +68,7 @@ type Client interface {
 	VerifyServerAdmin(ctx context.Context) error
 	LookupUser(ctx context.Context, loginOrEmail string) (*User, error)
 	LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error)
+	ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error)
 	UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error)
 	DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error)
 }
@@ -270,13 +271,7 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*User, er
 }
 
 // LookupDatasourceUIDByID fetches the datasource UID for a numeric ID
-// in the given org. Needed because the GrafanaOrganization CR carries
-// int64 IDs while upstream's GrafanaClient takes UIDs.
-//
-// TODO(uid-publish): once observability-operator publishes datasource
-// UIDs in GrafanaOrganization.status.datasources[].uid, the Datasource
-// type grows a UID field and this lookup goes away. Tracked in
-// docs/roadmap.md.
+// in the given org.
 func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error) {
 	if id <= 0 {
 		return "", errors.New("grafana: datasource id must be positive")
@@ -295,6 +290,43 @@ func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, 
 		return "", fmt.Errorf("grafana: datasource %d has no uid", id)
 	}
 	return out.UID, nil
+}
+
+// ListDatasources returns every datasource visible to the SA in the
+// given org, with the jsonData.manageAlerts flag parsed. Grafana
+// defaults manageAlerts to true and omits it when true; absent ⇒ true.
+func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error) {
+	body, err := c.fetchJSON(ctx, "/api/datasources", nil, opts)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		ID       int64  `json:"id"`
+		UID      string `json:"uid"`
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		JSONData struct {
+			ManageAlerts *bool `json:"manageAlerts"`
+		} `json:"jsonData"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("grafana: list datasources: %w", err)
+	}
+	out := make([]Datasource, len(raw))
+	for i, r := range raw {
+		manageAlerts := true
+		if r.JSONData.ManageAlerts != nil {
+			manageAlerts = *r.JSONData.ManageAlerts
+		}
+		out[i] = Datasource{
+			ID:           r.ID,
+			Name:         r.Name,
+			UID:          r.UID,
+			Type:         r.Type,
+			ManageAlerts: manageAlerts,
+		}
+	}
+	return out, nil
 }
 
 // UserOrgs returns the per-org roles Grafana has computed for the given

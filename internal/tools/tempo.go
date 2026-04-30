@@ -27,10 +27,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-const (
-	tempoDSType  = "tempo"
-	tempoMCPPath = "/api/mcp"
-)
+const tempoMCPPath = "/api/mcp"
 
 // tempoClients caches one mcp-grafana ProxiedClient per Tempo
 // datasource UID. The transport reads OrgID/auth from per-call ctx
@@ -116,7 +113,7 @@ func (c *tempoClients) clientFor(ctx context.Context, uid string) (*mcpgrafana.P
 // or our seed-dial ctx) — the transport reads it for OrgID/auth.
 func (c *tempoClients) dial(ctx context.Context, uid string) (*mcpgrafana.ProxiedClient, error) {
 	mcpURL := strings.TrimRight(c.grafanaURL, "/") + "/api/datasources/proxy/uid/" + uid + tempoMCPPath
-	return mcpgrafana.NewProxiedClient(ctx, uid, "tempo-"+uid, tempoDSType, mcpURL)
+	return mcpgrafana.NewProxiedClient(ctx, uid, "tempo-"+uid, grafana.DSTypeTempo, mcpURL)
 }
 
 // findSeedTempoUID returns any (orgID, tempo UID) pair from the

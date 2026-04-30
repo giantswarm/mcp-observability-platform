@@ -9,6 +9,36 @@ Forward-looking work plan. For what's already shipped:
 
 ## Post-v0.1.0 priorities
 
+### 0. Tool surface completion
+
+Gaps from `mcp-grafana@v0.13.0` that fit the read-only scope but are
+not bound today, plus one custom AM v2 surface upstream does not
+cover.
+
+Delegated (upstream, bind via `gfBinder`):
+
+- `alerting_manage_routing` (read mode) — answers "where will this
+  alert notify?". Sibling of `alerting_manage_rules`. DSKindMimir.
+- `run_panel_query` — execute saved panel queries with template-var
+  substitution. Org-scoped. Pairs with `get_dashboard_panel_queries`.
+- `get_query_examples` — PromQL/LogQL syntax helper. Org-scoped only
+  because `gfBinder` is the path of least resistance.
+- `get_panel_image` (optional, off by default) — returns proper MCP
+  `ImageContent` (base64 PNG); vision-capable LLM clients render it
+  natively. Requires the Grafana Image Renderer service alongside
+  Grafana. Ship disabled in the chart's `runtime.disabledTools` so
+  clusters opt in only after the renderer is deployed.
+
+Custom (no upstream equivalent in v0.13.0):
+
+- `list_silences(org, state?, matcher?)` and `get_silence(org, id)` —
+  Alertmanager v2 `/api/v2/silences{,/{id}}`. Today `list_alerts`
+  returns `silencedBy: [<id>]` fingerprints that have no resolver.
+  Same custom pattern as `list_alerts` / `get_alert`.
+
+Depends on §4 (per-tool enable/disable) for `get_panel_image` to ship
+disabled by default.
+
 ### 1. Per-org Grafana SA tokens (Phase-2 blast-radius fix)
 
 Biggest unresolved security gap. Today one server-admin SA per MCP
@@ -49,11 +79,14 @@ The authz model (`Role` with Editor/Admin,
 `Instrument` middleware already audits payloads. Highest-value
 writes that match upstream:
 
-- `create_silence(org, matchers, duration, comment)` — gated on
-  Editor.
+- `create_silence(org, matchers, duration, comment)` — first slice,
+  Editor-gated. Custom (no upstream equivalent), AM v2
+  `POST /api/v2/silences`. Depends on §4 landing first so the tool
+  ships in the chart's `runtime.disabledTools` and clusters opt in.
 - `create_annotation(org, dashboardUid?, text, tags[])` — bot-driven
-  deploy annotations.
-- `update_annotation(org, id, ...)` — partial-update.
+  deploy annotations. Delegated (`mcpgrafanatools.CreateAnnotationTool`).
+  Land after `create_silence` validates the audit + authz path.
+- `update_annotation(org, id, ...)` — partial-update. Delegated.
 
 Each carries `destructiveHint: true` in MCP annotations; the
 `tool_call` audit line captures full payload for forensics.
@@ -69,71 +102,33 @@ where alert-rule access is sensitive) without rebuilding.
   skip set once at startup.
 - Helm chart exposes a `runtime.disabledTools: []string` value.
 
-### 5. Unified rule listing (Mimir + Loki, alerting + recording)
+### 5. Self-observability of the MCP itself
 
-Today's `alerting_manage_rules` (delegated, Mimir-bound) is broken end-to-end
-on the Giant Swarm setup. Three independent gaps stack:
+Shipped today: per-tool counter + duration histogram + error counter
+on `/metrics` (`internal/observability/`), OTEL tracing, ServiceMonitor
+template. Missing: a shipped Grafana dashboard and a shipped
+`PrometheusRule`. Operators run the MCP without alerting on its own
+auth failures, tool error rate, or tool-call latency p99 — a black box
+in production.
 
-1. **Path doubling against the Mimir gateway.** observability-operator
-   provisions Grafana datasources with URL `http://mimir-gateway.mimir.svc/prometheus`
-   (the `/prometheus` is in the URL). Upstream
-   `mcp-grafana@v0.12.1/tools/alerting_manage_rules_datasource.go` hardcodes
-   `prometheus/api/v1/rules` on the path, so the proxied request becomes
-   `/prometheus/prometheus/api/v1/rules` — no nginx location matches → 404.
-   The right path against these datasources is `api/v1/rules` (relative to
-   the DS URL root). Mimir gateway nginx itself is fine — it routes
-   `/prometheus/api/v1/rules` to the ruler.
-   - **Fix**: upstream PR adding a config knob (or stripping the redundant
-     `prometheus/` when it's already in the DS URL). Confirmed against
-     graveler 2026-04-29: hitting `gs-mimir-giantswarm` with `api/v1/rules`
-     directly returns 665 rule groups; with `prometheus/api/v1/rules`
-     returns 404.
+Deliverables:
 
-2. **Binder picks the wrong Mimir DS.** `MatchKind("mimir")` returns the
-   first substring match, which on graveler is the multi-tenant `GS Mimir`
-   (id=2). The mono-tenant rulers (`GS Mimir (giantswarm)` id=18, `GS Mimir
-   (notempty)` id=21) are the ones that actually answer rule queries
-   without ambiguity, but the binder never reaches them. Multi-tenant
-   `gs-mimir` returns `400 no valid org id found` because the per-DS
-   X-Scope-OrgID isn't set for the gateway-routed ruler path.
-   - **Fix**: read-only fanout. `MatchKindAll(dss, kind)` returns every
-     mono-tenant ruler the org has access to; `alerting_manage_rules`
-     calls each and merges results, tagging each rule with its source
-     `datasource_uid` so the LLM can disambiguate. If only one mono-tenant
-     DS exists, hit just that one. Caller-supplied `datasource_uid` is the
-     escape hatch. Write ops (silences, future create/delete) must NOT
-     fanout — they pick a single tenant.
+- `helm/mcp-observability-platform/templates/grafanadashboard.yaml` —
+  sidecar-style ConfigMap with `grafana_dashboard: "1"` label. Panels:
+  request rate (per tool), error rate (per tool), tool-call latency
+  p50/p95/p99 (per tool), OAuth token-validation latency p99,
+  authz-denial rate (per role), `tools/list` 5xx rate, in-flight
+  request gauge.
+- `helm/mcp-observability-platform/templates/prometheusrule.yaml` —
+  PrometheusRule covering: sustained auth-failure rate (warn at >5%
+  for 10m), per-tool error rate (warn at >5% for 10m), tool-call
+  duration p99 SLO breach (warn at >5s for 15m), `/healthz` flapping
+  (page on 3 transitions in 5m).
+- Chart values: `dashboard.enabled` and `alerts.enabled`, both
+  default `false` so operators opt in only when the Grafana sidecar
+  / Prometheus operator are present.
 
-3. **Recording rules dropped at upstream's projection.**
-   `mcp-grafana@v0.12.1/tools/alerting_manage_rules_datasource.go:80-82`
-   hits `case v1.RecordingRule: continue`. The `alertRuleSummary`
-   projection already carries `Name`, `RuleGroup`, `Labels`, `Health`,
-   `LastEvaluation`; recording rules need only an empty
-   `State`/`For`/`Annotations`. Two-line upstream change + projection-shape
-   test.
-
-After (1) and (3) land upstream and (2) lands locally, register
-`alerting_manage_rules` a second time bound to `DSKindLoki` for the
-mono-tenant Loki rulers (gateway path also `/prometheus/api/v1/rules`
-through the same gateway pattern). Tool-name collision means we either
-need an upstream-side rename to a kind-neutral name or a name-override
-hook in our binder.
-
-**Note: this does NOT subsume our local Alertmanager v2 tools.** Upstream
-`mcp-grafana@v0.12.1` has no equivalent for `list_alerts`/`get_alert`
-(active alert instances via `/api/v2/alerts`). Its alerting tools are
-config-only (`alerting_manage_rules`, `alerting_manage_routing`,
-contact-points). Dropping our local AM tools needs a separate upstream PR
-adding AM v2 support, or stays out of scope.
-
-Until 1+2+3 land, recording rules and Loki rules are not exposed;
-operators query the Grafana UI or the ruler endpoints directly. Smoke
-test from a Grafana pod for a mono-tenant Mimir DS:
-
-```
-curl -H "X-Grafana-Org-Id: 2" -u "admin:$PW" \
-  http://localhost:3000/api/datasources/proxy/uid/gs-mimir-giantswarm/api/v1/rules
-```
+Chart-side only; no Go changes needed.
 
 ## Out of scope (explicitly not doing)
 
@@ -149,3 +144,10 @@ curl -H "X-Grafana-Org-Id: 2" -u "admin:$PW" \
 - **Upstream feature parity** with Pyroscope / OnCall / Incident /
   Sift / Asserts in `grafana/mcp-grafana`. Keep the surface focused
   on Giant Swarm's stack.
+- **Pyroscope / trace→profile correlation.** Not exposed; revisit if
+  Giant Swarm adopts a profiling backend in-cluster. Until then,
+  `mcpgrafana/tools/pyroscope.go` stays unbound.
+- **Grafana OnCall.** Different product from Unified Alerting;
+  upstream OnCall tools (`tools/oncall.go`) target the
+  `grafana-irm-app` plugin via `grafana/amixr-api-go-client`. Out of
+  scope unless GS deploys Grafana OnCall.

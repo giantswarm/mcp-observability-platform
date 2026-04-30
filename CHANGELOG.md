@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `alerting_manage_rules` no longer 400s on multi-tenant Mimir setups: it now fans out across every datasource where Grafana's "Manage alerts" toggle is on (Mimir + Loki), tagging each entry by source. Pin a single datasource with `datasource_uid` to skip the fanout.
 - `list_datasources`, `get_datasource`, and any future delegated upstream tool that goes through grafana-openapi-client-go's no-ctx convenience methods now respect the caller's `org`. `gfBinder` now caches one `mcp-grafana` `GrafanaClient` per resolved OrgID, so `OrgIDRoundTripper` ships the correct `X-Grafana-Org-Id` even when go-openapi's runtime falls back to `context.Background()` and the per-call ctx override path can't fire.
 
 ### Changed

@@ -413,6 +413,58 @@ func TestClient_ErrorBodyCapped(t *testing.T) {
 	}
 }
 
+func TestClient_ListDatasources_ParsesManageAlertsAndForwardsOrg(t *testing.T) {
+	body := `[
+		{"id":1,"uid":"u1","name":"prom","type":"prometheus","jsonData":{"manageAlerts":true}},
+		{"id":2,"uid":"u2","name":"loki","type":"loki","jsonData":{"manageAlerts":false}},
+		{"id":3,"uid":"u3","name":"prom-default","type":"prometheus","jsonData":{}},
+		{"id":4,"uid":"u4","name":"prom-no-jsondata","type":"prometheus"}
+	]`
+	var gotPath, gotOrg string
+	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotOrg = r.Header.Get("X-Grafana-Org-Id")
+		_, _ = w.Write([]byte(body))
+	})
+	defer ts.Close()
+
+	got, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 7})
+	if err != nil {
+		t.Fatalf("ListDatasources: %v", err)
+	}
+	if gotPath != "/api/datasources" {
+		t.Errorf("path = %q, want /api/datasources", gotPath)
+	}
+	if gotOrg != "7" {
+		t.Errorf("X-Grafana-Org-Id = %q, want 7", gotOrg)
+	}
+	want := []Datasource{
+		{ID: 1, UID: "u1", Name: "prom", Type: "prometheus", ManageAlerts: true},
+		{ID: 2, UID: "u2", Name: "loki", Type: "loki", ManageAlerts: false},
+		{ID: 3, UID: "u3", Name: "prom-default", Type: "prometheus", ManageAlerts: true},
+		{ID: 4, UID: "u4", Name: "prom-no-jsondata", Type: "prometheus", ManageAlerts: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestClient_ListDatasources_ErrorOnNon2xx(t *testing.T) {
+	ts, c := newTestServer(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"nope"}`))
+	})
+	defer ts.Close()
+	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err == nil {
+		t.Fatal("expected error on 403, got nil")
+	}
+}
+
 func TestRedactedHeader_DoesNotLeakInPrints(t *testing.T) {
 	c, err := New(Config{URL: "http://example.invalid", Token: "super-secret-token"})
 	if err != nil {

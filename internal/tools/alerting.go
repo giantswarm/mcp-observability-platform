@@ -1,11 +1,10 @@
-// alerting.go — RoleViewer, DSKindMimir.
+// alerting.go — RoleViewer.
 //
 // alerting_manage_rules is upstream's meta-tool; the `operation` enum
 // (list/get/versions) is its surface, not ours. We expose the read
-// variant only. With a Mimir datasource bound, only `operation=list`
-// is meaningful — `get`/`versions` require Grafana-managed RuleUIDs,
-// not Mimir-side rule names. Listing currently drops recording rules
-// at upstream's projection; see roadmap for the planned upstream fix.
+// variant only, fanned out across every ruler-capable datasource the
+// org has where jsonData.manageAlerts is true. `get`/`versions`
+// require Grafana-managed RuleUIDs, not datasource-side rule names.
 package tools
 
 import (
@@ -13,11 +12,10 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
-	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 func registerAlertingTools(s *mcpsrv.MCPServer, b *gfBinder) {
 	// alerting_manage_rules uses snake_case "datasource_uid" — every other
 	// upstream tool uses camelCase "datasourceUid".
-	b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, "datasource_uid", mcpgrafanatools.ManageRulesRead)
+	b.bindDatasourceFanoutTool(s, authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, mcpgrafanatools.ManageRulesRead)
 }

@@ -2,12 +2,13 @@ package grafana
 
 import "strings"
 
-// Datasource is the domain projection of a Grafana datasource. The
-// GrafanaOrganization CR carries {ID, Name} only; the full record
-// (URL, secureJsonData, etc.) lives behind LookupDatasourceUIDByID.
+// Datasource is the domain projection of a Grafana datasource.
 type Datasource struct {
-	ID   int64
-	Name string
+	ID           int64
+	Name         string
+	UID          string
+	Type         string
+	ManageAlerts bool
 }
 
 // DatasourceKind names the canonical role a datasource plays for the
@@ -21,6 +22,16 @@ const (
 	DSKindLoki         DatasourceKind = "loki"
 	DSKindTempo        DatasourceKind = "tempo"
 	DSKindAlertmanager DatasourceKind = "alertmanager"
+)
+
+// DSType* are Grafana datasource plugin-type strings (the `type`
+// field on /api/datasources entries). Distinct from DSKind* which
+// is a name-substring matcher: a Mimir datasource registers as
+// plugin type "prometheus", not "mimir".
+const (
+	DSTypePrometheus = "prometheus"
+	DSTypeLoki       = "loki"
+	DSTypeTempo      = "tempo"
 )
 
 // MatchKind returns the first datasource whose name contains the

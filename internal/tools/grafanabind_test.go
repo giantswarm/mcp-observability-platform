@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -48,6 +49,10 @@ type fakeGrafana struct {
 	uidErr         error
 	gotID          int64
 	gotOpts        grafana.RequestOpts
+
+	listDS  []grafana.Datasource
+	listErr error
+	gotList grafana.RequestOpts
 }
 
 func (f *fakeGrafana) LookupDatasourceUIDByID(_ context.Context, opts grafana.RequestOpts, id int64) (string, error) {
@@ -57,6 +62,14 @@ func (f *fakeGrafana) LookupDatasourceUIDByID(_ context.Context, opts grafana.Re
 		return "", f.uidErr
 	}
 	return f.uid, nil
+}
+
+func (f *fakeGrafana) ListDatasources(_ context.Context, opts grafana.RequestOpts) ([]grafana.Datasource, error) {
+	f.gotList = opts
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.listDS, nil
 }
 
 // oauthCtx attaches a caller identity to ctx; CallerSubject(ctx) returns sub.
@@ -378,6 +391,201 @@ func TestBinder_Datasource_UIDLookupFails(t *testing.T) {
 	}
 	if captured.toolName != "" {
 		t.Error("upstream handler should not be called when UID lookup fails")
+	}
+}
+
+// ---------- bindDatasourceFanoutTool ----------
+
+type fanoutCall struct {
+	args map[string]any
+	cfg  mcpgrafana.GrafanaConfig
+}
+
+type fanoutStub struct {
+	calls   []fanoutCall
+	respond func(args map[string]any) (*mcp.CallToolResult, error)
+}
+
+func stubFanoutTool(name string, cap *fanoutStub) mcpgrafana.Tool {
+	t := mcp.NewTool(name, mcp.WithDescription("stub"))
+	t.InputSchema.Properties = map[string]any{
+		datasourceUIDArgSnake: map[string]any{"type": "string"},
+	}
+	return mcpgrafana.Tool{
+		Tool: t,
+		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			cap.calls = append(cap.calls, fanoutCall{
+				args: req.GetArguments(),
+				cfg:  mcpgrafana.GrafanaConfigFromContext(ctx),
+			})
+			if cap.respond != nil {
+				return cap.respond(req.GetArguments())
+			}
+			return mcp.NewToolResultText(`[]`), nil
+		},
+	}
+}
+
+func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgWithDatasources()}
+	gc := &fakeGrafana{
+		listDS: []grafana.Datasource{
+			{ID: 1, UID: "u1", Name: "mimir-mt", Type: "prometheus", ManageAlerts: false},
+			{ID: 2, UID: "u2", Name: "mimir-gs", Type: "prometheus", ManageAlerts: true},
+			{ID: 3, UID: "u3", Name: "loki-gs", Type: "loki", ManageAlerts: true},
+			{ID: 4, UID: "u4", Name: "tempo-gs", Type: "tempo", ManageAlerts: true},
+		},
+	}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+	cap := &fanoutStub{
+		respond: func(args map[string]any) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText(fmt.Sprintf(`[{"uid":%q}]`, args[datasourceUIDArgSnake])), nil
+		},
+	}
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": "acme"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %+v", res)
+	}
+
+	if len(cap.calls) != 2 {
+		t.Fatalf("upstream called %d times, want 2 (mimir-gs + loki-gs only)", len(cap.calls))
+	}
+	gotUIDs := []string{cap.calls[0].args[datasourceUIDArgSnake].(string), cap.calls[1].args[datasourceUIDArgSnake].(string)}
+	wantUIDs := []string{"u2", "u3"}
+	if !slices.Equal(gotUIDs, wantUIDs) {
+		t.Errorf("upstream called for UIDs %v, want %v", gotUIDs, wantUIDs)
+	}
+	if gc.gotList.OrgID != 7 {
+		t.Errorf("ListDatasources OrgID = %d, want 7", gc.gotList.OrgID)
+	}
+
+	body := textOf(res)
+	var out struct {
+		Datasources []struct {
+			Name  string          `json:"name"`
+			UID   string          `json:"uid"`
+			Type  string          `json:"type"`
+			Rules json.RawMessage `json:"rules,omitempty"`
+			Error string          `json:"error,omitempty"`
+		} `json:"datasources"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("merged response not valid JSON: %v\nbody=%s", err, body)
+	}
+	if len(out.Datasources) != 2 {
+		t.Fatalf("merged response has %d entries, want 2: %+v", len(out.Datasources), out)
+	}
+	for _, e := range out.Datasources {
+		if e.Error != "" {
+			t.Errorf("entry %s has error: %s", e.UID, e.Error)
+		}
+		if string(e.Rules) == "" {
+			t.Errorf("entry %s missing rules", e.UID)
+		}
+	}
+}
+
+func TestBinder_Fanout_EscapeHatch_BypassesListing(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgWithDatasources()}
+	gc := &fakeGrafana{listErr: errors.New("ListDatasources should not be called")}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+	cap := &fanoutStub{}
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": "acme", datasourceUIDArgSnake: "pinned"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %+v", res)
+	}
+	if len(cap.calls) != 1 {
+		t.Fatalf("upstream called %d times, want 1 (escape hatch)", len(cap.calls))
+	}
+	if cap.calls[0].args[datasourceUIDArgSnake] != "pinned" {
+		t.Errorf("escape-hatch UID = %v, want pinned", cap.calls[0].args[datasourceUIDArgSnake])
+	}
+	if textOf(res) != `[]` {
+		t.Errorf("escape-hatch result = %q, want raw upstream passthrough []", textOf(res))
+	}
+}
+
+func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgWithDatasources()}
+	gc := &fakeGrafana{
+		listDS: []grafana.Datasource{
+			{ID: 1, UID: "u1", Name: "good", Type: "prometheus", ManageAlerts: true},
+			{ID: 2, UID: "u2", Name: "bad", Type: "prometheus", ManageAlerts: true},
+		},
+	}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+	cap := &fanoutStub{
+		respond: func(args map[string]any) (*mcp.CallToolResult, error) {
+			if args[datasourceUIDArgSnake] == "u2" {
+				return mcp.NewToolResultError("400 no valid org id found"), nil
+			}
+			return mcp.NewToolResultText(`[{"name":"r"}]`), nil
+		},
+	}
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": "acme"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("merged result must not be IsError; per-DS errors are tagged: %+v", res)
+	}
+
+	var out struct {
+		Datasources []struct {
+			UID   string `json:"uid"`
+			Error string `json:"error,omitempty"`
+		} `json:"datasources"`
+	}
+	if err := json.Unmarshal([]byte(textOf(res)), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(out.Datasources) != 2 {
+		t.Fatalf("got %d entries, want 2", len(out.Datasources))
+	}
+	if out.Datasources[0].UID != "u1" || out.Datasources[0].Error != "" {
+		t.Errorf("u1 entry = %+v, want clean", out.Datasources[0])
+	}
+	if out.Datasources[1].UID != "u2" || !strings.Contains(out.Datasources[1].Error, "400") {
+		t.Errorf("u2 entry = %+v, want error containing 400", out.Datasources[1])
+	}
+}
+
+func TestBinder_Fanout_ListDatasourcesError(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	az := &authztest.Fake{Org: orgWithDatasources()}
+	gc := &fakeGrafana{listErr: errors.New("grafana down")}
+	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil)
+	cap := &fanoutStub{}
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": "acme"}}}
+	res, err := h(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("expected IsError when ListDatasources fails")
+	}
+	if len(cap.calls) != 0 {
+		t.Errorf("upstream called %d times, want 0", len(cap.calls))
 	}
 }
 
