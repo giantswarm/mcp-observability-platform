@@ -64,7 +64,7 @@ func registerTempoTools(ctx context.Context, s *server.MCPServer, logger *slog.L
 	tools := seed.ListTools()
 	for _, t := range tools {
 		t.Annotations = readOnlyToolAnnotation
-		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindTempo, datasourceUIDArg, mcpgrafana.Tool{
+		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSTypeTempo, datasourceUIDArg, mcpgrafana.Tool{
 			Tool:    t,
 			Handler: c.handler(t.Name),
 		})
@@ -113,12 +113,12 @@ func (c *tempoClients) clientFor(ctx context.Context, uid string) (*mcpgrafana.P
 // or our seed-dial ctx) — the transport reads it for OrgID/auth.
 func (c *tempoClients) dial(ctx context.Context, uid string) (*mcpgrafana.ProxiedClient, error) {
 	mcpURL := strings.TrimRight(c.grafanaURL, "/") + "/api/datasources/proxy/uid/" + uid + tempoMCPPath
-	return mcpgrafana.NewProxiedClient(ctx, uid, "tempo-"+uid, grafana.DSTypeTempo, mcpURL)
+	return mcpgrafana.NewProxiedClient(ctx, uid, "tempo-"+uid, string(grafana.DSTypeTempo), mcpURL)
 }
 
-// findSeedTempoUID returns any (orgID, tempo UID) pair from the
-// registry — used at startup to enumerate Tempo's tool list. Per-call
-// routing uses the caller's own org via gfBinder.
+// findSeedTempoUID returns any (orgID, tempo UID) pair from the live
+// datasource list — used at startup to enumerate Tempo's tool list.
+// Per-call routing uses the caller's own org via gfBinder.
 func findSeedTempoUID(ctx context.Context, gc grafana.Client, ol authz.OrgLister) (int64, string, error) {
 	orgs, err := ol.List(ctx)
 	if err != nil {
@@ -128,15 +128,15 @@ func findSeedTempoUID(ctx context.Context, gc grafana.Client, ol authz.OrgLister
 		if !org.HasTenantType(authz.TenantTypeData) {
 			continue
 		}
-		ds, ok := org.FindDatasource(grafana.DSKindTempo)
-		if !ok {
-			continue
-		}
-		uid, err := gc.LookupDatasourceUIDByID(ctx, grafana.RequestOpts{OrgID: org.OrgID}, ds.ID)
+		dss, err := gc.ListDatasources(ctx, grafana.RequestOpts{OrgID: org.OrgID})
 		if err != nil {
 			continue
 		}
-		return org.OrgID, uid, nil
+		matches := grafana.FilterDatasourcesByType(dss, grafana.DSTypeTempo)
+		if len(matches) == 0 {
+			continue
+		}
+		return org.OrgID, matches[0].UID, nil
 	}
 	return 0, "", errors.New("no org has a Tempo datasource")
 }

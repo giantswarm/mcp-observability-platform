@@ -25,9 +25,8 @@ func ctxWithCaller(c Caller) context.Context {
 	return WithCaller(context.Background(), c)
 }
 
-// newOrg builds an Organization fixture. tenantTypes populates the single
-// tenant's Types; Datasources include Mimir/Loki entries named after the
-// org so FindDatasource tests have realistic matches.
+// newOrg builds an Organization fixture. tenantTypes populates the
+// single tenant's Types.
 func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organization {
 	var tenants []Tenant
 	if len(tenantTypes) > 0 {
@@ -38,10 +37,6 @@ func newOrg(name, display string, orgID int64, tenantTypes ...TenantType) Organi
 		DisplayName: display,
 		OrgID:       orgID,
 		Tenants:     tenants,
-		Datasources: []grafana.Datasource{
-			{ID: 10, Name: "mimir-" + name},
-			{ID: 11, Name: "loki-" + name},
-		},
 	}
 }
 
@@ -242,32 +237,6 @@ func TestRoleFromGrafana(t *testing.T) {
 	}
 }
 
-func TestOrganization_FindDatasource(t *testing.T) {
-	org := Organization{
-		Datasources: []grafana.Datasource{
-			{ID: 1, Name: "mimir-prod"},
-			{ID: 2, Name: "Loki-Prod"},
-			{ID: 3, Name: "tempo-prod"},
-		},
-	}
-	cases := []struct {
-		kind   grafana.DatasourceKind
-		wantID int64
-		wantOK bool
-	}{
-		{grafana.DSKindMimir, 1, true},
-		{grafana.DSKindLoki, 2, true},
-		{grafana.DSKindTempo, 3, true},
-		{grafana.DSKindAlertmanager, 0, false},
-	}
-	for _, c := range cases {
-		gotDS, gotOK := org.FindDatasource(c.kind)
-		if gotDS.ID != c.wantID || gotOK != c.wantOK {
-			t.Errorf("FindDatasource(%v) = (%d,%v), want (%d,%v)", c.kind, gotDS.ID, gotOK, c.wantID, c.wantOK)
-		}
-	}
-}
-
 func TestOrganization_HasTenantType(t *testing.T) {
 	org := Organization{
 		Tenants: []Tenant{
@@ -345,35 +314,6 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: "sub-1"}))
 	if g.calls.lookup != 1 {
 		t.Errorf("LookupUser calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
-	}
-}
-
-// TestAuthorizer_ReturnedSlicesAreCloned proves handler mutations of the
-// returned Organization don't escape into any shared state — appending to
-// oa.Datasources must not poison subsequent reads.
-func TestAuthorizer_ReturnedSlicesAreCloned(t *testing.T) {
-	alpha := newOrg("alpha", "Alpha", 1)
-	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
-	}
-	r := mustNewAuthorizer(t, registry(alpha), g)
-
-	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
-	if err != nil {
-		t.Fatalf("Require: %v", err)
-	}
-	// Mutation simulating a handler that appends to the datasource list.
-	oa1.Datasources = append(oa1.Datasources, grafana.Datasource{ID: 999, Name: "poisoned"})
-
-	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
-	if err != nil {
-		t.Fatalf("second Require: %v", err)
-	}
-	for _, ds := range oa2.Datasources {
-		if ds.ID == 999 {
-			t.Fatalf("cache was poisoned by handler-side append (ds=%+v)", ds)
-		}
 	}
 }
 

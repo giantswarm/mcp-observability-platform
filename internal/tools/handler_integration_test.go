@@ -61,12 +61,6 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 			Name:  "acme",
 			Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting},
 		}},
-		Datasources: []grafana.Datasource{
-			{ID: 10, Name: "mimir-acme"},
-			{ID: 11, Name: "loki-acme"},
-			{ID: 12, Name: "tempo-acme"},
-			{ID: 13, Name: "alertmanager-acme"},
-		},
 	}}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
 	if err := RegisterAll(context.Background(), s, slog.Default(), az, emptyOrgLister, gf, ts.URL, "test-token", nil); err != nil {

@@ -67,7 +67,7 @@ type User struct {
 type Client interface {
 	VerifyServerAdmin(ctx context.Context) error
 	LookupUser(ctx context.Context, loginOrEmail string) (*User, error)
-	LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error)
+	LookupDatasourceByUID(ctx context.Context, opts RequestOpts, uid string) (Datasource, error)
 	ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error)
 	UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error)
 	DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error)
@@ -270,26 +270,23 @@ func (c *client) LookupUser(ctx context.Context, loginOrEmail string) (*User, er
 	return &out, nil
 }
 
-// LookupDatasourceUIDByID fetches the datasource UID for a numeric ID
-// in the given org.
-func (c *client) LookupDatasourceUIDByID(ctx context.Context, opts RequestOpts, id int64) (string, error) {
-	if id <= 0 {
-		return "", errors.New("grafana: datasource id must be positive")
+// LookupDatasourceByUID returns the org's datasource with the given UID.
+// Implicit org-scope check: ListDatasources is called with the resolved
+// org's RequestOpts, so a UID forged from another org won't match.
+func (c *client) LookupDatasourceByUID(ctx context.Context, opts RequestOpts, uid string) (Datasource, error) {
+	if uid == "" {
+		return Datasource{}, errors.New("grafana: datasource uid is required")
 	}
-	body, err := c.fetchJSON(ctx, fmt.Sprintf("/api/datasources/%d", id), nil, opts)
+	list, err := c.ListDatasources(ctx, opts)
 	if err != nil {
-		return "", err
+		return Datasource{}, err
 	}
-	var out struct {
-		UID string `json:"uid"`
+	for _, ds := range list {
+		if ds.UID == uid {
+			return ds, nil
+		}
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("grafana: datasource %d: %w", id, err)
-	}
-	if out.UID == "" {
-		return "", fmt.Errorf("grafana: datasource %d has no uid", id)
-	}
-	return out.UID, nil
+	return Datasource{}, fmt.Errorf("grafana: datasource %q not found in org", uid)
 }
 
 // ListDatasources returns every datasource visible to the SA in the

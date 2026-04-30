@@ -6,9 +6,10 @@
 // that mapping at each user login to compute per-user (org -> role).
 // This package asks Grafana "what orgs does caller X have, and in what role?"
 // via /api/users/lookup + /api/users/{id}/orgs, then enriches each result
-// with tenant/datasource metadata drawn from an OrgLister (an informer
-// cache of GrafanaOrganization CRs in production, an in-memory stub in
-// tests).
+// with tenant metadata drawn from an OrgLister (an informer cache of
+// GrafanaOrganization CRs in production, an in-memory stub in tests).
+// Datasource resolution is not part of authz — tool handlers fetch the
+// live datasource list directly via grafana.Client.ListDatasources.
 //
 // Falling back to CR RBAC evaluation on the MCP side would re-implement
 // Grafana's semantics (group matching, "*" wildcard, precedence, casing) and
@@ -21,8 +22,7 @@
 //   - cache.go      — TTL'd per-caller role cache + clone discipline.
 //   - role.go       — Role enum.
 //   - caller.go     — Caller + OrgLister port + context helpers.
-//   - types.go      — Organization + Tenant + Datasource + TenantType domain
-//     types plus the methods tool handlers call (HasTenantType,
-//     FindDatasource). Tool-handler consumers import these, never the CRD.
+//   - types.go      — Organization + Tenant + TenantType domain types
+//     plus HasTenantType. Tool-handler consumers import these, never the CRD.
 //   - errors.go     — Sentinel errors.
 package authz

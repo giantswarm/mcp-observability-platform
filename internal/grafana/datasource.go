@@ -11,40 +11,35 @@ type Datasource struct {
 	ManageAlerts bool
 }
 
-// DatasourceKind names the canonical role a datasource plays for the
-// MCP (metrics backend, logs backend, traces backend, alerting). The
-// const value doubles as the case-insensitive substring MatchKind
-// looks for in Datasource.Name.
-type DatasourceKind string
+// DatasourceType is the Grafana datasource plugin-type string (the
+// `type` field on /api/datasources entries). A Mimir datasource
+// registers as DSTypePrometheus — kind→type alone can't distinguish
+// Mimir from a vanilla Prometheus DS. If an org carries both, the
+// caller must disambiguate with an explicit datasource_uid.
+type DatasourceType string
 
 const (
-	DSKindMimir        DatasourceKind = "mimir"
-	DSKindLoki         DatasourceKind = "loki"
-	DSKindTempo        DatasourceKind = "tempo"
-	DSKindAlertmanager DatasourceKind = "alertmanager"
+	DSTypePrometheus   DatasourceType = "prometheus"
+	DSTypeLoki         DatasourceType = "loki"
+	DSTypeTempo        DatasourceType = "tempo"
+	DSTypeAlertmanager DatasourceType = "alertmanager"
 )
 
-// DSType* are Grafana datasource plugin-type strings (the `type`
-// field on /api/datasources entries). Distinct from DSKind* which
-// is a name-substring matcher: a Mimir datasource registers as
-// plugin type "prometheus", not "mimir".
-const (
-	DSTypePrometheus = "prometheus"
-	DSTypeLoki       = "loki"
-	DSTypeTempo      = "tempo"
-)
+// MatchesType reports whether ds's plugin type contains dsType
+// (case-insensitive).
+func MatchesType(ds Datasource, dsType DatasourceType) bool {
+	return strings.Contains(strings.ToLower(ds.Type), strings.ToLower(string(dsType)))
+}
 
-// MatchKind returns the first datasource whose name contains the
-// kind's canonical substring (case-insensitive).
-func MatchKind(dss []Datasource, kind DatasourceKind) (Datasource, bool) {
-	if kind == "" {
-		return Datasource{}, false
-	}
-	needle := strings.ToLower(string(kind))
+// FilterDatasourcesByType returns every ds whose plugin type contains
+// dsType, in input order. Used by the binder to pick the default
+// datasource (first match) and to validate caller-supplied UIDs.
+func FilterDatasourcesByType(dss []Datasource, dsType DatasourceType) []Datasource {
+	out := make([]Datasource, 0, len(dss))
 	for _, ds := range dss {
-		if strings.Contains(strings.ToLower(ds.Name), needle) {
-			return ds, true
+		if MatchesType(ds, dsType) {
+			out = append(out, ds)
 		}
 	}
-	return Datasource{}, false
+	return out
 }

@@ -1,4 +1,4 @@
-// metrics.go — RoleViewer, DSKindMimir.
+// metrics.go — RoleViewer, prometheus-typed datasources.
 package tools
 
 import (
@@ -19,6 +19,6 @@ func registerMetricsTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.ListPrometheusLabelValues,
 		mcpgrafanatools.ListPrometheusMetricMetadata,
 	} {
-		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSKindMimir, datasourceUIDArg, t)
+		b.bindDatasourceTool(s, authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg, t)
 	}
 }
