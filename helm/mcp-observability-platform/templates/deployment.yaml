@@ -44,7 +44,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - serve
-            {{- with (default (list) .Values.tools.disabled) }}
+            {{- with (default (list) (default dict .Values.tools).disabled) }}
             - --disabled-tools={{ join "," . }}
             {{- end }}
           securityContext:
