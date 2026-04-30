@@ -18,10 +18,10 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	registerAlertDetailTool(s, az, gc)
+func registerAlertTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+	registerAlertDetailTool(s, disabled, az, gc)
 
-	s.AddTool(
+	maybeAddTool(s, disabled,
 		mcp.NewTool("list_alerts",
 			readOnlyAnnotation(),
 			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); call get_alert with the fingerprint for full detail."),
@@ -60,8 +60,8 @@ func registerAlertTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Cli
 // registerAlertDetailTool exposes a per-fingerprint read after list_alerts.
 // Tool (not a resource) because LLM clients handle tool calls more reliably
 // than resource URI templates.
-func registerAlertDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	s.AddTool(
+func registerAlertDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+	maybeAddTool(s, disabled,
 		mcp.NewTool("get_alert",
 			readOnlyAnnotation(),
 			mcp.WithDescription("Return the full Alertmanager alert object for a single fingerprint: labels, annotations, timestamps, generatorURL, silencedBy/inhibitedBy. Use after list_alerts."),

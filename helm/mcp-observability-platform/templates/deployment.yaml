@@ -42,7 +42,11 @@ spec:
         - name: mcp
           image: {{ include "mcp-observability-platform.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["serve"]
+          args:
+            - serve
+            {{- with (default (list) .Values.tools.disabled) }}
+            - --disabled-tools={{ join "," . }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           ports:

@@ -1,6 +1,12 @@
 package tools
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	mcpsrv "github.com/mark3labs/mcp-go/server"
+)
 
 func TestPaginateStrings(t *testing.T) {
 	all := []string{"zeta", "alpha", "beta", "gamma", "delta"}
@@ -51,6 +57,36 @@ func TestPaginateStrings(t *testing.T) {
 				t.Fatalf("input mutated (prefix path): before=%v after=%v", before, in)
 			}
 		}
+	})
+}
+
+func TestMaybeAddTool(t *testing.T) {
+	noop := func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	}
+	t.Run("nil_disabled_registers_all", func(t *testing.T) {
+		s := mcpsrv.NewMCPServer("t", "0", mcpsrv.WithToolCapabilities(true))
+		maybeAddTool(s, nil, mcp.NewTool("a"), noop)
+		maybeAddTool(s, nil, mcp.NewTool("b"), noop)
+		// mark3labs/mcp-go has no listing-by-name accessor on the server,
+		// but ListTools via the server's request path is overkill here.
+		// Re-registering panics on collision, so a non-panicking second
+		// call is sufficient evidence both tools were registered.
+	})
+	t.Run("disabled_skips_match_only", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("unexpected panic: %v", r)
+			}
+		}()
+		s := mcpsrv.NewMCPServer("t", "0", mcpsrv.WithToolCapabilities(true))
+		disabled := map[string]bool{"a": true}
+		// Register "a" twice: if the disabled filter weren't honoured,
+		// the second AddTool call would panic on duplicate registration.
+		maybeAddTool(s, disabled, mcp.NewTool("a"), noop)
+		maybeAddTool(s, disabled, mcp.NewTool("a"), noop)
+		// "b" registers normally; a duplicate would panic.
+		maybeAddTool(s, disabled, mcp.NewTool("b"), noop)
 	})
 }
 

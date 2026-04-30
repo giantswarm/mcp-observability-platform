@@ -31,13 +31,13 @@ const (
 	silenceStateExpired = "expired"
 )
 
-func registerSilenceTools(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	registerSilenceListTool(s, az, gc)
-	registerSilenceDetailTool(s, az, gc)
+func registerSilenceTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+	registerSilenceListTool(s, disabled, az, gc)
+	registerSilenceDetailTool(s, disabled, az, gc)
 }
 
-func registerSilenceListTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	s.AddTool(
+func registerSilenceListTool(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+	maybeAddTool(s, disabled,
 		mcp.NewTool("list_silences",
 			readOnlyAnnotation(),
 			mcp.WithDescription("List silences in the org's Alertmanager, paginated and sorted by endsAt asc (soonest expiring first). Each item is minimal (id, state, createdBy, endsAt, matcher count); call get_silence with the id for the full record. Resolves the silencedBy ids that list_alerts returns."),
@@ -73,8 +73,8 @@ func registerSilenceListTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafan
 	)
 }
 
-func registerSilenceDetailTool(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client) {
-	s.AddTool(
+func registerSilenceDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+	maybeAddTool(s, disabled,
 		mcp.NewTool("get_silence",
 			readOnlyAnnotation(),
 			mcp.WithDescription("Return the full Alertmanager silence record by id: matchers, startsAt, endsAt, createdBy, comment, state. Use after list_alerts (silencedBy[]) or list_silences."),

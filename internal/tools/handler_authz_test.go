@@ -101,7 +101,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 	}
 
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(context.Background(), s, slog.Default(), az, emptyOrgLister, gf, ts.URL, "test-token", nil); err != nil {
+	if err := RegisterAll(context.Background(), s, slog.Default(), az, emptyOrgLister, gf, ts.URL, "test-token", nil, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s, ts.Close

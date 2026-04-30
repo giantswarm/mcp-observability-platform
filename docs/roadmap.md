@@ -75,8 +75,8 @@ writes that match upstream:
 
 - `create_silence(org, matchers, duration, comment)` — first slice,
   Editor-gated. Custom (no upstream equivalent), AM v2
-  `POST /api/v2/silences`. Depends on §3 landing first so the tool
-  ships in the chart's `runtime.disabledTools` and clusters opt in.
+  `POST /api/v2/silences`. Ship listed in the chart's `tools.disabled`
+  default so clusters opt in explicitly via `--disabled-tools`.
 - `create_annotation(org, dashboardUid?, text, tags[])` — bot-driven
   deploy annotations. Delegated (`mcpgrafanatools.CreateAnnotationTool`).
   Land after `create_silence` validates the audit + authz path.
@@ -85,18 +85,7 @@ writes that match upstream:
 Each carries `destructiveHint: true` in MCP annotations; the
 `tool_call` audit line captures full payload for forensics.
 
-### 3. Per-tool enable/disable (deployment-time)
-
-Operators should be able to disable individual tools (e.g. all write
-tools in a read-only deployment, `alerting_manage_rules` in clusters
-where alert-rule access is sensitive) without rebuilding.
-
-- `TOOLS_DISABLED` env var (CSV) read at startup.
-- `RegisterAll` skips `s.AddTool` for matching names and logs the
-  skip set once at startup.
-- Helm chart exposes a `runtime.disabledTools: []string` value.
-
-### 4. Self-observability of the MCP itself
+### 3. Self-observability of the MCP itself
 
 Shipped today: per-tool counter + duration histogram + error counter
 on `/metrics` (`internal/observability/`), OTEL tracing, ServiceMonitor
