@@ -136,7 +136,10 @@
                     "type": "array"
                 },
                 "policyTypes": {
-                    "type": "array"
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
