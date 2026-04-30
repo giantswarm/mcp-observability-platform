@@ -1,8 +1,18 @@
 // dashboards.go — RoleViewer, no datasource scope.
 //
+// run_panel_query resolves its datasource internally from the dashboard
+// JSON, so it's bound org-only — the LLM never picks a UID.
+//
+// get_panel_image hits Grafana's /render endpoint (not the datasource
+// proxy). On clusters without the Grafana Image Renderer service the
+// upstream handler returns a clear "image renderer not available"
+// error — same failure shape as any tool called against a missing
+// backend. Returns an MCP `ImageContent`; vision-capable clients
+// render the PNG natively. ResponseCap only intercepts TextContent,
+// so PNG bytes flow through uncapped — revisit if pathologically large
+// renders bite in production.
+//
 // Skipped on purpose:
-//   - get_panel_image — LLMs can't reliably interpret PNG bytes through
-//     MCP; the tool is rendered for human consumption only.
 //   - get_annotations / get_annotation_tags — niche dashboard-tooling
 //     surface; reinstate via this list when an LLM use case shows up.
 package tools
@@ -24,6 +34,8 @@ func registerDashboardTools(s *mcpsrv.MCPServer, b *gfBinder) {
 		mcpgrafanatools.GetDashboardPanelQueries,
 		mcpgrafanatools.GetDashboardProperty,
 		mcpgrafanatools.GenerateDeeplink,
+		mcpgrafanatools.RunPanelQuery,
+		mcpgrafanatools.GetPanelImage,
 	} {
 		b.bindOrgTool(s, authz.RoleViewer, t)
 	}

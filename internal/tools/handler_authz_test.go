@@ -141,6 +141,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 		"promql":         "up",
 		"service":        "api",
 		"fingerprint":    "0123456789abcdef",
+		"id":             "abc",
 		"dashboardUid":   "abc",
 		"panelId":        1,
 		"datasource_uid": "any", // alerting_manage_rules: bridge clobbers, but its own validate() expects an operation
