@@ -159,11 +159,11 @@ func TestHandler_SearchDashboards(t *testing.T) {
 	}
 }
 
-// TestHandler_ListDatasources_PropagatesOrgID is the regression test for
-// the multi-org bug fix: the local list_datasources handler MUST send
-// X-Grafana-Org-Id from the caller's resolved OrgID. Upstream
-// mcp-grafana's openapi-based handler dropped this header, so this test
-// pins the new behaviour.
+// TestHandler_ListDatasources_PropagatesOrgID pins that list_datasources
+// (delegated to upstream mcp-grafana via gfBinder.bindOrgTool) sends
+// X-Grafana-Org-Id matching the caller's resolved OrgID — i.e. the
+// per-request ctx propagates through mcp-grafana's openapi-runtime path
+// to OrgIDRoundTripper.
 func TestHandler_ListDatasources_PropagatesOrgID(t *testing.T) {
 	var sawPath, sawOrgID string
 	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {

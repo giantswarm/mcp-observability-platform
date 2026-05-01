@@ -44,19 +44,13 @@ const datasourceUIDHint = "Optional: override the default datasource — pass th
 // authz, per-request Grafana context injection, and (for
 // datasource-scoped tools) datasource UID resolution.
 //
-// One mcp-grafana GrafanaClient is cached per (resolved) OrgID. Two
-// reasons for that, both in mcpgrafana.OrgIDRoundTripper:
-//   - On HTTP-style calls the round-tripper reads OrgID from
-//     GrafanaConfigFromContext(req.Context()) and overrides per-request.
-//   - On openapi-runtime calls (e.g. c.Datasources.GetDataSources()),
-//     params.Context is nil and the runtime falls back to
-//     context.Background(), so the override branch never fires — only
-//     the orgID baked at construction (t.orgID) reaches the wire.
-//
-// Caching by OrgID makes the second path correct: every per-org client
-// has the right t.orgID baked in, so /api/datasources answers for the
-// caller's org rather than the SA's home org. Cache is unbounded, but
-// |orgs| is small (per Grafana install).
+// One shared upstream GrafanaClient is reused across requests; the
+// per-call OrgID and ExtraHeaders ride on ctx via WithGrafanaConfig
+// and reach the wire through mcp-grafana's Auth/OrgID/ExtraHeaders
+// RoundTrippers (HTTP-style and openapi-runtime paths both propagate
+// ctx since mcp-grafana v0.13.1). Built lazily on first authz-passed
+// call because NewGrafanaClient hits /api/frontend/settings during
+// construction.
 type gfBinder struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
@@ -65,8 +59,8 @@ type gfBinder struct {
 	basicAuth  *url.Userinfo
 	disabled   map[string]bool // --disabled-tools lookup; nil = no filter
 
-	clientsMu sync.Mutex
-	clients   map[int64]*mcpgrafana.GrafanaClient // key: OrgID
+	upstreamOnce sync.Once
+	upstream     *mcpgrafana.GrafanaClient
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
@@ -91,23 +85,18 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 		apiKey:     apiKey,
 		basicAuth:  basicAuth,
 		disabled:   disabled,
-		clients:    make(map[int64]*mcpgrafana.GrafanaClient),
 	}, nil
 }
 
-// clientFor returns the GrafanaClient with t.orgID == orgID baked in,
-// creating + caching one on miss. The /api/frontend/settings probe
-// inside NewGrafanaClient runs once per (new) OrgID.
-func (b *gfBinder) clientFor(orgID int64) *mcpgrafana.GrafanaClient {
-	b.clientsMu.Lock()
-	defer b.clientsMu.Unlock()
-	if c, ok := b.clients[orgID]; ok {
-		return c
-	}
-	cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth, OrgID: orgID}
-	c := mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.apiKey, b.basicAuth)
-	b.clients[orgID] = c
-	return c
+// client returns the shared upstream GrafanaClient, building it on
+// first call. The /api/frontend/settings probe inside NewGrafanaClient
+// runs once for the lifetime of the process.
+func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
+	b.upstreamOnce.Do(func() {
+		cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth}
+		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.apiKey, b.basicAuth)
+	})
+	return b.upstream
 }
 
 // bindOrgTool registers an upstream tool that needs only org→OrgID
@@ -350,11 +339,10 @@ func (b *gfBinder) requireOrg(ctx context.Context, req mcp.CallToolRequest, role
 	return org, nil
 }
 
-// attachGrafana stashes a per-request GrafanaConfig and the per-OrgID
-// GrafanaClient on ctx. The HTTP-style mcp-grafana round-trippers read
-// OrgID/ExtraHeaders from the config; the openapi-runtime path can't
-// (its req.Context() is background), but the per-OrgID client baked
-// t.orgID at construction so the right header still ships.
+// attachGrafana stashes the per-request GrafanaConfig (carrying the
+// resolved OrgID and the OIDC-subject ExtraHeader) and the shared
+// upstream GrafanaClient on ctx. mcp-grafana's RoundTrippers read both
+// per request, so a single client serves every org.
 func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Context {
 	cfg := mcpgrafana.GrafanaConfig{
 		URL:       b.url,
@@ -368,7 +356,7 @@ func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Conte
 		cfg.ExtraHeaders = map[string]string{"X-Grafana-User": subj}
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
-	ctx = mcpgrafana.WithGrafanaClient(ctx, b.clientFor(orgID))
+	ctx = mcpgrafana.WithGrafanaClient(ctx, b.client())
 	return ctx
 }
 
