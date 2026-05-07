@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
+	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
+	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 )
 
 // clearEnv unsets every var loadConfig looks at so a test starts from a
@@ -62,11 +63,11 @@ func TestLoadConfig_DefaultsToolTimeoutAndMaxResponseBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if cfg.ToolTimeout != middleware.DefaultToolTimeout {
-		t.Errorf("ToolTimeout = %s, want %s", cfg.ToolTimeout, middleware.DefaultToolTimeout)
+	if cfg.ToolTimeout != timeout.DefaultTimeout {
+		t.Errorf("ToolTimeout = %s, want %s", cfg.ToolTimeout, timeout.DefaultTimeout)
 	}
-	if cfg.MaxResponseBytes != middleware.DefaultMaxResponseBytes {
-		t.Errorf("MaxResponseBytes = %d, want %d", cfg.MaxResponseBytes, middleware.DefaultMaxResponseBytes)
+	if cfg.MaxResponseBytes != responsecap.DefaultLimit {
+		t.Errorf("MaxResponseBytes = %d, want %d", cfg.MaxResponseBytes, responsecap.DefaultLimit)
 	}
 }
 
