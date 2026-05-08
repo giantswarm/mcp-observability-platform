@@ -21,8 +21,6 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # 1.26.3 fixes GO-2026-{4918,4971,4980,4982} reachable from the
-          # net / net/http / html/template stdlib. Tracked by govulncheck.
           go-version: '1.26.3'
           cache: true
 
