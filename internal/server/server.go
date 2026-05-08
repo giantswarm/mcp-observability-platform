@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
+	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -78,8 +80,13 @@ func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
-		mcpsrv.WithToolHandlerMiddleware(middleware.ResponseCap(cfg.MaxResponseBytes)),
-		mcpsrv.WithToolHandlerMiddleware(middleware.ToolTimeout(cfg.ToolTimeout)),
+		mcpsrv.WithToolHandlerMiddleware(responsecap.New(responsecap.Options{
+			Limit: cfg.MaxResponseBytes,
+			Hint: func(string) string {
+				return "narrow the query: add label matchers, aggregate with sum/rate/topk, or shorten the time range"
+			},
+		})),
+		mcpsrv.WithToolHandlerMiddleware(timeout.New(cfg.ToolTimeout)),
 	)
 
 	if err := tools.RegisterAll(ctx, mcp, cfg.Logger, cfg.Authorizer, cfg.OrgLister, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth, cfg.DisabledTools); err != nil {

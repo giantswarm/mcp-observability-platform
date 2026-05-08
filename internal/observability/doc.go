@@ -1,13 +1,10 @@
-// Package observability owns the Prometheus metrics + OTLP tracing
-// init for this MCP.
+// Package observability owns the Prometheus metrics for this MCP.
 //
 // Metrics are registered on a package-local registry (not the global
 // default) so tests can instantiate the server twice without hitting
 // duplicate-registration panics, and so multiple MCP instances in one
 // binary never cross-pollute metric streams.
 //
-// OTLP tracing is opt-in via OTEL_EXPORTER_OTLP_ENDPOINT (or the signal-
-// specific OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) — when both are unset,
-// InitTracing returns a no-op shutdown and the tracer falls back to the
-// global noop tracer (downstream calls are span-free).
+// OTLP tracing init lives in github.com/giantswarm/mcp-toolkit/tracing
+// and is wired in cmd/serve.go.
 package observability

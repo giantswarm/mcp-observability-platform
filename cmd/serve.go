@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/giantswarm/mcp-toolkit/logging"
+	"github.com/giantswarm/mcp-toolkit/tracing"
 	"github.com/go-logr/logr"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
@@ -21,7 +23,6 @@ import (
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
-	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
 
@@ -106,7 +107,15 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
-	logger := newLogger(cfg.Debug || flagDebug, cfg.LogFormat)
+	logLevel := slog.LevelInfo
+	if cfg.Debug || flagDebug {
+		logLevel = slog.LevelDebug
+	}
+	logFormat := logging.FormatText
+	if cfg.LogFormat == logFormatJSON {
+		logFormat = logging.FormatJSON
+	}
+	logger := logging.New(logging.Options{Level: logLevel, Format: logFormat})
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
 	orgLister, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
@@ -145,7 +154,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// Best-effort OTEL tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is
 	// unset. The cluster log pipeline ships stderr to Loki; we don't run
 	// a separate OTLP-logs path.
-	shutdownOTEL, err := observability.InitTracing(shutdownCtx, "mcp-observability-platform", version)
+	prependOTELResourceAttrs()
+	shutdownOTEL, err := tracing.Init(shutdownCtx, "mcp-observability-platform", version)
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
@@ -223,12 +233,24 @@ func runServe(_ *cobra.Command, _ []string) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	runListenAndServe(mcpServer, "MCP", logger, cancel)
-	runListenAndServe(obsServer, "observability", logger, cancel)
+	// Two-phase shutdown via per-server contexts. Ordering is load-bearing:
+	// keep the obs listener up (so kubelet's /healthz probe still hits a
+	// live endpoint) while MCP drains its long-lived streamable-HTTP / SSE
+	// connections, then drain the obs server.
+	mcpCtx, mcpCancel := context.WithCancel(context.Background())
+	defer mcpCancel()
+	obsCtx, obsCancel := context.WithCancel(context.Background())
+	defer obsCancel()
+
+	mcpDone := runHTTP(mcpCtx, mcpServer, 10*time.Second, "MCP", logger, cancel)
+	obsDone := runHTTP(obsCtx, obsServer, 5*time.Second, "observability", logger, cancel)
 
 	<-shutdownCtx.Done()
 	logger.Info("shutdown requested")
-	runTwoPhaseShutdown(logger, mcpServer, obsServer)
+	mcpCancel()
+	<-mcpDone
+	obsCancel()
+	<-obsDone
 	return nil
 }
 
@@ -272,17 +294,34 @@ func shutdownWithTimeout(fn func(context.Context) error) {
 	_ = fn(ctx)
 }
 
-func newLogger(debug bool, format string) *slog.Logger {
-	lvl := slog.LevelInfo
-	if debug {
-		lvl = slog.LevelDebug
+// prependOTELResourceAttrs feeds the static service.namespace and the
+// K8s downward-API env vars into OTEL_RESOURCE_ATTRIBUTES so the toolkit's
+// tracing.Init picks them up via resource.WithFromEnv. Existing entries in
+// OTEL_RESOURCE_ATTRIBUTES win — this only fills missing keys.
+func prependOTELResourceAttrs() {
+	existing := os.Getenv("OTEL_RESOURCE_ATTRIBUTES")
+	have := map[string]bool{}
+	for _, kv := range strings.Split(existing, ",") {
+		if k, _, ok := strings.Cut(strings.TrimSpace(kv), "="); ok {
+			have[k] = true
+		}
 	}
-	opts := &slog.HandlerOptions{Level: lvl}
-	var h slog.Handler
-	if format == logFormatJSON {
-		h = slog.NewJSONHandler(os.Stderr, opts)
-	} else {
-		h = slog.NewTextHandler(os.Stderr, opts)
+	var add []string
+	maybe := func(key, val string) {
+		if val != "" && !have[key] {
+			add = append(add, key+"="+val)
+		}
 	}
-	return slog.New(h)
+	maybe("service.namespace", "giantswarm.observability")
+	maybe("k8s.pod.name", os.Getenv("POD_NAME"))
+	maybe("k8s.namespace.name", os.Getenv("POD_NAMESPACE"))
+	maybe("k8s.node.name", os.Getenv("NODE_NAME"))
+	if len(add) == 0 {
+		return
+	}
+	merged := strings.Join(add, ",")
+	if existing != "" {
+		merged = existing + "," + merged
+	}
+	_ = os.Setenv("OTEL_RESOURCE_ATTRIBUTES", merged)
 }

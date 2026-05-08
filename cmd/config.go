@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
+	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
+	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 )
 
 type config struct {
@@ -41,11 +42,11 @@ func loadConfig() (*config, error) {
 	if err != nil {
 		return nil, err
 	}
-	toolTimeout, err := envDuration("TOOL_TIMEOUT", middleware.DefaultToolTimeout)
+	toolTimeout, err := envDuration("TOOL_TIMEOUT", timeout.DefaultTimeout)
 	if err != nil {
 		return nil, err
 	}
-	maxResponseBytes, err := envInt("TOOL_MAX_RESPONSE_BYTES", middleware.DefaultMaxResponseBytes)
+	maxResponseBytes, err := envInt("TOOL_MAX_RESPONSE_BYTES", responsecap.DefaultLimit)
 	if err != nil {
 		return nil, err
 	}

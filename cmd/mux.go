@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
 
 	oauth "github.com/giantswarm/mcp-oauth"
+	"github.com/giantswarm/mcp-toolkit/httpx"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -60,33 +60,20 @@ func buildObsMux(lister authz.OrgLister, cacheAlive *atomic.Bool) http.Handler {
 	return mux
 }
 
-// runListenAndServe cancels shutdownCancel on a non-clean exit so a single
-// failed bind takes the whole process down rather than leaving one server
-// running silently.
-func runListenAndServe(srv *http.Server, label string, logger *slog.Logger, shutdownCancel context.CancelFunc) {
+// runHTTP launches srv via httpx.Run in a goroutine. A bind failure or
+// unexpected server error triggers abort so the parent shutdownCtx cancels
+// and the rest of the lifecycle drains. The returned channel emits the
+// final error (nil on graceful shutdown) once the server has stopped.
+func runHTTP(ctx context.Context, srv *http.Server, drain time.Duration, label string, logger *slog.Logger, abort context.CancelFunc) <-chan error {
+	done := make(chan error, 1)
 	go func() {
 		logger.Info(label+" listening", "addr", srv.Addr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		err := httpx.Run(ctx, srv, drain)
+		if err != nil {
 			logger.Error(label+" server failed", "error", err)
-			shutdownCancel()
+			abort()
 		}
+		done <- err
 	}()
-}
-
-// runTwoPhaseShutdown drains MCP first (10s) then the obs server (5s).
-// The ordering is load-bearing: by keeping the obs listener up while MCP
-// drains, kubelet's liveness probe still hits a live /healthz and a slow
-// tool call doesn't trip SIGKILL mid-drain.
-func runTwoPhaseShutdown(logger *slog.Logger, mcpServer, obsServer *http.Server) {
-	mcpDrainCtx, mcpDrainCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer mcpDrainCancel()
-	if err := mcpServer.Shutdown(mcpDrainCtx); err != nil {
-		logger.Warn("mcp server drain returned error", "error", err)
-	}
-
-	obsDrainCtx, obsDrainCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer obsDrainCancel()
-	if err := obsServer.Shutdown(obsDrainCtx); err != nil {
-		logger.Warn("observability server drain returned error", "error", err)
-	}
+	return done
 }
