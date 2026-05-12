@@ -8,7 +8,7 @@ require (
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.3
 	github.com/grafana/mcp-grafana v0.14.0
-	github.com/mark3labs/mcp-go v0.52.0
+	github.com/mark3labs/mcp-go v0.53.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.68.0
