@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/giantswarm/mcp-oauth v0.2.117
-	github.com/giantswarm/mcp-toolkit v0.1.0
+	github.com/giantswarm/mcp-toolkit v0.2.1
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.3
 	github.com/grafana/mcp-grafana v0.14.0
@@ -155,6 +155,7 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/contrib/bridges/otelslog v0.18.0 // indirect
 	go.opentelemetry.io/contrib/bridges/prometheus v0.68.0 // indirect
 	go.opentelemetry.io/contrib/exporters/autoexport v0.68.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.65.0 // indirect
