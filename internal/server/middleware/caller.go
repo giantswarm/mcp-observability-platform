@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	oauth "github.com/giantswarm/mcp-oauth"
+	"github.com/giantswarm/mcp-oauth/handler"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
@@ -14,7 +14,7 @@ import (
 // identity is present — downstream gates (RequireCaller / authz) treat
 // that as unauthenticated.
 func ExtractCaller(r *http.Request) authz.Caller {
-	ui, ok := oauth.UserInfoFromContext(r.Context())
+	ui, ok := handler.UserInfoFromContext(r.Context())
 	if !ok || ui == nil {
 		return authz.Caller{}
 	}
