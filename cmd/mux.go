@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	oauth "github.com/giantswarm/mcp-oauth"
+	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-toolkit/httpx"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -20,7 +20,7 @@ import (
 
 // buildMCPMux wraps the OAuth + MCP routes in otelhttp so inbound W3C
 // traceparents become server spans.
-func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *oauth.Handler) http.Handler {
+func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *handler.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/oauth/authorize", oauthHandler.ServeAuthorization)
