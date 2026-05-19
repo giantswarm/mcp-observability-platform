@@ -6,6 +6,7 @@ import (
 	"os"
 
 	oauth "github.com/giantswarm/mcp-oauth"
+	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/oauthconfig"
 	"github.com/giantswarm/mcp-oauth/providers/dex"
 	"github.com/giantswarm/mcp-oauth/storage"
@@ -22,7 +23,7 @@ const (
 
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // storeClose drains the storage backend on shutdown.
-func buildOAuthHandler(logger *slog.Logger) (*oauth.Handler, func(), error) {
+func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	provider, err := oauthconfig.DexFromEnv()
 	if err != nil {
 		return nil, nil, fmt.Errorf("dex provider: %w", err)
@@ -75,13 +76,14 @@ func buildOAuthHandler(logger *slog.Logger) (*oauth.Handler, func(), error) {
 		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
-	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger)
+	var opts []oauth.ServerOption
+	if encryptor != nil {
+		opts = append(opts, oauth.WithEncryptor(encryptor))
+	}
+	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger, opts...)
 	if err != nil {
 		storeClose()
 		return nil, nil, fmt.Errorf("oauth server: %w", err)
 	}
-	if encryptor != nil {
-		srv.SetEncryptor(encryptor)
-	}
-	return oauth.NewHandler(srv, logger), storeClose, nil
+	return handler.New(srv, logger), storeClose, nil
 }

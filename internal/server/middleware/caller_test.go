@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	oauth "github.com/giantswarm/mcp-oauth"
+	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/providers"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -16,7 +16,7 @@ const testSubject = "sub-1"
 func TestExtractCaller_ReturnsAttachedIdentity(t *testing.T) {
 	ui := &providers.UserInfo{ID: testSubject, Email: "alice@example.com", TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
-	req = req.WithContext(oauth.ContextWithUserInfo(req.Context(), ui))
+	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
 
 	c := ExtractCaller(req)
 	if c.Subject != testSubject {
@@ -43,7 +43,7 @@ func TestInjectCallerFromRequest_AttachesToContext(t *testing.T) {
 	// see nothing and the resolver errors with ErrNoCallerIdentity.
 	ui := &providers.UserInfo{ID: testSubject, Email: "alice@example.com", TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
-	req = req.WithContext(oauth.ContextWithUserInfo(req.Context(), ui))
+	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
 
 	ctx := InjectCallerFromRequest(context.Background(), req)
 	c := authz.CallerFromContext(ctx)
