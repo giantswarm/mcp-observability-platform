@@ -1,6 +1,6 @@
 version: 2.1
 orbs:
-  architect: giantswarm/architect@8.3.0
+  architect: giantswarm/architect@9.1.0
 
 workflows:
   build:
@@ -9,6 +9,7 @@ workflows:
           context: architect
           name: go-build-mcp-observability-platform
           binary: mcp-observability-platform
+          architectures: "linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64,windows/arm64"
           filters:
             tags:
               only: /^v.*/
@@ -110,6 +111,16 @@ workflows:
           requires:
             - execute chart tests
             - push-to-gsoci-release
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+
+      - architect/upload-release-assets:
+          context: architect
+          requires:
+            - go-build-mcp-observability-platform
           filters:
             tags:
               only: /^v.*/
