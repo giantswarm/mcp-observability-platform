@@ -118,6 +118,7 @@ workflows:
               ignore: /.*/
 
       - architect/upload-release-assets:
+          binary: mcp-observability-platform
           context: architect
           requires:
             - go-build-mcp-observability-platform
