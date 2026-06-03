@@ -255,8 +255,8 @@ func TestHandler_ListSilences(t *testing.T) {
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "list_silences", map[string]any{
-		testOrgArg:     testOrgName,
-		"matcher": `alertname="X"`,
+		testOrgArg: testOrgName,
+		"matcher":  `alertname="X"`,
 	})
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
@@ -293,7 +293,7 @@ func TestHandler_GetSilence(t *testing.T) {
 
 	res := callTool(t, wireHandlerTest(t, ts), "get_silence", map[string]any{
 		testOrgArg: testOrgName,
-		"id":  testUID,
+		"id":       testUID,
 	})
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
