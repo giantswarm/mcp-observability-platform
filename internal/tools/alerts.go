@@ -18,6 +18,12 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
+const (
+	severityCritical = "critical"
+	severityWarning  = "warning"
+	severityInfo     = "info"
+)
+
 func registerAlertTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
 	registerAlertDetailTool(s, disabled, az, gc)
 
@@ -216,13 +222,13 @@ func findAlertByFingerprint(raw json.RawMessage, fingerprint string) (*amAlert, 
 
 func severityRank(s string) int {
 	switch strings.ToLower(s) {
-	case "critical", "page":
+	case severityCritical, "page":
 		return 4
 	case "error", "high":
 		return 3
-	case "warning", "warn":
+	case severityWarning, "warn":
 		return 2
-	case "info", "notice", "low":
+	case severityInfo, "notice", "low":
 		return 1
 	default:
 		return 0

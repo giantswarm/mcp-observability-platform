@@ -10,14 +10,14 @@ import (
 
 func TestSeverityRank(t *testing.T) {
 	cases := map[string]int{
-		"critical": 4,
+		severityCritical: 4,
 		"CRITICAL": 4,
 		"page":     4,
 		"error":    3,
 		"high":     3,
-		"warning":  2,
+		severityWarning:  2,
 		"warn":     2,
-		"info":     1,
+		severityInfo:     1,
 		"notice":   1,
 		"low":      1,
 		"":         0,
@@ -49,10 +49,10 @@ func buildAlerts(specs []struct {
 
 func TestPaginateAlerts_SortsBySeverityThenStart(t *testing.T) {
 	raw := buildAlerts([]struct{ Name, Sev, State, Fp, Start string }{
-		{"A", "warning", "active", "f1", "2026-04-18T10:00:00Z"},
-		{"B", "critical", "active", "f2", "2026-04-18T12:00:00Z"},
-		{"C", "critical", "active", "f3", "2026-04-18T11:00:00Z"},
-		{"D", "info", "active", "f4", "2026-04-18T09:00:00Z"},
+		{"A", severityWarning, amActive, "f1", "2026-04-18T10:00:00Z"},
+		{"B", severityCritical, amActive, "f2", "2026-04-18T12:00:00Z"},
+		{"C", severityCritical, amActive, "f3", "2026-04-18T11:00:00Z"},
+		{"D", severityInfo, amActive, "f4", "2026-04-18T09:00:00Z"},
 	})
 	res, err := paginateAlerts(raw, 0, 50)
 	if err != nil {
@@ -84,8 +84,8 @@ func TestPaginateAlerts_PageBoundaries(t *testing.T) {
 	for i := range 5 {
 		specs = append(specs, struct{ Name, Sev, State, Fp, Start string }{
 			Name:  "A",
-			Sev:   "warning",
-			State: "active",
+			Sev:   severityWarning,
+			State: amActive,
 			Fp:    fmt.Sprintf("fp-%02d", i),
 			Start: fmt.Sprintf("2026-04-18T10:%02d:00Z", i),
 		})
@@ -130,8 +130,8 @@ func TestPaginateAlerts_UnnamedFallback(t *testing.T) {
 
 func TestFindAlertByFingerprint(t *testing.T) {
 	raw := buildAlerts([]struct{ Name, Sev, State, Fp, Start string }{
-		{"A", "warning", "active", "aaa", ""},
-		{"B", "critical", "silenced", "bbb", ""},
+		{"A", severityWarning, amActive, "aaa", ""},
+		{"B", severityCritical, "silenced", "bbb", ""},
 	})
 	a, err := findAlertByFingerprint(raw, "bbb")
 	if err != nil {

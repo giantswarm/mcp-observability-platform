@@ -9,6 +9,8 @@ import (
 	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 )
 
+const testMalformedIsHardError = "malformed is a hard error"
+
 // clearEnv unsets every var loadConfig looks at so a test starts from a
 // known state — t.Setenv isolates per-test, but we set everything to "" so
 // the sequence of os.Getenv calls inside loadConfig sees a blank slate.
@@ -121,7 +123,7 @@ func TestEnvDuration(t *testing.T) {
 		{"zero disables", "0", 30 * time.Second, 0, false},
 		{"zero-seconds disables", "0s", 30 * time.Second, 0, false},
 		{"valid", "5m", 30 * time.Second, 5 * time.Minute, false},
-		{"malformed is a hard error", "not-a-duration", 30 * time.Second, 0, true},
+		{testMalformedIsHardError, "not-a-duration", 30 * time.Second, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -152,7 +154,7 @@ func TestEnvInt(t *testing.T) {
 		{"unset", "", 128 * 1024, 128 * 1024, false},
 		{"zero valid", "0", 128 * 1024, 0, false},
 		{"valid", "1024", 128 * 1024, 1024, false},
-		{"malformed is a hard error", "not-a-number", 128 * 1024, 0, true},
+		{testMalformedIsHardError, "not-a-number", 128 * 1024, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -216,7 +218,7 @@ func TestEnvBool(t *testing.T) {
 		{"false", "false", true, false, false},
 		{"1", "1", false, true, false},
 		{"DEBUG=yes is a hard error", "yes", false, false, true},
-		{"malformed is a hard error", "not-a-bool", true, false, true},
+		{testMalformedIsHardError, "not-a-bool", true, false, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

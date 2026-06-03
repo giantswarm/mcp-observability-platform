@@ -12,6 +12,14 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
+const (
+	testEmail    = "u@e.com"
+	testNewEmail = "new@e.com"
+	testSubject  = "sub-1"
+	testRoleAdmin  = "Admin"
+	testRoleViewer = "Viewer"
+)
+
 // ctxWithCaller builds a context carrying the given caller via the
 // production WithCaller path, so tests exercise the same context
 // propagation as runtime callers. Caller.Authenticated() requires a
@@ -100,8 +108,8 @@ func TestAuthorizer_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 		users: map[string]int64{"u@example.com": 1},
 		orgs: map[int64][]grafana.UserOrgMembership{
 			1: {
-				{OrgID: 42, Role: "Admin"},
-				{OrgID: 7, Role: "Viewer"},
+				{OrgID: 42, Role: testRoleAdmin},
+				{OrgID: 7, Role: testRoleViewer},
 			},
 		},
 	}
@@ -123,17 +131,17 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	// Descriptor exists for orgID 42 but not 99. Role "None" also dropped.
 	alpha := newOrg("alpha", "Alpha", 42)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 5},
+		users: map[string]int64{testEmail: 5},
 		orgs: map[int64][]grafana.UserOrgMembership{
 			5: {
 				{OrgID: 42, Role: "None"},  // dropped: no role
-				{OrgID: 99, Role: "Admin"}, // dropped: no matching descriptor
+				{OrgID: 99, Role: testRoleAdmin}, // dropped: no matching descriptor
 			},
 		},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	got, _ := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
+	got, _ := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
 	if len(got) != 0 {
 		t.Errorf("expected empty access, got %v", got)
 	}
@@ -147,7 +155,7 @@ func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
 	r := mustNewAuthorizer(t, registry(), g)
 
-	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("want ErrCallerUnknownToGrafana, got %v", err)
 	}
@@ -156,14 +164,14 @@ func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
 func TestAuthorizer_Resolve_Cache(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
+		users: map[string]int64{testEmail: 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: testRoleViewer}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
 		t.Errorf("expected 1 lookup + 1 userOrgs call, got %d/%d", g.calls.lookup, g.calls.userOrgs)
 	}
@@ -172,12 +180,12 @@ func TestAuthorizer_Resolve_Cache(t *testing.T) {
 func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
+		users: map[string]int64{testEmail: 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: testRoleViewer}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleAdmin)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleAdmin)
 	if err == nil {
 		t.Fatalf("expected insufficient-role error, got nil")
 	}
@@ -186,12 +194,12 @@ func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
+		users: map[string]int64{testEmail: 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists but in no orgs
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleViewer)
 	if err == nil {
 		t.Fatalf("expected not-authorised error, got nil")
 	}
@@ -200,12 +208,12 @@ func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha Team", 1)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
+		users: map[string]int64{testEmail: 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: testRoleAdmin}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	org, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "ALPHA TEAM", RoleAdmin)
+	org, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "ALPHA TEAM", RoleAdmin)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
@@ -216,10 +224,10 @@ func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 
 func TestRoleFromGrafana(t *testing.T) {
 	cases := map[string]Role{
-		"Admin":  RoleAdmin,
-		"admin":  RoleAdmin,
-		"Editor": RoleEditor,
-		"Viewer": RoleViewer,
+		testRoleAdmin:  RoleAdmin,
+		roleAdmin:      RoleAdmin,
+		"Editor":       RoleEditor,
+		testRoleViewer: RoleViewer,
 		"None":   RoleNone,
 		"":       RoleNone,
 		"weird":  RoleNone, // unknown -> deny
@@ -260,7 +268,7 @@ func TestRole_MarshalJSON(t *testing.T) {
 		RoleNone:   `"none"`,
 		RoleViewer: `"viewer"`,
 		RoleEditor: `"editor"`,
-		RoleAdmin:  `"admin"`,
+		RoleAdmin:  `"` + roleAdmin + `"`,
 	}
 	for r, want := range cases {
 		b, err := r.MarshalJSON()
@@ -305,13 +313,13 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Viewer"}}},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: testRoleViewer}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	// Same subject, different emails — second call should hit cache.
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@old.com", Subject: "sub-1"}))
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: "sub-1"}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@old.com", Subject: testSubject}))
+	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: testSubject}))
 	if g.calls.lookup != 1 {
 		t.Errorf("LookupUser calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
 	}
@@ -323,18 +331,18 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1, TenantTypeData)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: "Admin"}}},
+		users: map[string]int64{testEmail: 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 1, Role: testRoleAdmin}}},
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
+	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail, Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
 	oa1.Tenants[0].Types = append(oa1.Tenants[0].Types, TenantTypeAlerting)
 
-	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com", Subject: "s"}), "alpha", RoleViewer)
+	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail, Subject: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("second Require: %v", err)
 	}
@@ -349,13 +357,13 @@ func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
+		users: map[string]int64{testEmail: 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists in Grafana but in no orgs
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	// alpha exists but the caller isn't a member → ErrNotAuthorised.
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleViewer)
 	if err == nil {
 		t.Fatal("expected error for known-org-but-no-access, got nil")
 	}
@@ -364,7 +372,7 @@ func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	}
 
 	// nonexistent has no descriptor → ErrOrgNotFound.
-	_, err = r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "nonexistent", RoleViewer)
+	_, err = r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "nonexistent", RoleViewer)
 	if !errors.Is(err, ErrOrgNotFound) {
 		t.Errorf("err = %v, want wraps ErrOrgNotFound", err)
 	}
@@ -424,7 +432,7 @@ func TestAuthorizer_ConcurrentCallers_NoCrossTalk(t *testing.T) {
 		orgs[i] = newOrg(fmt.Sprintf("org-%d", i), fmt.Sprintf("Org %d", i), int64(i+1))
 		email := fmt.Sprintf("u%d@e.com", i)
 		users[email] = int64(i + 1)
-		orgMap[int64(i+1)] = []grafana.UserOrgMembership{{OrgID: int64(i + 1), Role: "Admin"}}
+		orgMap[int64(i+1)] = []grafana.UserOrgMembership{{OrgID: int64(i + 1), Role: testRoleAdmin}}
 	}
 	g := &raceGrafana{users: users, orgs: orgMap}
 	r := mustNewAuthorizer(t, registry(orgs...), g)
@@ -492,17 +500,17 @@ func mapKeys(m map[string]Organization) []string {
 func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: "Viewer"}}},
+		users: map[string]int64{testEmail: 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: testRoleViewer}}},
 	}
 	r := mustNewAuthorizerWithTTL(t, registry(alpha), g, 20*time.Millisecond, 5*time.Millisecond)
 
 	// First call → upstream lookup.
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#1: %v", err)
 	}
 	// Second call within TTL → no upstream.
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#2: %v", err)
 	}
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
@@ -511,7 +519,7 @@ func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 
 	// Sleep past TTL → next call should re-fetch.
 	time.Sleep(60 * time.Millisecond)
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#3: %v", err)
 	}
 	if g.calls.lookup != 2 || g.calls.userOrgs != 2 {
@@ -533,11 +541,11 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
 	// First call → 404 → nil user → cached negative + sentinel.
-	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("ListOrgs#1: want ErrCallerUnknownToGrafana, got %v", err)
 	}
-	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("ListOrgs#2: want ErrCallerUnknownToGrafana, got %v", err)
 	}
@@ -547,7 +555,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 
 	// Negative TTL is shorter — sleep past it but not past the positive.
 	time.Sleep(60 * time.Millisecond)
-	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: "new@e.com"}))
+	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("ListOrgs#3: want ErrCallerUnknownToGrafana, got %v", err)
 	}
@@ -561,12 +569,12 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 // short-TTL semantics as the not-yet-provisioned case.
 func TestAuthorizer_NegativeCacheTTL_Expires_NoRoles(t *testing.T) {
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
+		users: map[string]int64{testEmail: 1},
 		orgs:  map[int64][]grafana.UserOrgMembership{1: {}}, // user exists, no orgs
 	}
 	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#1: %v", err)
 	}
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
@@ -574,7 +582,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NoRoles(t *testing.T) {
 	}
 
 	time.Sleep(60 * time.Millisecond)
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@e.com"})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#2: %v", err)
 	}
 	if g.calls.lookup != 2 {
@@ -591,14 +599,14 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NoRoles(t *testing.T) {
 func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
-		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: "Admin"}}},
+		users: map[string]int64{testEmail: 1},
+		orgs:  map[int64][]grafana.UserOrgMembership{1: {{OrgID: 42, Role: testRoleAdmin}}},
 	}
 	reg := registry(alpha)
 	// Long TTL so any leaked cached state would survive the delete.
 	r := mustNewAuthorizerWithTTL(t, reg, g, time.Hour, time.Hour)
 
-	ctx := ctxWithCaller(Caller{Email: "u@e.com"})
+	ctx := ctxWithCaller(Caller{Email: testEmail})
 	// Warm the per-caller cache with a positive entry.
 	if _, err := r.RequireOrg(ctx, "alpha", RoleViewer); err != nil {
 		t.Fatalf("RequireOrg#1: %v", err)
@@ -621,9 +629,9 @@ func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 // rejected explicitly so a future contributor can't silently bypass
 // authorisation by writing it.
 func TestRequireOrg_RejectsRoleNone(t *testing.T) {
-	g := &fakeGrafana{users: map[string]int64{"u@e.com": 1}}
+	g := &fakeGrafana{users: map[string]int64{testEmail: 1}}
 	r := mustNewAuthorizer(t, registry(), g)
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "alpha", RoleNone)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleNone)
 	if !errors.Is(err, ErrInvalidMinRole) {
 		t.Errorf("err = %v, want wraps ErrInvalidMinRole", err)
 	}
@@ -634,16 +642,16 @@ func TestRequireOrg_RejectsRoleNone(t *testing.T) {
 // a cache key (mutable in some IdPs, mappable to a different user) so the
 // cache trusts only Subject.
 func TestCallerAuthenticated_RequiresSubject(t *testing.T) {
-	if (Caller{Email: "u@e.com"}).Authenticated() {
+	if (Caller{Email: testEmail}).Authenticated() {
 		t.Error("Caller with email and no Subject must NOT be Authenticated (subject required)")
 	}
 	if (Caller{}).Authenticated() {
 		t.Error("zero Caller must NOT be Authenticated")
 	}
-	if !(Caller{Subject: "sub-1"}).Authenticated() {
+	if !(Caller{Subject: testSubject}).Authenticated() {
 		t.Error("Caller with Subject must be Authenticated")
 	}
-	if !(Caller{Email: "u@e.com", Subject: "sub-1"}).Authenticated() {
+	if !(Caller{Email: testEmail, Subject: testSubject}).Authenticated() {
 		t.Error("Caller with both Subject and Email must be Authenticated")
 	}
 }
@@ -656,14 +664,14 @@ func TestRequireOrg_AmbiguousDisplayName(t *testing.T) {
 	a := newOrg("a", "Prod", 1, TenantTypeData)
 	b := newOrg("b", "Prod", 2, TenantTypeData)
 	g := &fakeGrafana{
-		users: map[string]int64{"u@e.com": 1},
+		users: map[string]int64{testEmail: 1},
 		orgs: map[int64][]grafana.UserOrgMembership{1: {
-			{OrgID: 1, Role: "Viewer"},
-			{OrgID: 2, Role: "Viewer"},
+			{OrgID: 1, Role: testRoleViewer},
+			{OrgID: 2, Role: testRoleViewer},
 		}},
 	}
 	r := mustNewAuthorizer(t, registry(a, b), g)
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: "u@e.com"}), "Prod", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "Prod", RoleViewer)
 	if !errors.Is(err, ErrAmbiguousOrgRef) {
 		t.Errorf("err = %v, want wraps ErrAmbiguousOrgRef", err)
 	}

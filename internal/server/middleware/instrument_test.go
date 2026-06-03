@@ -16,6 +16,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
+const testOrg = "acme"
+
 // stubRequest mirrors how mcp-go populates Params at dispatch — the
 // middleware would read an empty tool name otherwise.
 func stubRequest(name string, args map[string]any) mcp.CallToolRequest {
@@ -50,7 +52,7 @@ func TestInstrument_SuccessRecordsNoError(t *testing.T) {
 				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: "ok"}},
 			}, nil
 		},
-		"list_orgs", map[string]any{"org": "acme"})
+		"list_orgs", map[string]any{"org": testOrg})
 
 	if rec["tool"] != "list_orgs" {
 		t.Errorf("tool = %v, want list_orgs (reads req.Params.Name)", rec["tool"])
@@ -61,11 +63,11 @@ func TestInstrument_SuccessRecordsNoError(t *testing.T) {
 	if rec["error"] != "" {
 		t.Errorf("error = %v, want empty on success", rec["error"])
 	}
-	if rec["org"] != "acme" {
+	if rec["org"] != testOrg {
 		t.Errorf("org = %v, want top-level 'acme'", rec["org"])
 	}
 	args := rec["args"].(map[string]any)
-	if args["org"] != "acme" {
+	if args["org"] != testOrg {
 		t.Errorf("args not captured: %+v", args)
 	}
 }

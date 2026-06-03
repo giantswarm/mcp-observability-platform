@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+const testTokenOAuth = "oauth"
+
 func TestWithCaller_UnauthenticatedIsNoOp(t *testing.T) {
 	// An unauthenticated Caller (no Subject) must not attach; downstream
 	// accessors treat missing identity as "no access" and would otherwise
@@ -13,7 +15,7 @@ func TestWithCaller_UnauthenticatedIsNoOp(t *testing.T) {
 	if c := CallerFromContext(ctx); c.Authenticated() {
 		t.Errorf("WithCaller(unauthenticated) should not attach identity, got %+v", c)
 	}
-	ctx = WithCaller(context.Background(), Caller{Email: "u@e.com"})
+	ctx = WithCaller(context.Background(), Caller{Email: testEmail})
 	if c := CallerFromContext(ctx); c.Authenticated() {
 		t.Errorf("WithCaller(email-only) should not attach identity, got %+v", c)
 	}
@@ -26,8 +28,8 @@ func TestCallerSubject_Fallback(t *testing.T) {
 		want string
 	}{
 		{"no identity", Caller{}, ""},
-		{"subject preferred over email", Caller{Subject: "sub-1", Email: "u@e.com"}, "sub-1"},
-		{"email fallback when subject empty", Caller{Email: "u@e.com"}, ""}, // Authenticated() rejects subject-less, so attach is a no-op
+		{"subject preferred over email", Caller{Subject: testSubject, Email: testEmail}, testSubject},
+		{"email fallback when subject empty", Caller{Email: testEmail}, ""}, // Authenticated() rejects subject-less, so attach is a no-op
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -46,9 +48,9 @@ func TestCallerTokenSource(t *testing.T) {
 		want string
 	}{
 		{"no identity", Caller{}, ""},
-		{"oauth flow", Caller{Subject: "sub-1", TokenSource: "oauth"}, "oauth"},
-		{"sso forwarded", Caller{Subject: "sub-1", TokenSource: "sso"}, "sso"},
-		{"unset TokenSource is empty", Caller{Subject: "sub-1"}, ""},
+		{"oauth flow", Caller{Subject: testSubject, TokenSource: testTokenOAuth}, testTokenOAuth},
+		{"sso forwarded", Caller{Subject: testSubject, TokenSource: "sso"}, "sso"},
+		{"unset TokenSource is empty", Caller{Subject: testSubject}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -61,7 +63,7 @@ func TestCallerTokenSource(t *testing.T) {
 }
 
 func TestCallerFromContext_RoundTrip(t *testing.T) {
-	want := Caller{Subject: "sub-1", Email: "alice@example.com", TokenSource: "oauth"}
+	want := Caller{Subject: testSubject, Email: "alice@example.com", TokenSource: testTokenOAuth}
 	got := CallerFromContext(WithCaller(context.Background(), want))
 	if got != want {
 		t.Errorf("round-trip = %+v, want %+v", got, want)
