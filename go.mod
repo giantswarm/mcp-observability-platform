@@ -1,6 +1,6 @@
 module github.com/giantswarm/mcp-observability-platform
 
-go 1.26.1
+go 1.26.4
 
 require (
 	github.com/giantswarm/mcp-oauth v0.2.162
