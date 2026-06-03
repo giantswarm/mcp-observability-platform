@@ -11,17 +11,17 @@ import (
 func TestSeverityRank(t *testing.T) {
 	cases := map[string]int{
 		severityCritical: 4,
-		"CRITICAL": 4,
-		"page":     4,
-		"error":    3,
-		"high":     3,
+		"CRITICAL":       4,
+		"page":           4,
+		"error":          3,
+		"high":           3,
 		severityWarning:  2,
-		"warn":     2,
+		"warn":           2,
 		severityInfo:     1,
-		"notice":   1,
-		"low":      1,
-		"":         0,
-		"unknown":  0,
+		"notice":         1,
+		"low":            1,
+		"":               0,
+		"unknown":        0,
 	}
 	for in, want := range cases {
 		if got := severityRank(in); got != want {

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	testSubject   = "sub-1"
+	testSubject    = "sub-1"
 	testAliceEmail = "alice@example.com"
 )
 

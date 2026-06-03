@@ -177,7 +177,7 @@ func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
 	in := mcp.NewTool("foo", mcp.WithDescription("d"))
 	in.InputSchema.Properties = map[string]any{
 		datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString, "description": "Upstream desc."},
-		"y":             map[string]any{jsonSchemaTypeKey: "number"},
+		"y":              map[string]any{jsonSchemaTypeKey: "number"},
 	}
 	in.InputSchema.Required = []string{datasourceUIDArg, "y"}
 

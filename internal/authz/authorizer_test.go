@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	testEmail    = "u@e.com"
-	testNewEmail = "new@e.com"
-	testSubject  = "sub-1"
+	testEmail      = "u@e.com"
+	testNewEmail   = "new@e.com"
+	testSubject    = "sub-1"
 	testRoleAdmin  = "Admin"
 	testRoleViewer = "Viewer"
 )
@@ -134,7 +134,7 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 		users: map[string]int64{testEmail: 5},
 		orgs: map[int64][]grafana.UserOrgMembership{
 			5: {
-				{OrgID: 42, Role: "None"},  // dropped: no role
+				{OrgID: 42, Role: "None"},        // dropped: no role
 				{OrgID: 99, Role: testRoleAdmin}, // dropped: no matching descriptor
 			},
 		},
@@ -228,9 +228,9 @@ func TestRoleFromGrafana(t *testing.T) {
 		roleAdmin:      RoleAdmin,
 		"Editor":       RoleEditor,
 		testRoleViewer: RoleViewer,
-		"None":   RoleNone,
-		"":       RoleNone,
-		"weird":  RoleNone, // unknown -> deny
+		"None":         RoleNone,
+		"":             RoleNone,
+		"weird":        RoleNone, // unknown -> deny
 		// "Grafana Admin" is the server-admin role on /api/users/{id},
 		// not a per-org role string. roleFromGrafana parses per-org
 		// role assignments only, so an unrelated string lookup must NOT
