@@ -31,6 +31,7 @@ const (
 	testToolQueryProm  = "query_prometheus"
 	testToolAlertRules = "alerting_manage_rules"
 	testUID            = "abc"
+	testAPIKey         = "tok"
 )
 
 // fakeGrafanaServer satisfies the few endpoints upstream's GrafanaClient
@@ -128,7 +129,7 @@ type capturedCall struct {
 func orgFixture() authz.Organization {
 	return authz.Organization{
 		Name:        testOrgName,
-		DisplayName: "Acme",
+		DisplayName: testOrgDisplayName,
 		OrgID:       7,
 		Role:        authz.RoleViewer,
 		Tenants: []authz.Tenant{
@@ -146,24 +147,24 @@ func TestWithOrg_AddsRequiredOrgArg(t *testing.T) {
 
 	out := withOrg(in, "")
 
-	if _, ok := out.InputSchema.Properties["org"].(map[string]any); !ok {
+	if _, ok := out.InputSchema.Properties[testOrgArg].(map[string]any); !ok {
 		t.Fatal("output missing 'org' in Properties")
 	}
-	if got := out.InputSchema.Required; len(got) != 2 || got[0] != "org" || got[1] != "x" {
+	if got := out.InputSchema.Required; len(got) != 2 || got[0] != testOrgArg || got[1] != "x" {
 		t.Errorf("Required = %v, want [org x]", got)
 	}
 	// Input must not have been mutated.
-	if _, ok := in.InputSchema.Properties["org"]; ok {
+	if _, ok := in.InputSchema.Properties[testOrgArg]; ok {
 		t.Error("withOrg mutated input.Properties")
 	}
-	if slices.Contains(in.InputSchema.Required, "org") {
+	if slices.Contains(in.InputSchema.Required, testOrgArg) {
 		t.Error("withOrg mutated input.Required")
 	}
 }
 
 func TestWithOrg_PanicsOnOrgCollision(t *testing.T) {
 	in := mcp.NewTool("foo", mcp.WithDescription("d"))
-	in.InputSchema.Properties = map[string]any{"org": map[string]any{jsonSchemaTypeKey: jsonTypeString}}
+	in.InputSchema.Properties = map[string]any{testOrgArg: map[string]any{jsonSchemaTypeKey: jsonTypeString}}
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -194,11 +195,11 @@ func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
 	if slices.Contains(out.InputSchema.Required, datasourceUIDArg) {
 		t.Error("output still requires datasourceUid; demote moves it out of Required")
 	}
-	if got := out.InputSchema.Required; len(got) != 2 || got[0] != "org" || got[1] != "y" {
+	if got := out.InputSchema.Required; len(got) != 2 || got[0] != testOrgArg || got[1] != "y" {
 		t.Errorf("Required = %v, want [org y]", got)
 	}
 	// Input must not have been mutated.
-	if _, has := in.InputSchema.Properties["org"]; has {
+	if _, has := in.InputSchema.Properties[testOrgArg]; has {
 		t.Error("withOrg mutated input.Properties")
 	}
 	if origDesc, _ := in.InputSchema.Properties[datasourceUIDArg].(map[string]any)["description"].(string); origDesc != "Upstream desc." {
@@ -239,10 +240,10 @@ func TestWithOrg_HandlesRawInputSchema(t *testing.T) {
 	if err := json.Unmarshal(blob, &marshaled); err != nil {
 		t.Fatalf("unmarshal marshaled tool: %v", err)
 	}
-	if _, ok := marshaled.InputSchema.Properties["org"].(map[string]any); !ok {
+	if _, ok := marshaled.InputSchema.Properties[testOrgArg].(map[string]any); !ok {
 		t.Errorf("marshaled schema missing 'org' under properties: %s", blob)
 	}
-	if !slices.Contains(marshaled.InputSchema.Required, "org") {
+	if !slices.Contains(marshaled.InputSchema.Required, testOrgArg) {
 		t.Errorf("marshaled schema missing 'org' in required: %v", marshaled.InputSchema.Required)
 	}
 	if slices.Contains(marshaled.InputSchema.Required, datasourceUIDArg) {
@@ -271,9 +272,9 @@ func TestNewGFBinder_Validation(t *testing.T) {
 	}{
 		{"happy_apikey", az, gc, testGrafanaURL, "tok", nil, ""},
 		{"happy_basic", az, gc, testGrafanaURL, "", url.UserPassword("u", "p"), ""},
-		{"nil_authorizer", nil, gc, testGrafanaURL, "tok", nil, "authorizer"},
-		{"nil_grafana", az, nil, testGrafanaURL, "tok", nil, "grafana"},
-		{"empty_url", az, gc, "", "tok", nil, "URL"},
+		{"nil_authorizer", nil, gc, testGrafanaURL, testAPIKey, nil, "authorizer"},
+		{"nil_grafana", az, nil, testGrafanaURL, testAPIKey, nil, "grafana"},
+		{"empty_url", az, gc, "", testAPIKey, nil, "URL"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -318,7 +319,7 @@ func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -339,7 +340,7 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	ctx := oauthCtx("sub-123", "alice@example.com")
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(ctx, req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -366,7 +367,7 @@ func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	// No caller in ctx — CallerSubject returns "".
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -386,10 +387,10 @@ func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 // type-mismatch tests. Order is the order Grafana would return.
 func threeMimirsAndOneLoki() []grafana.Datasource {
 	return []grafana.Datasource{
-		{ID: 2, UID: "u-mimir", Name: "GS Mimir", Type: "prometheus", ManageAlerts: false},
-		{ID: 18, UID: "u-mimir-gs", Name: "GS Mimir (giantswarm)", Type: "prometheus", ManageAlerts: true},
-		{ID: 21, UID: "u-mimir-ne", Name: "GS Mimir (notempty)", Type: "prometheus", ManageAlerts: true},
-		{ID: 30, UID: "u-loki", Name: "GS Loki", Type: "loki", ManageAlerts: true},
+		{ID: 2, UID: "u-mimir", Name: "GS Mimir", Type: testDSPrometheus, ManageAlerts: false},
+		{ID: 18, UID: testDSUIDMimirGS, Name: "GS Mimir (giantswarm)", Type: testDSPrometheus, ManageAlerts: true},
+		{ID: 21, UID: "u-mimir-ne", Name: "GS Mimir (notempty)", Type: testDSPrometheus, ManageAlerts: true},
+		{ID: 30, UID: "u-loki", Name: "GS Loki", Type: testDSLoki, ManageAlerts: true},
 	}
 }
 
@@ -403,9 +404,9 @@ func TestBinder_Single_DefaultPicksFirstMatch(t *testing.T) {
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
-		stubTool("query_prometheus", []string{datasourceUIDArg}, captured))
+		stubTool(testToolQueryProm, []string{datasourceUIDArg}, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": testOrgName, "expr": "up"}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, "expr": "up"}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -434,9 +435,9 @@ func TestBinder_Single_ExplicitUIDOverrides(t *testing.T) {
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
-		stubTool("query_prometheus", nil, captured))
+		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": testOrgName, "expr": "up", datasourceUIDArg: "u-mimir-gs"}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, "expr": "up", datasourceUIDArg: testDSUIDMimirGS}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -444,10 +445,10 @@ func TestBinder_Single_ExplicitUIDOverrides(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %+v", res)
 	}
-	if got := captured.args[datasourceUIDArg]; got != "u-mimir-gs" {
+	if got := captured.args[datasourceUIDArg]; got != testDSUIDMimirGS {
 		t.Errorf("upstream got datasourceUid = %v, want u-mimir-gs", got)
 	}
-	if gc.gotLookup != "u-mimir-gs" {
+	if gc.gotLookup != testDSUIDMimirGS {
 		t.Errorf("LookupDatasourceByUID called with %q, want u-mimir-gs", gc.gotLookup)
 	}
 	if gc.gotList.OrgID != 0 {
@@ -464,9 +465,9 @@ func TestBinder_Single_RejectsUIDFromOtherType(t *testing.T) {
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
-		stubTool("query_prometheus", nil, captured))
+		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": testOrgName, datasourceUIDArg: "u-loki"}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, datasourceUIDArg: "u-loki"}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -474,7 +475,7 @@ func TestBinder_Single_RejectsUIDFromOtherType(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("expected IsError on type mismatch")
 	}
-	if !strings.Contains(textOf(res), "loki") {
+	if !strings.Contains(textOf(res), testDSLoki) {
 		t.Errorf("error should mention actual type; got %q", textOf(res))
 	}
 	if captured.toolName != "" {
@@ -491,9 +492,9 @@ func TestBinder_Single_RejectsUIDNotInOrg(t *testing.T) {
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
-		stubTool("query_prometheus", nil, captured))
+		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "query_prometheus", Arguments: map[string]any{"org": testOrgName, datasourceUIDArg: "forged-uid"}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, datasourceUIDArg: "forged-uid"}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -517,9 +518,9 @@ func TestBinder_Single_NoMatchingDatasource(t *testing.T) {
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
-		stubTool("query_prometheus", nil, captured))
+		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -541,9 +542,9 @@ func TestBinder_Single_ListDatasourcesError(t *testing.T) {
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
-		stubTool("query_prometheus", nil, captured))
+		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -593,9 +594,9 @@ func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{
 		listDS: []grafana.Datasource{
-			{ID: 1, UID: "u1", Name: "mimir-mt", Type: "prometheus", ManageAlerts: false},
-			{ID: 2, UID: "u2", Name: "mimir-gs", Type: "prometheus", ManageAlerts: true},
-			{ID: 3, UID: "u3", Name: "loki-gs", Type: "loki", ManageAlerts: true},
+			{ID: 1, UID: "u1", Name: "mimir-mt", Type: testDSPrometheus, ManageAlerts: false},
+			{ID: 2, UID: "u2", Name: "mimir-gs", Type: testDSPrometheus, ManageAlerts: true},
+			{ID: 3, UID: "u3", Name: "loki-gs", Type: testDSLoki, ManageAlerts: true},
 			{ID: 4, UID: "u4", Name: "tempo-gs", Type: "tempo", ManageAlerts: true},
 		},
 	}
@@ -605,9 +606,9 @@ func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 			return mcp.NewToolResultText(fmt.Sprintf(`[{"uid":%q}]`, args[datasourceUIDArgSnake])), nil
 		},
 	}
-	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -660,9 +661,9 @@ func TestBinder_Fanout_EscapeHatch_BypassesListing(t *testing.T) {
 	gc := &fakeGrafana{listErr: errors.New("ListDatasources should not be called")}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
 	cap := &fanoutStub{}
-	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": testOrgName, datasourceUIDArgSnake: "pinned"}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName, datasourceUIDArgSnake: "pinned"}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -686,8 +687,8 @@ func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{
 		listDS: []grafana.Datasource{
-			{ID: 1, UID: "u1", Name: "good", Type: "prometheus", ManageAlerts: true},
-			{ID: 2, UID: "u2", Name: "bad", Type: "prometheus", ManageAlerts: true},
+			{ID: 1, UID: "u1", Name: "good", Type: testDSPrometheus, ManageAlerts: true},
+			{ID: 2, UID: "u2", Name: "bad", Type: testDSPrometheus, ManageAlerts: true},
 		},
 	}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
@@ -699,9 +700,9 @@ func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 			return mcp.NewToolResultText(`[{"name":"r"}]`), nil
 		},
 	}
-	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -736,9 +737,9 @@ func TestBinder_Fanout_ListDatasourcesError(t *testing.T) {
 	gc := &fakeGrafana{listErr: errors.New("grafana down")}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
 	cap := &fanoutStub{}
-	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool("alerting_manage_rules", cap))
+	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "alerting_manage_rules", Arguments: map[string]any{"org": testOrgName}}}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName}}}
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)

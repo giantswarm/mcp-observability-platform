@@ -53,12 +53,12 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 		t.Fatalf("grafana.New: %v", err)
 	}
 	az := &authztest.Fake{Org: authz.Organization{
-		Name:        "acme",
-		DisplayName: "Acme",
+		Name:        testOrgName,
+		DisplayName: testOrgDisplayName,
 		OrgID:       1,
 		Role:        authz.RoleAdmin,
 		Tenants: []authz.Tenant{{
-			Name:  "acme",
+			Name:  testOrgName,
 			Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting},
 		}},
 	}}
@@ -141,7 +141,7 @@ func TestHandler_SearchDashboards(t *testing.T) {
 	})
 	defer ts.Close()
 
-	res := callTool(t, wireHandlerTest(t, ts), "search_dashboards", map[string]any{"org": "acme"})
+	res := callTool(t, wireHandlerTest(t, ts), "search_dashboards", map[string]any{testOrgArg: testOrgName})
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
 	}
@@ -178,7 +178,7 @@ func TestHandler_ListDatasources_PropagatesOrgID(t *testing.T) {
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "list_datasources", map[string]any{
-		"org": "acme", "type": "loki",
+		testOrgArg: testOrgName, "type": testDSLoki,
 	})
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
@@ -211,7 +211,7 @@ func TestHandler_GetDashboardByUID(t *testing.T) {
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "get_dashboard_by_uid", map[string]any{
-		"org": "acme", "uid": "abc",
+		testOrgArg: testOrgName, "uid": testUID,
 	})
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
@@ -255,7 +255,7 @@ func TestHandler_ListSilences(t *testing.T) {
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "list_silences", map[string]any{
-		"org":     "acme",
+		testOrgArg:     testOrgName,
 		"matcher": `alertname="X"`,
 	})
 	if res.IsError {
@@ -292,8 +292,8 @@ func TestHandler_GetSilence(t *testing.T) {
 	defer ts.Close()
 
 	res := callTool(t, wireHandlerTest(t, ts), "get_silence", map[string]any{
-		"org": "acme",
-		"id":  "abc",
+		testOrgArg: testOrgName,
+		"id":  testUID,
 	})
 	if res.IsError {
 		t.Fatalf("unexpected IsError: %s", resultText(res))
