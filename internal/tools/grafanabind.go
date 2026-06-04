@@ -29,6 +29,8 @@ const orgArgDescription = "Organization — either the GrafanaOrganization CR na
 const (
 	datasourceUIDArg      = "datasourceUid"
 	datasourceUIDArgSnake = "datasource_uid"
+	jsonTypeString        = "string"
+	jsonSchemaTypeKey     = "type"
 )
 
 // datasourceUIDHint is appended to the LLM-visible description of every
@@ -257,8 +259,8 @@ func withOrg(t mcp.Tool, demoteArg string) mcp.Tool {
 		panic(fmt.Sprintf("tools: tool %q already declares an 'org' argument; binder cannot add its own", t.Name))
 	}
 	props["org"] = map[string]any{
-		"type":        "string",
-		"description": orgArgDescription,
+		jsonSchemaTypeKey: jsonTypeString,
+		"description":     orgArgDescription,
 	}
 	out.InputSchema.Properties = props
 

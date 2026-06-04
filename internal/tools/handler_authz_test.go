@@ -76,8 +76,8 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 	}
 	az := authz.NewAuthorizer(
 		staticOrgLister{orgs: []authz.Organization{{
-			Name:        "acme",
-			DisplayName: "Acme",
+			Name:        testOrgName,
+			DisplayName: testOrgDisplayName,
 			OrgID:       1,
 		}}},
 		azClient, 0, 0,
@@ -131,8 +131,8 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 	// either ignored (bridged) or used by validation we don't care about
 	// in this test (local).
 	stockArgs := map[string]any{
-		"org":            "acme",
-		"uid":            "abc",
+		testOrgArg:       testOrgName,
+		"uid":            testUID,
 		"query":          "up",
 		"name":           "x",
 		"label":          "x",
@@ -141,8 +141,8 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 		"promql":         "up",
 		"service":        "api",
 		"fingerprint":    "0123456789abcdef",
-		"id":             "abc",
-		"dashboardUid":   "abc",
+		"id":             testUID,
+		"dashboardUid":   testUID,
 		"panelId":        1,
 		"datasource_uid": "any", // alerting_manage_rules: bridge clobbers, but its own validate() expects an operation
 		"operation":      "list",
@@ -156,7 +156,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 		if name == "list_orgs" {
 			continue // tested separately
 		}
-		if !slices.Contains(st.Tool.InputSchema.Required, "org") {
+		if !slices.Contains(st.Tool.InputSchema.Required, testOrgArg) {
 			continue
 		}
 		denyCount++
@@ -218,7 +218,7 @@ func TestHandler_Authz_RejectsMissingOrgArgument(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("missing-org should return IsError; got %s", resultText(res))
 	}
-	if !strings.Contains(strings.ToLower(resultText(res)), "org") {
+	if !strings.Contains(strings.ToLower(resultText(res)), testOrgArg) {
 		t.Errorf("error should name the missing arg; got %q", resultText(res))
 	}
 }

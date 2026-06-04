@@ -67,7 +67,7 @@ func TestRequireCaller_RejectsCallerWithEmptyFields(t *testing.T) {
 }
 
 func TestRequireCaller_PassesThroughAuthenticatedCaller(t *testing.T) {
-	ctx := ctxWithCaller(&providers.UserInfo{ID: testSubject, Email: "alice@example.com"})
+	ctx := ctxWithCaller(&providers.UserInfo{ID: testSubject, Email: testAliceEmail})
 	res, err := callRequireCaller(t, ctx, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if got := authz.CallerFromContext(ctx).Subject; got != testSubject {
 			t.Errorf("handler saw Subject=%q, want %s", got, testSubject)

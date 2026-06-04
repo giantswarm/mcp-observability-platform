@@ -17,6 +17,8 @@ const (
 	RoleAdmin
 )
 
+const roleAdmin = "admin"
+
 func (r Role) String() string {
 	switch r {
 	case RoleViewer:
@@ -24,7 +26,7 @@ func (r Role) String() string {
 	case RoleEditor:
 		return "editor"
 	case RoleAdmin:
-		return "admin"
+		return roleAdmin
 	default:
 		return "none"
 	}
@@ -51,7 +53,7 @@ func (r Role) AtLeast(other Role) bool { return r >= other }
 // callers SHOULD have an explicit per-org role to act through this MCP.
 func roleFromGrafana(s string) Role {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "admin":
+	case roleAdmin:
 		return RoleAdmin
 	case "editor":
 		return RoleEditor

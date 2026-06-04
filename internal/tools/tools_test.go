@@ -8,21 +8,27 @@ import (
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 )
 
+const (
+	testSortAlpha = "alpha"
+	testSortBeta  = "beta"
+	testSortZeta  = "zeta"
+)
+
 func TestPaginateStrings(t *testing.T) {
-	all := []string{"zeta", "alpha", "beta", "gamma", "delta"}
+	all := []string{testSortZeta, testSortAlpha, testSortBeta, "gamma", "delta"}
 
 	t.Run("sorts then pages", func(t *testing.T) {
 		got := paginateStrings(all, "", 0, 2)
-		if got.Total != 5 || len(got.Items) != 2 || got.Items[0] != "alpha" || got.Items[1] != "beta" {
+		if got.Total != 5 || len(got.Items) != 2 || got.Items[0] != testSortAlpha || got.Items[1] != testSortBeta {
 			t.Errorf("page 0 = %+v", got)
 		}
 		got = paginateStrings(all, "", 2, 2)
-		if len(got.Items) != 1 || got.Items[0] != "zeta" || got.HasMore {
+		if len(got.Items) != 1 || got.Items[0] != testSortZeta || got.HasMore {
 			t.Errorf("final page = %+v", got)
 		}
 	})
 	t.Run("prefix filters before paging", func(t *testing.T) {
-		got := paginateStrings(all, "ET", 0, 10) // case-insensitive: matches "beta" and "zeta"
+		got := paginateStrings(all, "ET", 0, 10) // case-insensitive: matches testSortBeta and testSortZeta
 		if got.Total != 2 || len(got.Items) != 2 {
 			t.Errorf("prefix ET = %+v", got)
 		}
@@ -42,7 +48,7 @@ func TestPaginateStrings(t *testing.T) {
 	t.Run("does not mutate caller's slice", func(t *testing.T) {
 		// Callers routinely pass cache-backed slices (resolver org list, CR
 		// listings). paginateStrings must not reorder them as a side effect.
-		in := []string{"zeta", "alpha", "beta"}
+		in := []string{testSortZeta, testSortAlpha, testSortBeta}
 		before := append([]string(nil), in...)
 		_ = paginateStrings(in, "", 0, 10)
 		for i := range before {

@@ -14,12 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release binaries now include darwin/amd64, darwin/arm64, windows/amd64, and windows/arm64 alongside the existing linux targets. Windows binaries are named `mcp-observability-platform-windows-<arch>.exe`.
 - Adopt `github.com/giantswarm/mcp-toolkit` v0.1.0 for cross-cutting plumbing. The bespoke `internal/server/middleware/{response_cap,timeout}.go` implementations and `internal/observability/tracing.go` are replaced by `responsecap.New`, `timeout.New`, `tracing.Init`. Logger construction switches to `logging.New`; the two-phase HTTP shutdown is now composed from two `httpx.Run` calls. Behaviour is preserved: response-cap default 128 KiB and tool timeout default 30s match the toolkit constants; the platform-specific cap hint (label matchers / sum/rate/topk advice) is set via `responsecap.Options.Hint`. The two-phase drain ordering (MCP first, observability second) is unchanged.
 - `service.namespace=giantswarm.observability` and the K8s downward-API attrs (`POD_NAME`, `POD_NAMESPACE`, `NODE_NAME`) are now fed to the OTEL resource via `OTEL_RESOURCE_ATTRIBUTES` (the toolkit's tracing.Init reads them through `resource.WithFromEnv`). The Helm chart already exposes the downward-API env vars; merging happens in `cmd/serve.go` so existing deployments keep the same resource attribute set.
 
 ### Fixed
 
 - `alerting_manage_rules` no longer 400s on multi-tenant Mimir setups: it now fans out across every datasource where Grafana's "Manage alerts" toggle is on (Mimir + Loki), tagging each entry by source. Pin a single datasource with `datasource_uid` to skip the fanout.
+- `golang.org/x/net` bumped to v0.55.0 (GO-2026-5026: incorrect IDNA label validation in `golang.org/x/net/idna`).
 - `list_datasources`, `get_datasource`, and any future delegated upstream tool that goes through grafana-openapi-client-go's no-ctx convenience methods now respect the caller's `org`. `gfBinder` now caches one `mcp-grafana` `GrafanaClient` per resolved OrgID, so `OrgIDRoundTripper` ships the correct `X-Grafana-Org-Id` even when go-openapi's runtime falls back to `context.Background()` and the per-call ctx override path can't fire.
 
 ### Changed

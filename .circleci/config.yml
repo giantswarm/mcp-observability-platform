@@ -1,6 +1,6 @@
 version: 2.1
 orbs:
-  architect: giantswarm/architect@8.3.0
+  architect: giantswarm/architect@9.1.0
 
 workflows:
   build:
@@ -9,12 +9,13 @@ workflows:
           context: architect
           name: go-build-mcp-observability-platform
           binary: mcp-observability-platform
+          architectures: "linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64,windows/arm64"
           filters:
             tags:
               only: /^v.*/
 
       # Branch builds: amd64 only for faster PR feedback.
-      - architect/push-to-registries-multiarch:
+      - architect/push-to-registries:
           context: architect
           name: push-to-registries
           platforms: "linux/amd64"
@@ -27,7 +28,7 @@ workflows:
 
       # Tag builds: push multi-arch image to gsoci (primary registry).
       # Chart push depends on this completing successfully.
-      - architect/push-to-registries-multiarch:
+      - architect/push-to-registries:
           context: architect
           name: push-to-gsoci-release
           registries-data: "public gsoci.azurecr.io ACR_GSOCI_USERNAME ACR_GSOCI_PASSWORD true"
@@ -42,7 +43,7 @@ workflows:
       # Tag builds: push multi-arch image to all registries (including China
       # mirrors). Runs in parallel, does NOT block the chart push. If a mirror
       # is unreachable, only mirror-dependent clusters are affected.
-      - architect/push-to-registries-multiarch:
+      - architect/push-to-registries:
           context: architect
           name: push-to-all-registries-release
           requires:
@@ -110,6 +111,17 @@ workflows:
           requires:
             - execute chart tests
             - push-to-gsoci-release
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+
+      - architect/upload-release-assets:
+          binary: mcp-observability-platform
+          context: architect
+          requires:
+            - go-build-mcp-observability-platform
           filters:
             tags:
               only: /^v.*/

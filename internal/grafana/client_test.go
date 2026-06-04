@@ -381,10 +381,10 @@ func TestClient_ListDatasources_ParsesManageAlertsAndForwardsOrg(t *testing.T) {
 		t.Errorf("X-Grafana-Org-Id = %q, want 7", gotOrg)
 	}
 	want := []Datasource{
-		{ID: 1, UID: "u1", Name: "prom", Type: "prometheus", ManageAlerts: true},
-		{ID: 2, UID: "u2", Name: "loki", Type: "loki", ManageAlerts: false},
-		{ID: 3, UID: "u3", Name: "prom-default", Type: "prometheus", ManageAlerts: true},
-		{ID: 4, UID: "u4", Name: "prom-no-jsondata", Type: "prometheus", ManageAlerts: true},
+		{ID: 1, UID: "u1", Name: "prom", Type: string(DSTypePrometheus), ManageAlerts: true},
+		{ID: 2, UID: "u2", Name: "loki", Type: string(DSTypeLoki), ManageAlerts: false},
+		{ID: 3, UID: "u3", Name: "prom-default", Type: string(DSTypePrometheus), ManageAlerts: true},
+		{ID: 4, UID: "u4", Name: "prom-no-jsondata", Type: string(DSTypePrometheus), ManageAlerts: true},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d (%v)", len(got), len(want), got)
@@ -423,7 +423,7 @@ func TestClient_LookupDatasourceByUID(t *testing.T) {
 			name:   "hit",
 			uid:    "u2",
 			body:   listBody,
-			wantDS: Datasource{ID: 2, UID: "u2", Name: "loki", Type: "loki", ManageAlerts: false},
+			wantDS: Datasource{ID: 2, UID: "u2", Name: "loki", Type: string(DSTypeLoki), ManageAlerts: false},
 		},
 		{
 			name:    "miss with non-empty list",

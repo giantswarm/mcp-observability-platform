@@ -9,6 +9,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const labelTool = "tool"
+
 // namespace is the Prometheus metric prefix for everything this process
 // emits. Short so rule writers don't have to drag a 22-char prefix through
 // every alert; distinctive enough not to collide with other Giant Swarm
@@ -40,7 +42,7 @@ var ToolCallTotal = promauto.With(registry).NewCounterVec(
 		Name:      "tool_call_total",
 		Help:      "Number of MCP tool calls, labeled by tool name.",
 	},
-	[]string{"tool"},
+	[]string{labelTool},
 )
 
 var ToolCallErrorsTotal = promauto.With(registry).NewCounterVec(
@@ -49,7 +51,7 @@ var ToolCallErrorsTotal = promauto.With(registry).NewCounterVec(
 		Name:      "tool_call_errors_total",
 		Help:      "Number of MCP tool calls that returned IsError, labeled by tool name.",
 	},
-	[]string{"tool"},
+	[]string{labelTool},
 )
 
 var ToolCallDuration = promauto.With(registry).NewHistogramVec(
@@ -59,7 +61,7 @@ var ToolCallDuration = promauto.With(registry).NewHistogramVec(
 		Help:      "Duration of MCP tool handlers, by tool name.",
 		Buckets:   prometheus.DefBuckets,
 	},
-	[]string{"tool"},
+	[]string{labelTool},
 )
 
 func MetricsHandler() http.Handler {

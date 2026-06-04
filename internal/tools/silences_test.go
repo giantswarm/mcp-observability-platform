@@ -36,10 +36,10 @@ func TestPaginateSilences_DefaultStateActive_SortsByEndsAtAsc(t *testing.T) {
 		ID, State, EndsAt, CreatedBy string
 		Matchers                     int
 	}{
-		{"a", "active", "2026-05-01T00:00:00Z", "alice", 1},
-		{"b", "active", "2026-04-30T00:00:00Z", "bob", 2},
-		{"c", "expired", "2026-04-01T00:00:00Z", "carol", 1},
-		{"d", "pending", "2026-06-01T00:00:00Z", "dave", 1},
+		{"a", silenceStateActive, "2026-05-01T00:00:00Z", "alice", 1},
+		{"b", silenceStateActive, "2026-04-30T00:00:00Z", "bob", 2},
+		{"c", silenceStateExpired, "2026-04-01T00:00:00Z", "carol", 1},
+		{"d", silenceStatePending, "2026-06-01T00:00:00Z", "dave", 1},
 	})
 	res, err := paginateSilences(raw, "", 0, 50)
 	if err != nil {
@@ -71,18 +71,18 @@ func TestPaginateSilences_StateFilter(t *testing.T) {
 		ID, State, EndsAt, CreatedBy string
 		Matchers                     int
 	}{
-		{"a", "active", "2026-05-01T00:00:00Z", "", 0},
-		{"b", "expired", "2026-04-01T00:00:00Z", "", 0},
-		{"c", "pending", "2026-06-01T00:00:00Z", "", 0},
+		{"a", silenceStateActive, "2026-05-01T00:00:00Z", "", 0},
+		{"b", silenceStateExpired, "2026-04-01T00:00:00Z", "", 0},
+		{"c", silenceStatePending, "2026-06-01T00:00:00Z", "", 0},
 	})
 	for _, tc := range []struct {
 		state    string
 		wantIDs  []string
 		wantSize int
 	}{
-		{"active", []string{"a"}, 1},
-		{"pending", []string{"c"}, 1},
-		{"expired", []string{"b"}, 1},
+		{silenceStateActive, []string{"a"}, 1},
+		{silenceStatePending, []string{"c"}, 1},
+		{silenceStateExpired, []string{"b"}, 1},
 		{"all", []string{"b", "a", "c"}, 3},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
@@ -130,13 +130,13 @@ func TestPaginateSilences_PageBoundaries(t *testing.T) {
 			Matchers                     int
 		}{
 			ID:     fmt.Sprintf("id-%02d", i),
-			State:  "active",
+			State:  silenceStateActive,
 			EndsAt: fmt.Sprintf("2026-05-%02dT00:00:00Z", i+1),
 		})
 	}
 	raw := buildSilences(specs)
-	p2, _ := paginateSilences(raw, "active", 2, 2) // last item, no more
-	p3, _ := paginateSilences(raw, "active", 3, 2) // past end
+	p2, _ := paginateSilences(raw, silenceStateActive, 2, 2) // last item, no more
+	p3, _ := paginateSilences(raw, silenceStateActive, 3, 2) // past end
 	check := func(name string, res any, wantLen int, wantHasMore bool) {
 		b, _ := json.Marshal(res)
 		var out struct {
@@ -156,7 +156,7 @@ func TestPaginateSilences_PageBoundaries(t *testing.T) {
 }
 
 func TestPaginateSilences_MalformedBody(t *testing.T) {
-	if _, err := paginateSilences(json.RawMessage("not-json"), "active", 0, 50); err == nil || !strings.Contains(err.Error(), "unmarshal") {
+	if _, err := paginateSilences(json.RawMessage("not-json"), silenceStateActive, 0, 50); err == nil || !strings.Contains(err.Error(), "unmarshal") {
 		t.Fatalf("expected unmarshal error, got %v", err)
 	}
 }
