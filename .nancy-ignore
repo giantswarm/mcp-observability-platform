@@ -1,0 +1,12 @@
+# pkg:golang/github.com/apache/thrift@v0.22.0
+CVE-2025-48431 until=2026-09-10
+CVE-2026-41602 until=2026-09-10
+CVE-2026-41603 until=2026-09-10
+CVE-2026-41605 until=2026-09-10
+CVE-2026-43869 until=2026-09-10
+CVE-2026-41607 until=2026-09-10
+CVE-2026-41606 until=2026-09-10
+CVE-2026-43868 until=2026-09-10
+
+# pkg:golang/github.com/yuin/goldmark@v1.4.13
+CVE-2026-5160 until=2026-09-10
