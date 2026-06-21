@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	oauth "github.com/giantswarm/mcp-oauth"
 	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/oauthconfig"
 	"github.com/giantswarm/mcp-oauth/providers/dex"
+	oauthserver "github.com/giantswarm/mcp-oauth/server"
 	"github.com/giantswarm/mcp-oauth/storage"
 )
 
@@ -19,7 +22,53 @@ const (
 	envOAuthDexClientID    = "OAUTH_DEX_CLIENT_ID"
 	envOAuthDexIssuerURL   = "OAUTH_DEX_ISSUER_URL"
 	envOAuthStorageBackend = "OAUTH_STORAGE_BACKEND"
+	envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
 )
+
+// trustedIssuerConfig is the JSON shape of a single OAUTH_TRUSTED_ISSUERS
+// entry. It mirrors the subset of mcp-oauth's TrustedIssuer a resource server
+// needs: no SubjectClaim (this server validates Bearer tokens but never mints,
+// and the claim is ignored on the validation path) and no impersonation
+// fields. acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068) upstream; set
+// [""] to accept tokens with no typ header (e.g. Kubernetes ServiceAccount
+// tokens).
+type trustedIssuerConfig struct {
+	Issuer             string            `json:"issuer"`
+	JwksURL            string            `json:"jwksURL"`
+	AllowedAudiences   []string          `json:"allowedAudiences,omitempty"`
+	AllowedClaims      map[string]string `json:"allowedClaims,omitempty"`
+	AcceptedTypHeaders []string          `json:"acceptedTypHeaders,omitempty"`
+	AllowPrivateIPJWKS bool              `json:"allowPrivateIPJWKS,omitempty"`
+}
+
+// parseTrustedIssuers parses OAUTH_TRUSTED_ISSUERS, a JSON array of issuer
+// objects, into mcp-oauth TrustedIssuer values. Empty input yields nil. Each
+// entry requires a non-empty issuer and jwksURL.
+func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var entries []trustedIssuerConfig
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil, fmt.Errorf("%s: invalid JSON: %w", envOAuthTrustedIssuers, err)
+	}
+	issuers := make([]oauthserver.TrustedIssuer, 0, len(entries))
+	for i, e := range entries {
+		if e.Issuer == "" || e.JwksURL == "" {
+			return nil, fmt.Errorf("%s[%d]: issuer and jwksURL are required", envOAuthTrustedIssuers, i)
+		}
+		issuers = append(issuers, oauthserver.TrustedIssuer{
+			Issuer:             e.Issuer,
+			JwksURL:            e.JwksURL,
+			AllowedAudiences:   e.AllowedAudiences,
+			AllowedClaims:      e.AllowedClaims,
+			AcceptedTypHeaders: e.AcceptedTypHeaders,
+			AllowPrivateIPJWKS: e.AllowPrivateIPJWKS,
+		})
+	}
+	return issuers, nil
+}
 
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // storeClose drains the storage backend on shutdown.
@@ -75,7 +124,19 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
 	}
 
-	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger)
+	// Trusted external issuers (muster) whose Bearer JWTs are accepted at
+	// /mcp alongside Dex, for agent OBO/M2M traffic.
+	issuers, err := parseTrustedIssuers(os.Getenv(envOAuthTrustedIssuers))
+	if err != nil {
+		storeClose()
+		return nil, nil, err
+	}
+	var opts []oauth.ServerOption
+	if len(issuers) > 0 {
+		opts = append(opts, oauthserver.WithTrustedIssuers(issuers))
+	}
+
+	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger, opts...)
 	if err != nil {
 		storeClose()
 		return nil, nil, fmt.Errorf("oauth server: %w", err)

@@ -163,6 +163,17 @@ oauth:
   # still must be signed by the Dex issuer configured above. Empty list
   # means only tokens minted for our own client ID are accepted.
   trustedAudiences: []
+  # External issuers whose Bearer JWTs are accepted at /mcp alongside Dex,
+  # for agent OBO/M2M traffic carrying muster-minted tokens. Unlike
+  # trustedAudiences these are full issuers (own signing keys), validated via
+  # JWKS. Each entry needs at least issuer and jwksURL. acceptedTypHeaders
+  # defaults to ["at+jwt"] (RFC 9068); set [""] to accept tokens with no typ
+  # header (e.g. Kubernetes ServiceAccount tokens). Example:
+  #   trustedIssuers:
+  #     - issuer: "https://muster.example.com"
+  #       jwksURL: "https://muster.example.com/.well-known/jwks.json"
+  #       allowedAudiences: ["mcp-observability-platform"]
+  trustedIssuers: []
   # Custom URI schemes accepted during public client registration (beyond
   # the always-allowed loopback HTTPS). Example: ["cursor", "vscode",
   # "vscode-insiders"] unblocks those CLI clients without opening

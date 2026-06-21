@@ -23,6 +23,11 @@ data:
   # Dex issuer. Same semantic as mcp-kubernetes / muster. Empty = accept
   # only our own tokens.
   OAUTH_TRUSTED_AUDIENCES: {{ $oa.trustedAudiences | default (list) | join "," | quote }}
+  # JSON array of external issuers (the muster broker) whose Bearer JWTs are
+  # accepted at /mcp alongside Dex, for agent OBO/M2M traffic. Each entry needs
+  # at least issuer + jwksURL. Empty list = only Dex-issued (and trusted-
+  # audience) tokens are accepted. acceptedTypHeaders defaults to ["at+jwt"].
+  OAUTH_TRUSTED_ISSUERS: {{ $oa.trustedIssuers | default (list) | toJson | quote }}
   # CSV of custom URI schemes accepted during public client registration
   # (e.g. "cursor,vscode"). Loopback HTTPS is always accepted. mcp-oauth
   # validates each scheme per RFC 3986.

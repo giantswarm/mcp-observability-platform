@@ -64,16 +64,18 @@ func CallerFromContext(ctx context.Context) Caller {
 	return c
 }
 
-// CallerSubject returns a stable identifier for the caller — Subject
-// preferred over Email; empty when no identity is attached. Used for audit
-// logs and the X-Grafana-User header so Grafana's audit log shows
-// who-did-what instead of the server-admin SA.
+// CallerSubject returns the caller's audit handle for the X-Grafana-User
+// header — Email preferred over Subject, empty when no identity is attached.
+// Grafana provisions OAuth users by email and the authz lookup keys on email
+// (see Identity), so email is the handle that resolves to a real Grafana user
+// in the audit log; for a muster-minted token the sub is opaque while the
+// email claim carries the human. Falls back to Subject when no email is set.
 func CallerSubject(ctx context.Context) string {
 	c := CallerFromContext(ctx)
-	if c.Subject != "" {
-		return c.Subject
+	if c.Email != "" {
+		return c.Email
 	}
-	return c.Email
+	return c.Subject
 }
 
 // CallerTokenSource returns the OAuth flavour that produced the caller's
