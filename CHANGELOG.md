@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Bump `github.com/giantswarm/mcp-oauth` to v0.10.2.
+- Bump `github.com/giantswarm/mcp-oauth` to v0.13.0.
 - `X-Grafana-User` now carries the caller email, falling back to the OIDC subject when no email is present.
 
 - Release binaries now include darwin/amd64, darwin/arm64, windows/amd64, and windows/arm64 alongside the existing linux targets. Windows binaries are named `mcp-observability-platform-windows-<arch>.exe`.
