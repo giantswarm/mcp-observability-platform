@@ -28,8 +28,9 @@ func TestCallerSubject_Fallback(t *testing.T) {
 		want string
 	}{
 		{"no identity", Caller{}, ""},
-		{"subject preferred over email", Caller{Subject: testSubject, Email: testEmail}, testSubject},
-		{"email fallback when subject empty", Caller{Email: testEmail}, ""}, // Authenticated() rejects subject-less, so attach is a no-op
+		{"email preferred over subject", Caller{Subject: testSubject, Email: testEmail}, testEmail},
+		{"subject fallback when no email", Caller{Subject: testSubject}, testSubject},
+		{"email-only is unauthenticated, not attached", Caller{Email: testEmail}, ""}, // Authenticated() rejects subject-less, so attach is a no-op
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

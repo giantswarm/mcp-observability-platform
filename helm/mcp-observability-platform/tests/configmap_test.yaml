@@ -16,6 +16,9 @@ tests:
           path: data.OAUTH_TRUSTED_AUDIENCES
           value: ""
       - equal:
+          path: data.OAUTH_TRUSTED_ISSUERS
+          value: "[]"
+      - equal:
           path: data.OAUTH_TRUSTED_REDIRECT_SCHEMES
           value: ""
       - equal:
@@ -38,6 +41,19 @@ tests:
       - equal:
           path: data.OAUTH_TRUSTED_REDIRECT_SCHEMES
           value: "cursor,vscode"
+
+  - it: renders trusted issuers as JSON
+    set:
+      oauth:
+        trustedIssuers:
+          - issuer: https://muster.example.com
+            jwksURL: https://muster.example.com/.well-known/jwks.json
+            allowedAudiences:
+              - mcp-observability-platform
+    asserts:
+      - equal:
+          path: data.OAUTH_TRUSTED_ISSUERS
+          value: '[{"allowedAudiences":["mcp-observability-platform"],"issuer":"https://muster.example.com","jwksURL":"https://muster.example.com/.well-known/jwks.json"}]'
 
   - it: honours runtime overrides
     set:

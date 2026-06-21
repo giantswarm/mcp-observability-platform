@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tool surface completion (roadmap §0): `run_panel_query`, `get_query_examples`, and `get_panel_image` (delegated), plus local `list_silences` / `get_silence` (AM v2 silences via Grafana's datasource proxy, with optional `datasourceUid` override).
 - `--disabled-tools` flag on the `serve` command (CSV of MCP tool names) skips matching tools at registration; surfaced as `tools.disabled` in the Helm chart so operators can drop e.g. `alerting_manage_rules` or `get_panel_image` without rebuilding.
+- `OAUTH_TRUSTED_ISSUERS` (Helm: `oauth.trustedIssuers`): accept Bearer JWTs from trusted external issuers (the muster broker) at `/mcp` alongside Dex, for agent OBO/M2M traffic. JSON array of entries with `issuer`, `jwksURL`, and optional `allowedAudiences`, `allowedClaims`, `acceptedTypHeaders` (defaults to `["at+jwt"]`), `allowPrivateIPJWKS`.
 
 ### Changed
+
+- Bump `github.com/giantswarm/mcp-oauth` to v0.10.2.
+- `X-Grafana-User` now carries the caller email, falling back to the OIDC subject when no email is present.
 
 - Release binaries now include darwin/amd64, darwin/arm64, windows/amd64, and windows/arm64 alongside the existing linux targets. Windows binaries are named `mcp-observability-platform-windows-<arch>.exe`.
 - Adopt `github.com/giantswarm/mcp-toolkit` v0.1.0 for cross-cutting plumbing. The bespoke `internal/server/middleware/{response_cap,timeout}.go` implementations and `internal/observability/tracing.go` are replaced by `responsecap.New`, `timeout.New`, `tracing.Init`. Logger construction switches to `logging.New`; the two-phase HTTP shutdown is now composed from two `httpx.Run` calls. Behaviour is preserved: response-cap default 128 KiB and tool timeout default 30s match the toolkit constants; the platform-specific cap hint (label matchers / sum/rate/topk advice) is set via `responsecap.Options.Hint`. The two-phase drain ordering (MCP first, observability second) is unchanged.

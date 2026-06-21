@@ -354,8 +354,8 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	if captured.cfg.OrgID != 7 {
 		t.Errorf("OrgID = %d, want 7", captured.cfg.OrgID)
 	}
-	if got := captured.cfg.ExtraHeaders["X-Grafana-User"]; got != "sub-123" {
-		t.Errorf("X-Grafana-User = %q, want sub-123", got)
+	if got := captured.cfg.ExtraHeaders["X-Grafana-User"]; got != "alice@example.com" {
+		t.Errorf("X-Grafana-User = %q, want alice@example.com", got)
 	}
 }
 

@@ -3,7 +3,7 @@ module github.com/giantswarm/mcp-observability-platform
 go 1.26.4
 
 require (
-	github.com/giantswarm/mcp-oauth v0.2.198
+	github.com/giantswarm/mcp-oauth v0.10.2
 	github.com/giantswarm/mcp-toolkit v0.1.0
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.3
@@ -150,7 +150,7 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/valkey-io/valkey-go v1.0.75 // indirect
+	github.com/valkey-io/valkey-go v1.0.76 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
@@ -184,7 +184,7 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
 	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
