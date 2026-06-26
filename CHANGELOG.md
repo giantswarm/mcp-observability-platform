@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-26
+
 ### Added
 
 - Tool surface completion (roadmap §0): `run_panel_query`, `get_query_examples`, and `get_panel_image` (delegated), plus local `list_silences` / `get_silence` (AM v2 silences via Grafana's datasource proxy, with optional `datasourceUid` override).
@@ -44,5 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/giantswarm/mcp-observability-platform/releases/tag/v0.1.0
