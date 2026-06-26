@@ -42,3 +42,15 @@ tidy: ## Run `go mod tidy`
 .PHONY: helm-template
 helm-template: ## Render chart templates locally for inspection
 	@helm template mcp-observability-platform helm/mcp-observability-platform --kube-version 1.30.0
+
+# The Dockerfile COPYs a prebuilt mcp-observability-platform-<os>-<arch> binary
+# (architect/go-build does this in CI). The generated `build-docker` target
+# doesn't produce that name, so build the binary and image here instead.
+DOCKER_GOARCH ?= $(shell go env GOARCH)
+
+.PHONY: docker-build
+docker-build: ## Build the container image locally (mirrors CI's prebuilt-binary Dockerfile)
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_GOARCH) go build -trimpath \
+		-o mcp-observability-platform-linux-$(DOCKER_GOARCH) .
+	docker build --build-arg TARGETOS=linux --build-arg TARGETARCH=$(DOCKER_GOARCH) \
+		-t mcp-observability-platform:dev .
