@@ -32,6 +32,8 @@ workflows:
           context: architect
           name: push-to-gsoci-release
           registries-data: "public gsoci.azurecr.io ACR_GSOCI_USERNAME ACR_GSOCI_PASSWORD true"
+          # Base images (alpine, distroless) are linux-only, so the image is too.
+          platforms: "linux/amd64,linux/arm64"
           requires:
             - go-build-mcp-observability-platform
           filters:
@@ -46,6 +48,8 @@ workflows:
       - architect/push-to-registries:
           context: architect
           name: push-to-all-registries-release
+          # Base images (alpine, distroless) are linux-only, so the image is too.
+          platforms: "linux/amd64,linux/arm64"
           requires:
             - go-build-mcp-observability-platform
           filters:

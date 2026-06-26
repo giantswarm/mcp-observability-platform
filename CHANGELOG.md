@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix docker multi-arch images with proper architectures
+
 ## [0.2.0] - 2026-06-26
 
 ### Added
