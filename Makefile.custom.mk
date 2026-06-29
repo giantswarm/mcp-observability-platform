@@ -27,11 +27,19 @@ test-vet: ## Run go test with race detector and go vet
 .PHONY: check
 check: lint-yaml test-vet ## Run YAML lint + Go tests + vet
 
+# Vulnerabilities accepted with documented justification:
+#   GO-2026-5662 — Stored XSS in the Prometheus web UI. Reaches us only via
+#   grafana/mcp-grafana -> prometheus/prometheus/model/labels; we never serve the
+#   Prometheus web UI, so the path is unreachable. No fixed Go module version exists
+#   (advisory has no mapped fix). Re-evaluate when the advisory is remapped or
+#   grafana/mcp-grafana drops the prometheus/prometheus dependency.
+GOVULN_IGNORE := GO-2026-5662
+
 .PHONY: govulncheck
-govulncheck: ## Scan for known vulnerabilities
+govulncheck: ## Scan for known vulnerabilities (exceptions in GOVULN_IGNORE)
 	@echo "Checking for known vulnerabilities..."
 	@command -v govulncheck >/dev/null 2>&1 || { echo "Installing govulncheck..."; go install golang.org/x/vuln/cmd/govulncheck@latest; }
-	@govulncheck ./...
+	@govulncheck -format json ./... | GOVULN_IGNORE="$(GOVULN_IGNORE)" python3 scripts/govulncheck-filter.py
 
 ##@ Development (convenience)
 
