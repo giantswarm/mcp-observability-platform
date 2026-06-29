@@ -92,6 +92,26 @@
                 }
             }
         },
+        "httpRoute": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "object"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "hostnames": {
+                    "type": "array"
+                },
+                "matches": {
+                    "type": "array"
+                },
+                "parentRefs": {
+                    "type": "array"
+                }
+            }
+        },
         "image": {
             "type": "object",
             "properties": {
