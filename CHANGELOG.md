@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Optional Gateway API `HTTPRoute` (`httpRoute.enabled`) to expose the MCP HTTP surface through a Gateway.
 
+### Fixed
+
+- fixed logger init with updated mcp-toolkit
+
 ## [0.2.2] - 2026-06-26
 
 ### Fixed
