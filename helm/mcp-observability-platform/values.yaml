@@ -92,6 +92,28 @@ networkPolicy:
           protocol: TCP
   egress: []
 
+# Gateway API HTTPRoute — exposes the MCP HTTP surface (/mcp, /sse, /oauth/*)
+# through a Gateway. Off by default; the cluster needs the Gateway API CRDs
+# and a Gateway implementation (e.g. Envoy Gateway). When enabled, set
+# `hostnames` and point `parentRefs` at your Gateway. The single rule routes
+# to this chart's Service on `service.port`.
+#
+# `parentRefs`, `hostnames`, and `matches` are toYaml'd verbatim — supply any
+# shape the Gateway API accepts. The chart owns only the backendRef (it has to
+# point at the rendered Service).
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: giantswarm-default
+      namespace: envoy-gateway-system
+      sectionName: https
+  hostnames: []
+  matches:
+    - path:
+        type: PathPrefix
+        value: /
+
 # --- Runtime tunables (ConfigMap-backed) ---
 # All fields here surface as env vars on the deployment via envFrom.
 runtime:
