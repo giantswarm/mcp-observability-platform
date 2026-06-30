@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/giantswarm/mcp-toolkit/logging"
 	"github.com/giantswarm/mcp-toolkit/tracing"
 	"github.com/go-logr/logr"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
@@ -111,11 +110,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if cfg.Debug || flagDebug {
 		logLevel = slog.LevelDebug
 	}
-	logFormat := logging.FormatText
+	hopts := &slog.HandlerOptions{Level: logLevel}
+	var handler slog.Handler
 	if cfg.LogFormat == logFormatJSON {
-		logFormat = logging.FormatJSON
+		handler = slog.NewJSONHandler(os.Stderr, hopts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, hopts)
 	}
-	logger := logging.New(logging.Options{Level: logLevel, Format: logFormat})
+	logger := slog.New(handler)
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
 	orgLister, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
@@ -155,7 +157,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// unset. The cluster log pipeline ships stderr to Loki; we don't run
 	// a separate OTLP-logs path.
 	prependOTELResourceAttrs()
-	shutdownOTEL, err := tracing.Init(shutdownCtx, "mcp-observability-platform", version)
+	shutdownOTEL, err := tracing.Init(shutdownCtx,
+		tracing.WithServiceName("mcp-observability-platform"),
+		tracing.WithServiceVersion(version))
 	if err != nil {
 		logger.Warn("otel init failed; continuing without tracing", "error", err)
 	} else {
