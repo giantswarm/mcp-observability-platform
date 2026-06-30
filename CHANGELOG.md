@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-30
+
 ### Added
 
 - Optional Gateway API `HTTPRoute` (`httpRoute.enabled`) to expose the MCP HTTP surface through a Gateway.
@@ -66,7 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.1.0...v0.2.0
