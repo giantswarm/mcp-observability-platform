@@ -97,3 +97,9 @@ func CallerTokenSource(ctx context.Context) string {
 func CallerActorSubject(ctx context.Context) string {
 	return CallerFromContext(ctx).ActorSubject
 }
+
+// CallerActorChain returns the full RFC 8693 delegation chain subjects of a
+// delegated caller, outermost actor first; nil for direct sessions.
+func CallerActorChain(ctx context.Context) []string {
+	return CallerFromContext(ctx).ActorChain
+}

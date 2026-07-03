@@ -190,7 +190,8 @@ oauth:
   # trustedAudiences these are full issuers (own signing keys), validated via
   # JWKS. Each entry needs at least issuer and jwksURL. subjectClaim remaps
   # the caller subject to another claim (e.g. "email", the handle Grafana
-  # provisions OAuth users by). With muster forwarding its issued token
+  # provisions OAuth users by); tokens without that claim are rejected. With
+  # muster forwarding its issued token
   # unchanged, allowedAudiences is muster's own resource identifier, not a
   # per-backend value. acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068);
   # set [""] to accept tokens with no typ header (e.g. Kubernetes
