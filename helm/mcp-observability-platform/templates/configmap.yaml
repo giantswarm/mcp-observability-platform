@@ -24,7 +24,7 @@ data:
   # only our own tokens.
   OAUTH_TRUSTED_AUDIENCES: {{ $oa.trustedAudiences | default (list) | join "," | quote }}
   # JSON array of external issuers (the muster broker) whose Bearer JWTs are
-  # accepted at /mcp alongside Dex, for agent OBO/M2M traffic. Each entry needs
+  # accepted at /mcp alongside Dex, for on-behalf-of traffic. Each entry needs
   # at least issuer + jwksURL. Empty list = only Dex-issued (and trusted-
   # audience) tokens are accepted. acceptedTypHeaders defaults to ["at+jwt"].
   OAUTH_TRUSTED_ISSUERS: {{ $oa.trustedIssuers | default (list) | toJson | quote }}

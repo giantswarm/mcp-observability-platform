@@ -35,19 +35,23 @@ func TestParseTrustedIssuers(t *testing.T) {
 			name: "all fields mapped",
 			raw: `[{
 				"issuer":"https://muster.example.com",
-				"jwksURL":"https://muster.example.com/jwks",
-				"allowedAudiences":["mcp-observability-platform","other"],
+				"jwksURL":"http://muster.muster.svc.cluster.local:8080/jwks",
+				"subjectClaim":"email",
+				"allowedAudiences":["https://muster.example.com/mcp","other"],
 				"allowedClaims":{"sub":"system:serviceaccount:kagent:*"},
 				"acceptedTypHeaders":["at+jwt",""],
-				"allowPrivateIPJWKS":true
+				"allowPrivateIPJWKS":true,
+				"allowPrivateIPJWKSHosts":["muster.muster.svc.cluster.local"]
 			}]`,
 			want: []oauthserver.TrustedIssuer{{
-				Issuer:             "https://muster.example.com",
-				JwksURL:            "https://muster.example.com/jwks",
-				AllowedAudiences:   []string{"mcp-observability-platform", "other"},
-				AllowedClaims:      map[string]string{"sub": "system:serviceaccount:kagent:*"},
-				AcceptedTypHeaders: []string{"at+jwt", ""},
-				AllowPrivateIPJWKS: true,
+				Issuer:                  "https://muster.example.com",
+				JwksURL:                 "http://muster.muster.svc.cluster.local:8080/jwks",
+				SubjectClaim:            "email",
+				AllowedAudiences:        []string{"https://muster.example.com/mcp", "other"},
+				AllowedClaims:           map[string]string{"sub": "system:serviceaccount:kagent:*"},
+				AcceptedTypHeaders:      []string{"at+jwt", ""},
+				AllowPrivateIPJWKS:      true,
+				AllowPrivateIPJWKSHosts: []string{"muster.muster.svc.cluster.local"},
 			}},
 		},
 		{
@@ -101,8 +105,10 @@ func trustedIssuersEqual(a, b []oauthserver.TrustedIssuer) bool {
 	for i := range a {
 		if a[i].Issuer != b[i].Issuer ||
 			a[i].JwksURL != b[i].JwksURL ||
+			a[i].SubjectClaim != b[i].SubjectClaim ||
 			a[i].AllowPrivateIPJWKS != b[i].AllowPrivateIPJWKS ||
 			!stringSlicesEqual(a[i].AllowedAudiences, b[i].AllowedAudiences) ||
+			!stringSlicesEqual(a[i].AllowPrivateIPJWKSHosts, b[i].AllowPrivateIPJWKSHosts) ||
 			!stringSlicesEqual(a[i].AcceptedTypHeaders, b[i].AcceptedTypHeaders) ||
 			!stringMapsEqual(a[i].AllowedClaims, b[i].AllowedClaims) {
 			return false
