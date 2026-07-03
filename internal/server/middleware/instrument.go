@@ -29,6 +29,7 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 					attribute.String("tool.name", name),
 					attribute.String("caller", authz.CallerSubject(ctx)),
 					attribute.String("caller.token_source", authz.CallerTokenSource(ctx)),
+					attribute.String("caller.actor", authz.CallerActorSubject(ctx)),
 				),
 			)
 			defer span.End()
@@ -61,6 +62,8 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 					slog.Time("timestamp", start),
 					slog.String("caller", authz.CallerSubject(ctx)),
 					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
+					slog.String("caller_actor", authz.CallerActorSubject(ctx)),
+					slog.Any("caller_actor_chain", authz.CallerFromContext(ctx).ActorChain),
 					slog.String("tool", name),
 					slog.String("org", argString(req, "org")),
 					slog.Any("args", req.GetArguments()),
