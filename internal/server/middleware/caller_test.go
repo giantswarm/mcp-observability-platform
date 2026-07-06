@@ -7,6 +7,7 @@ import (
 
 	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/providers"
+	"github.com/giantswarm/mcp-oauth/providers/oidc"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
@@ -30,6 +31,47 @@ func TestExtractCaller_ReturnsAttachedIdentity(t *testing.T) {
 	}
 	if c.TokenSource != "oauth" {
 		t.Errorf("TokenSource = %q, want oauth", c.TokenSource)
+	}
+}
+
+func TestExtractCaller_DelegatedTokenCarriesActor(t *testing.T) {
+	const (
+		agentSub   = "system:serviceaccount:kagent:sre-agent"
+		plannerSub = "system:serviceaccount:kagent:planner-agent"
+	)
+	ui := &providers.UserInfo{
+		ID:           testAliceEmail,
+		Email:        testAliceEmail,
+		TokenSource:  providers.TokenSourceTrustedIssuer,
+		ActorSubject: agentSub,
+		ActorChain: []oidc.ActorClaim{
+			{Subject: agentSub},
+			{Subject: plannerSub},
+		},
+	}
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
+
+	c := ExtractCaller(req)
+	if c.ActorSubject != agentSub {
+		t.Errorf("ActorSubject = %q, want %s", c.ActorSubject, agentSub)
+	}
+	if len(c.ActorChain) != 2 || c.ActorChain[0] != agentSub || c.ActorChain[1] != plannerSub {
+		t.Errorf("ActorChain = %v, want [%s %s]", c.ActorChain, agentSub, plannerSub)
+	}
+	if c.TokenSource != "trusted-issuer" {
+		t.Errorf("TokenSource = %q, want trusted-issuer", c.TokenSource)
+	}
+}
+
+func TestExtractCaller_DirectTokenHasNoActor(t *testing.T) {
+	ui := &providers.UserInfo{ID: testSubject, Email: testAliceEmail, TokenSource: providers.TokenSourceOAuth}
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
+
+	c := ExtractCaller(req)
+	if c.ActorSubject != "" || len(c.ActorChain) != 0 {
+		t.Errorf("direct token must carry no actor, got ActorSubject=%q ActorChain=%v", c.ActorSubject, c.ActorChain)
 	}
 }
 

@@ -29,6 +29,7 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 					attribute.String("tool.name", name),
 					attribute.String("caller", authz.CallerSubject(ctx)),
 					attribute.String("caller.token_source", authz.CallerTokenSource(ctx)),
+					attribute.String("caller.actor", authz.CallerActorSubject(ctx)),
 				),
 			)
 			defer span.End()
@@ -57,10 +58,11 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 
 			if logger != nil {
 				traceID, spanID := traceIDs(ctx)
-				logger.LogAttrs(ctx, slog.LevelInfo, "tool_call",
+				attrs := []slog.Attr{
 					slog.Time("timestamp", start),
 					slog.String("caller", authz.CallerSubject(ctx)),
 					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
+					slog.String("caller_actor", authz.CallerActorSubject(ctx)),
 					slog.String("tool", name),
 					slog.String("org", argString(req, "org")),
 					slog.Any("args", req.GetArguments()),
@@ -69,7 +71,11 @@ func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
 					slog.String("error", auditErrorMessage(err, res)),
 					slog.String("trace_id", traceID),
 					slog.String("span_id", spanID),
-				)
+				}
+				if chain := authz.CallerActorChain(ctx); len(chain) > 0 {
+					attrs = append(attrs, slog.Any("caller_actor_chain", chain))
+				}
+				logger.LogAttrs(ctx, slog.LevelInfo, "tool_call", attrs...)
 			}
 
 			return res, err

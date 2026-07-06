@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -64,9 +65,15 @@ func TestCallerTokenSource(t *testing.T) {
 }
 
 func TestCallerFromContext_RoundTrip(t *testing.T) {
-	want := Caller{Subject: testSubject, Email: "alice@example.com", TokenSource: testTokenOAuth}
+	want := Caller{
+		Subject:      testSubject,
+		Email:        "alice@example.com",
+		TokenSource:  testTokenOAuth,
+		ActorSubject: "system:serviceaccount:kagent:sre-agent",
+		ActorChain:   []string{"system:serviceaccount:kagent:sre-agent"},
+	}
 	got := CallerFromContext(WithCaller(context.Background(), want))
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("round-trip = %+v, want %+v", got, want)
 	}
 }

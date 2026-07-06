@@ -10,10 +10,16 @@ import "context"
 // logs can distinguish direct sessions from SSO-forwarded ones.
 //
 // A valid Caller MUST have a non-empty Subject — see Authenticated().
+//
+// ActorSubject and ActorChain carry the RFC 8693 act claim of a delegated
+// (on-behalf-of) token: the agent acting for the human, outermost actor
+// first. Audit-only — authorization runs on the human subject's identity.
 type Caller struct {
-	Subject     string
-	Email       string
-	TokenSource string
+	Subject      string
+	Email        string
+	TokenSource  string
+	ActorSubject string
+	ActorChain   []string
 }
 
 // Identity returns the best handle to pass to /api/users/lookup — Grafana
@@ -83,4 +89,17 @@ func CallerSubject(ctx context.Context) string {
 // SSO-forwarded sessions are distinguishable.
 func CallerTokenSource(ctx context.Context) string {
 	return CallerFromContext(ctx).TokenSource
+}
+
+// CallerActorSubject returns the acting agent's subject for a delegated
+// (on-behalf-of) caller, empty for direct sessions. Recorded on audit
+// entries so delegated calls name the agent alongside the human.
+func CallerActorSubject(ctx context.Context) string {
+	return CallerFromContext(ctx).ActorSubject
+}
+
+// CallerActorChain returns the full RFC 8693 delegation chain subjects of a
+// delegated caller, outermost actor first; nil for direct sessions.
+func CallerActorChain(ctx context.Context) []string {
+	return CallerFromContext(ctx).ActorChain
 }

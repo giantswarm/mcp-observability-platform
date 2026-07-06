@@ -18,10 +18,16 @@ func ExtractCaller(r *http.Request) authz.Caller {
 	if !ok || ui == nil {
 		return authz.Caller{}
 	}
+	var chain []string
+	for _, actor := range ui.ActorChain {
+		chain = append(chain, actor.Subject)
+	}
 	return authz.Caller{
-		Subject:     ui.ID,
-		Email:       ui.Email,
-		TokenSource: string(ui.TokenSource),
+		Subject:      ui.ID,
+		Email:        ui.Email,
+		TokenSource:  string(ui.TokenSource),
+		ActorSubject: ui.ActorSubject,
+		ActorChain:   chain,
 	}
 }
 

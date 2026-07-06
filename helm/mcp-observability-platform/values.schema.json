@@ -240,6 +240,9 @@
                             "jwksURL": {
                                 "type": "string"
                             },
+                            "subjectClaim": {
+                                "type": "string"
+                            },
                             "allowedAudiences": {
                                 "type": "array",
                                 "items": {
@@ -260,6 +263,12 @@
                             },
                             "allowPrivateIPJWKS": {
                                 "type": "boolean"
+                            },
+                            "allowPrivateIPJWKSHosts": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
                             }
                         }
                     }

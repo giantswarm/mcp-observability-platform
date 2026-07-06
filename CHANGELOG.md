@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `subjectClaim` and `allowPrivateIPJWKSHosts` on `OAUTH_TRUSTED_ISSUERS` entries (and the `oauth.trustedIssuers` Helm values). `subjectClaim` remaps the caller subject to another claim's value (e.g. `email`); `allowPrivateIPJWKSHosts` allows the listed hostnames' JWKS URLs to resolve to a private IP while keeping SSRF protection elsewhere.
+- Tool-call audit records and spans carry the acting agent of a delegated (on-behalf-of) token: `caller_actor` and the full RFC 8693 `act` chain.
+
+### Changed
+
+- mcp-oauth updated to v1.x.
+
 ## [0.3.0] - 2026-06-30
 
 ### Added

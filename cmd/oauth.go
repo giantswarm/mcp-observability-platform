@@ -27,18 +27,20 @@ const (
 
 // trustedIssuerConfig is the JSON shape of a single OAUTH_TRUSTED_ISSUERS
 // entry. It mirrors the subset of mcp-oauth's TrustedIssuer a resource server
-// needs: no SubjectClaim (this server validates Bearer tokens but never mints,
-// and the claim is ignored on the validation path) and no impersonation
-// fields. acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068) upstream; set
-// [""] to accept tokens with no typ header (e.g. Kubernetes ServiceAccount
-// tokens).
+// needs. subjectClaim remaps the caller subject to another claim's value at
+// validation time (e.g. "email", so the Grafana user lookup gets the handle
+// Grafana provisions OAuth users by). acceptedTypHeaders defaults to
+// ["at+jwt"] (RFC 9068) upstream; set [""] to accept tokens with no typ
+// header (e.g. Kubernetes ServiceAccount tokens).
 type trustedIssuerConfig struct {
-	Issuer             string            `json:"issuer"`
-	JwksURL            string            `json:"jwksURL"`
-	AllowedAudiences   []string          `json:"allowedAudiences,omitempty"`
-	AllowedClaims      map[string]string `json:"allowedClaims,omitempty"`
-	AcceptedTypHeaders []string          `json:"acceptedTypHeaders,omitempty"`
-	AllowPrivateIPJWKS bool              `json:"allowPrivateIPJWKS,omitempty"`
+	Issuer                  string            `json:"issuer"`
+	JwksURL                 string            `json:"jwksURL"`
+	SubjectClaim            string            `json:"subjectClaim,omitempty"`
+	AllowedAudiences        []string          `json:"allowedAudiences,omitempty"`
+	AllowedClaims           map[string]string `json:"allowedClaims,omitempty"`
+	AcceptedTypHeaders      []string          `json:"acceptedTypHeaders,omitempty"`
+	AllowPrivateIPJWKS      bool              `json:"allowPrivateIPJWKS,omitempty"`
+	AllowPrivateIPJWKSHosts []string          `json:"allowPrivateIPJWKSHosts,omitempty"`
 }
 
 // parseTrustedIssuers parses OAUTH_TRUSTED_ISSUERS, a JSON array of issuer
@@ -59,12 +61,14 @@ func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
 			return nil, fmt.Errorf("%s[%d]: issuer and jwksURL are required", envOAuthTrustedIssuers, i)
 		}
 		issuers = append(issuers, oauthserver.TrustedIssuer{
-			Issuer:             e.Issuer,
-			JwksURL:            e.JwksURL,
-			AllowedAudiences:   e.AllowedAudiences,
-			AllowedClaims:      e.AllowedClaims,
-			AcceptedTypHeaders: e.AcceptedTypHeaders,
-			AllowPrivateIPJWKS: e.AllowPrivateIPJWKS,
+			Issuer:                  e.Issuer,
+			JwksURL:                 e.JwksURL,
+			SubjectClaim:            e.SubjectClaim,
+			AllowedAudiences:        e.AllowedAudiences,
+			AllowedClaims:           e.AllowedClaims,
+			AcceptedTypHeaders:      e.AcceptedTypHeaders,
+			AllowPrivateIPJWKS:      e.AllowPrivateIPJWKS,
+			AllowPrivateIPJWKSHosts: e.AllowPrivateIPJWKSHosts,
 		})
 	}
 	return issuers, nil
@@ -125,7 +129,8 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	}
 
 	// Trusted external issuers (muster) whose Bearer JWTs are accepted at
-	// /mcp alongside Dex, for agent OBO/M2M traffic.
+	// /mcp alongside Dex, for on-behalf-of traffic carrying muster-issued
+	// tokens.
 	issuers, err := parseTrustedIssuers(os.Getenv(envOAuthTrustedIssuers))
 	if err != nil {
 		storeClose()
