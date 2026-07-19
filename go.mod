@@ -7,7 +7,7 @@ require (
 	github.com/giantswarm/mcp-toolkit v0.2.9
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.3
-	github.com/grafana/mcp-grafana v0.17.0
+	github.com/grafana/mcp-grafana v0.17.2
 	github.com/mark3labs/mcp-go v0.55.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.10.2
