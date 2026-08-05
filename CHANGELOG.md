@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - mcp-oauth updated to v1.x.
+- `google.golang.org/grpc` updated to v1.83.0, fixing GO-2026-6061 (HTTP/2 transport).
 
 ## [0.3.0] - 2026-06-30
 
