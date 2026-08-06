@@ -66,6 +66,15 @@ pod exposes every Grafana org on compromise.
 Needs `observability-operator` coordination — open an issue there
 describing the contract so the dependency is visible from both sides.
 
+**Likely superseded — decision pending.** Per-user on-behalf-of auth
+solves the same gap more completely (Grafana enforces caller isolation
+instead of us; it also removes the server-admin requirement entirely)
+and needs operator *config* rather than new operator machinery. The two
+touch the same call sites, so do not build both. See
+[`grafana-obo-feasibility.md`](./grafana-obo-feasibility.md) for the
+verified assessment and comparison. If OBO is adopted, this item
+collapses to "make the bootstrap SA a non-admin Viewer SA".
+
 ### 2. Write tools gated on Editor / Admin
 
 The authz model (`Role` with Editor/Admin,
