@@ -3,13 +3,15 @@
 Status: **evaluated, not implemented.** Decision requested.
 
 Companion to [`ARCHITECTURE.md`](./ARCHITECTURE.md) ("Threat model") and
-[`roadmap.md`](./roadmap.md) §1. This file answers one question and records the
-evidence, so nobody has to re-derive it.
+[`roadmap.md`](./roadmap.md) §1. Two things live here: a verified answer to
+"could the MCP authenticate to Grafana as the caller?", and a comparison of
+**all** the options for improving the credential model — so nobody has to
+re-derive either.
 
 ## Question and answer
 
 > Could the MCP connect to Grafana as the *caller* — RFC 8693 token exchange /
-> on-behalf-of — instead of using one shared server-admin service account?
+> on-behalf-of — instead of using one shared server-admin credential?
 
 **Yes.** Server-admin is not required for per-request org switching once the
 caller is the authenticated principal, and on Grafana OSS the entire read data
@@ -41,6 +43,36 @@ One credential, fixed at process start, shared by every caller:
 - The caller's identity reaches Grafana only as audit metadata:
   `internal/tools/grafanabind.go:348` `attachGrafana` sets `OrgID` and
   `X-Grafana-User`. Neither changes what the request is permitted to do.
+
+### In practice it is the built-in admin account, and that is forced
+
+The chart offers `grafana.authMode` — `serviceAccountToken` or `basicAuth`
+(`helm/mcp-observability-platform/values.yaml`) — and defaults to the former. But
+the install bootstrap populates the `basicAuth` branch, copying Grafana's own
+`admin-user` / `admin-password` into the MCP's Secret. So the credential in use
+is not a scoped service account but **the built-in admin account**: shared with
+anyone who can read that Secret, usable to log into the UI, not independently
+revocable, and rotatable only by changing Grafana's admin password everywhere.
+
+That is not an oversight — there is no supported alternative:
+
+- `UpdateServiceAccountForm` (`pkg/services/serviceaccounts/models.go`) carries
+  only `Name`, `Role` (an *org* role) and `IsDisabled`. There is no
+  `isGrafanaAdmin`.
+- Grafana's own docs: service accounts "can't be used for instance-wide
+  operations… These tasks require a user with Grafana server administrator
+  permissions", and "only work in the organization they are created for".
+- `PUT /api/admin/users/:id/permissions` does set `IsGrafanaAdmin` on a user row
+  (`pkg/api/admin_users.go`, `AdminUpdateUserPermissions`), and a service account
+  has a user row — so promotion is technically reachable. But it is undocumented
+  for service accounts and version-dependent, which is exactly what
+  `internal/grafana/client.go:59-62` anticipates when it explains why the
+  `basicAuth` fallback exists at all.
+
+Since the design needs cross-org reach and only a server admin has it, the
+current architecture structurally requires Grafana's admin credentials. Both
+serious options below are, at bottom, answers to the same question: **how do we
+stop shipping Grafana's admin password to this pod?**
 
 Consequence, already recorded in `ARCHITECTURE.md:96`: caller isolation is a
 property of our code, not of Grafana, and a process compromise yields every org.
@@ -215,7 +247,51 @@ Points requiring agreement, not just a merge:
    lazily, once per request, not at ingress) plus a Grafana user fetch per
    authentication. `cache_ttl` covers JWKS, not the user fetch.
 
-## OBO vs. per-org SA tokens (`roadmap.md` §1)
+## Options for improving this
+
+| # | Option | Removes the admin credential? | Grafana enforces the caller? | Per-user audit | Effort | Cross-repo cost |
+|---|---|---|---|---|---|---|
+| 0 | Status quo — built-in admin password | ✗ | ✗ | ✗ | — | — |
+| 1 | Harden around it — rotation, NetworkPolicy, auth-failure alerting, keep the surface read-only | ✗ | ✗ | ✗ | S | none |
+| 1b | Promote a service account to server-admin via `PUT /api/admin/users/:id/permissions` | partly | ✗ | ✗ | S | none |
+| 2 | Per-org SA tokens ([`roadmap.md`](./roadmap.md) §1) | ✓ | ✗ | ✗ | L | operator: SA lifecycle machinery |
+| 3 | Per-user on-behalf-of (`[auth.jwt]`) | ✓ | ✓ | ✓ | L | operator: config + security sign-off |
+| 4 | One MCP deployment per org | ✓ | ✗ | ✗ | M–L | deployment topology |
+
+The deciding trade-off for each:
+
+- **1 — harden around it.** Orthogonal and cheap; worth doing whichever
+  architecture wins. But it moves the blast radius by nothing, so it must not be
+  allowed to substitute for a decision.
+- **1b — promote an SA.** Same privilege ceiling as today, but independently
+  revocable, no UI login, and rotatable without changing Grafana's admin
+  password. Unsupported for service accounts and version-dependent (see above),
+  so verify against the target Grafana first. A stopgap, not an answer.
+- **2 — per-org SA tokens.** Removes the admin credential using only supported
+  Grafana APIs, with no change to Grafana's auth chain. Its ceiling: every caller
+  in org X still acts as org X's service account, so caller isolation remains
+  *our* code's responsibility. It also hands `observability-operator` a full
+  credential lifecycle to build — create, store, rotate, revoke, distribute.
+- **3 — per-user OBO.** The only option where Grafana becomes the enforcer;
+  per-user audit follows for free. Costs a signing key that can impersonate any
+  Grafana user, and makes Grafana's auth chain softly dependent on the MCP's
+  JWKS. It still needs a bootstrap identity for Tempo seed discovery, but that
+  can be a minted assertion for a designated Viewer — so no admin credential
+  survives anywhere.
+- **4 — one MCP per org.** The hardest isolation, because it is a process
+  boundary rather than a code path. But it multiplies deployments, OAuth clients
+  and routes, contradicts the "one MCP per Grafana" constraint in
+  [`ARCHITECTURE.md`](./ARCHITECTURE.md), and *still* gives no per-user
+  enforcement inside an org.
+
+Ruled out, for the record: forwarding the caller's token (opaque tokens cannot be
+forwarded; `aud` mismatch on the rest — see "Why re-mint, not forward"); Grafana
+Cloud's `X-Access-Token` / `X-Grafana-Id` OBO (not available self-hosted); and
+Grafana Enterprise datasource permissions, which would *break* rather than help —
+they are what turns `fixed:datasources:reader` from a Viewer grant into an
+Admin-only one, removing the property option 3 depends on.
+
+### The real choice: 2 vs. 3
 
 |  | Per-org SA tokens | On-behalf-of |
 |---|---|---|
@@ -227,17 +303,30 @@ Points requiring agreement, not just a merge:
 | Cross-repo cost | new operator machinery (SA lifecycle + Secret distribution) | operator **config** + sign-off |
 | Removes the server-admin requirement | no | **yes** |
 
-**Recommendation: do OBO, and treat it as superseding roadmap §1.** They are not
-complementary in practice — they touch the same call sites, and per-org SAs leave
-the in-process authorization model untouched, so a bug in `accessibleOrgs` or a
-stale cache remains the only thing between a caller and another org's data. Once
-OBO ships, roadmap §1 collapses to a one-line ops change: make the bootstrap SA a
-non-admin Viewer SA.
+They are not complementary in practice — they touch the same call sites, and
+per-org SAs leave the in-process authorization model untouched, so a bug in
+`accessibleOrgs` or a stale cache remains the only thing between a caller and
+another org's data.
 
 The honest caveat: per-org SAs cap the ceiling on a compromise and OBO does not.
-But today's single server-admin SA has the *same* ceiling as OBO **and** no
-per-user enforcement — so OBO is strictly better than the status quo on both
-axes, while per-org SAs improve only one.
+But today's credential has the *same* ceiling as OBO **and** no per-user
+enforcement — so OBO is strictly better than the status quo on both axes, while
+per-org SAs improve only one.
+
+### Recommendation
+
+**Do 1 now, then 3.** Option 1 is free and independent of the architecture
+decision. Option 3 is the only one that fixes the actual defect — that caller
+isolation is enforced by our code rather than by Grafana — and it subsumes
+roadmap §1: once OBO ships, that item collapses to a one-line ops change, "make
+the bootstrap identity a non-admin Viewer".
+
+If the instance-wide `header_name = Authorization` risk is unacceptable to
+whoever owns Grafana's configuration, **option 2 is the honest fallback.** It
+removes the admin password — most of the immediate exposure — without touching
+Grafana's auth chain.
+
+Do not build 2 and 3 both.
 
 ## Appendix — empirical verification
 
