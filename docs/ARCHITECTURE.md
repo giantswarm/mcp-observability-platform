@@ -99,6 +99,10 @@ one Grafana service-account token with server-admin rights. Authz isolates
 but a process compromise gives the attacker every org. The Phase-2 fix
 (per-org SAs, listed under "Post-v0.1.0 priorities" in the roadmap)
 needs `observability-operator` coordination and is deferred past v0.1.0.
+Per-user on-behalf-of auth — where Grafana authenticates the caller and
+enforces their own org role, removing the server-admin requirement — has
+been evaluated as the stronger alternative to Phase 2; see
+[`grafana-obo-feasibility.md`](./grafana-obo-feasibility.md).
 
 **OAuth trust boundary.** Tokens are validated against `OAUTH_DEX_ISSUER_URL`
 (or an SSO forwarder when `OAUTH_TRUSTED_AUDIENCES` is configured). The
