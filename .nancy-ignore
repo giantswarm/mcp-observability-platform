@@ -25,4 +25,5 @@ CVE-2026-81870 until=2026-10-03 # go.opentelemetry.io/otel/exporters/otlp/otlptr
 CVE-2026-81872 until=2026-10-03 # go.opentelemetry.io/otel/sdk/log@v0.20.0
 CVE-2026-14362 until=2026-10-07 # github.com/hashicorp/memberlist@v0.5.4
 CVE-2026-63209 until=2026-10-07 # github.com/klauspost/compress@v1.18.5
-CVE-2026-56855 until=2026-10-07 # golang.org/x/crypto@v0.55.0
+CVE-2026-56855 until=2026-10-08 # golang.org/x/crypto@v0.55.0
+CVE-2026-78662 until=2026-10-08 # golang.org/x/crypto@v0.55.0
