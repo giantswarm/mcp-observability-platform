@@ -1,18 +1,24 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
+    "additionalProperties": false,
     "properties": {
         "affinity": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false
         },
         "autoscaling": {
             "type": "object",
+            "description": "- Autoscaling (both opt-in, off by default) ---",
+            "additionalProperties": false,
             "properties": {
                 "hpa": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "behavior": {
-                            "type": "object"
+                            "type": "object",
+                            "additionalProperties": false
                         },
                         "enabled": {
                             "type": "boolean"
@@ -33,12 +39,14 @@
                 },
                 "vpa": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "enabled": {
                             "type": "boolean"
                         },
                         "resourcePolicy": {
-                            "type": "object"
+                            "type": "object",
+                            "additionalProperties": false
                         },
                         "updateMode": {
                             "type": "string"
@@ -47,14 +55,47 @@
                 }
             }
         },
+        "baseDomain": {
+            "type": "string"
+        },
+        "bootstrapMode": {
+            "type": "object",
+            "additionalProperties": true
+        },
+        "chartOperator": {
+            "type": "object",
+            "additionalProperties": true
+        },
+        "ciliumNetworkPolicy": {
+            "type": "object",
+            "additionalProperties": true
+        },
+        "cluster": {
+            "type": "object",
+            "additionalProperties": true
+        },
+        "clusterCA": {
+            "type": "string"
+        },
+        "clusterCIDR": {
+            "type": "string"
+        },
+        "clusterDNSIP": {
+            "type": "string"
+        },
+        "clusterID": {
+            "type": "string"
+        },
         "containerSecurityContext": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "allowPrivilegeEscalation": {
                     "type": "boolean"
                 },
                 "capabilities": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "drop": {
                             "type": "array",
@@ -78,8 +119,20 @@
         "fullnameOverride": {
             "type": "string"
         },
+        "gcpProject": {
+            "type": "string"
+        },
+        "global": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "description": "Global values shared between all subcharts",
+            "$comment": "Added automatically by 'helm schema' to allow this chart to be used as a Helm dependency, as this schema would otherwise not allow Helm's special 'global' values key."
+        },
         "grafana": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "authMode": {
                     "type": "string"
@@ -94,9 +147,11 @@
         },
         "httpRoute": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "annotations": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": false
                 },
                 "enabled": {
                     "type": "boolean"
@@ -105,15 +160,49 @@
                     "type": "array"
                 },
                 "matches": {
-                    "type": "array"
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "path": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "type": {
+                                        "type": "string"
+                                    },
+                                    "value": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 "parentRefs": {
-                    "type": "array"
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "namespace": {
+                                "type": "string"
+                            },
+                            "sectionName": {
+                                "type": "string"
+                            }
+                        }
+                    }
                 }
             }
         },
         "image": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "pullPolicy": {
                     "type": "string"
@@ -131,6 +220,8 @@
         },
         "mcp": {
             "type": "object",
+            "description": "- MCP application configuration --- All of these become env vars on the deployment. Secrets are mounted from existing Kubernetes Secrets — do not put secret values inline here.",
+            "additionalProperties": false,
             "properties": {
                 "debug": {
                     "type": "boolean"
@@ -145,6 +236,7 @@
         },
         "networkPolicy": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "egress": {
                     "type": "array"
@@ -153,7 +245,28 @@
                     "type": "boolean"
                 },
                 "ingress": {
-                    "type": "array"
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "ports": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "port": {
+                                            "type": "string"
+                                        },
+                                        "protocol": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 "policyTypes": {
                     "type": "array",
@@ -164,10 +277,12 @@
             }
         },
         "nodeSelector": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false
         },
         "oauth": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "allowInsecureHTTP": {
                     "type": "boolean"
@@ -177,6 +292,7 @@
                 },
                 "dex": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "clientId": {
                             "type": "string"
@@ -191,6 +307,7 @@
                 },
                 "encryption": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "existingSecret": {
                             "type": "string"
@@ -202,12 +319,14 @@
                 },
                 "storage": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "backend": {
                             "type": "string"
                         },
                         "valkey": {
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": {
                                 "addr": {
                                     "type": "string"
@@ -223,66 +342,19 @@
                     }
                 },
                 "trustedAudiences": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                    "type": "array"
                 },
                 "trustedIssuers": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["issuer", "jwksURL"],
-                        "properties": {
-                            "issuer": {
-                                "type": "string"
-                            },
-                            "jwksURL": {
-                                "type": "string"
-                            },
-                            "subjectClaim": {
-                                "type": "string"
-                            },
-                            "allowedAudiences": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            },
-                            "allowedClaims": {
-                                "type": "object",
-                                "additionalProperties": {
-                                    "type": "string"
-                                }
-                            },
-                            "acceptedTypHeaders": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            },
-                            "allowPrivateIPJWKS": {
-                                "type": "boolean"
-                            },
-                            "allowPrivateIPJWKSHosts": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }
+                    "type": "array"
                 },
                 "trustedRedirectSchemes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
+                    "type": "array"
                 }
             }
         },
         "otel": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "endpoint": {
                     "type": "string"
@@ -299,16 +371,15 @@
             }
         },
         "podAnnotations": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false
         },
         "podDisruptionBudget": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "enabled": {
                     "type": "boolean"
-                },
-                "maxUnavailable": {
-                    "type": "integer"
                 },
                 "minAvailable": {
                     "type": "integer"
@@ -316,10 +387,12 @@
             }
         },
         "podLabels": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false
         },
         "podSecurityContext": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "runAsGroup": {
                     "type": "integer"
@@ -332,6 +405,7 @@
                 },
                 "seccompProfile": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "type": {
                             "type": "string"
@@ -343,8 +417,12 @@
         "priorityClassName": {
             "type": "string"
         },
+        "provider": {
+            "type": "string"
+        },
         "rbac": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "create": {
                     "type": "boolean"
@@ -356,9 +434,11 @@
         },
         "resources": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "limits": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "cpu": {
                             "type": "string"
@@ -370,6 +450,7 @@
                 },
                 "requests": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "cpu": {
                             "type": "string"
@@ -383,6 +464,8 @@
         },
         "runtime": {
             "type": "object",
+            "description": "- Runtime tunables (ConfigMap-backed) --- All fields here surface as env vars on the deployment via envFrom.",
+            "additionalProperties": false,
             "properties": {
                 "maxResponseBytes": {
                     "type": "integer"
@@ -394,26 +477,30 @@
         },
         "service": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
+                "type": {
+                    "type": "string"
+                },
                 "annotations": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": false
                 },
                 "metricsPort": {
                     "type": "integer"
                 },
                 "port": {
                     "type": "integer"
-                },
-                "type": {
-                    "type": "string"
                 }
             }
         },
         "serviceAccount": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "annotations": {
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": false
                 },
                 "create": {
                     "type": "boolean"
@@ -425,6 +512,7 @@
         },
         "serviceMonitor": {
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "enabled": {
                     "type": "boolean"
@@ -434,6 +522,7 @@
                 },
                 "labels": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "observability.giantswarm.io/tenant": {
                             "type": "string"
@@ -448,8 +537,21 @@
                 }
             }
         },
+        "subscriptionID": {
+            "type": "string"
+        },
         "tolerations": {
             "type": "array"
+        },
+        "tools": {
+            "type": "object",
+            "description": "- Tool registration --- `disabled` is a list of MCP tool names to skip at startup, e.g. [\"alerting_manage_rules\", \"get_panel_image\"]. Names match the tool identifier exposed in tools/list. Empty = all tools registered.",
+            "additionalProperties": false,
+            "properties": {
+                "disabled": {
+                    "type": "array"
+                }
+            }
         },
         "topologySpreadConstraints": {
             "type": "array"
