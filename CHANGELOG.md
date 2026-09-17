@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - mcp-oauth updated to v1.x.
 - `google.golang.org/grpc` updated to v1.83.0, fixing GO-2026-6061 (HTTP/2 transport).
 
+### Fixed
+
+- `values.schema.json` no longer rejects the free-form values the templates pass through with `toYaml`. The generator inferred a closed schema from the defaults, so `podLabels`, `podAnnotations`, `nodeSelector`, `affinity`, `service.annotations`, `serviceAccount.annotations`, `serviceMonitor.labels`, `httpRoute.annotations`, `autoscaling.hpa.behavior` and `autoscaling.vpa.resourcePolicy` accepted no keys at all, and `networkPolicy.ingress` accepted only `ports`. `networkPolicy.ingress` items now validate against the upstream Kubernetes `NetworkPolicyIngressRule`. This broke `helm unittest`, which validates values against the schema.
+
 ## [0.3.0] - 2026-06-30
 
 ### Added

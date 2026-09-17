@@ -40,14 +40,14 @@ service:
   # ServiceMonitor and probed by kubelet via the corresponding container
   # port. Split from `port` so a slow MCP drain doesn't fail liveness.
   metricsPort: 9091
-  annotations: {}
+  annotations: {}  # @schema skipProperties: true; additionalProperties: true
 
 serviceAccount:
   # When false, the chart does not create a SA and uses 'name' as an
   # externally-managed one (or 'default' if empty).
   create: true
   name: ""
-  annotations: {}
+  annotations: {}  # @schema skipProperties: true; additionalProperties: true
 
 serviceMonitor:
   enabled: true
@@ -56,7 +56,7 @@ serviceMonitor:
   # Giant Swarm observability-stack tenant routing label — override
   # `observability.giantswarm.io/tenant` in customer installs to route
   # metrics to a non-Giant-Swarm tenant.
-  labels:
+  labels:  # @schema skipProperties: true; additionalProperties: true
     observability.giantswarm.io/tenant: giantswarm
   relabelings: []
   metricRelabelings: []
@@ -84,7 +84,7 @@ networkPolicy:
   enabled: true
   policyTypes:
     - Ingress
-  ingress:
+  ingress:  # @schema itemProperties: {}; itemRef: $k8s/_definitions.json#/definitions/io.k8s.api.networking.v1.NetworkPolicyIngressRule
     - ports:
         - port: http
           protocol: TCP
@@ -101,9 +101,16 @@ networkPolicy:
 # `parentRefs`, `hostnames`, and `matches` are toYaml'd verbatim — supply any
 # shape the Gateway API accepts. The chart owns only the backendRef (it has to
 # point at the rendered Service).
+#
+# NOTE: values.schema.json narrows `parentRefs` and `matches` to the fields the
+# defaults below happen to use. helm-values-schema-json v2.6.0 infers an array
+# item schema from the example and offers no annotation to reopen it, and the
+# Gateway API types are not in the Kubernetes schema bundle, so `itemRef` (as
+# used on networkPolicy.ingress) has nothing to point at. Extra fields on these
+# two keys are rejected until upstream grows an item-level additionalProperties.
 httpRoute:
   enabled: false
-  annotations: {}
+  annotations: {}  # @schema skipProperties: true; additionalProperties: true
   parentRefs:
     - name: giantswarm-default
       namespace: envoy-gateway-system
@@ -138,13 +145,13 @@ autoscaling:
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
     # Optional HPA v2 behavior block for scale-up / scale-down policies.
-    behavior: {}
+    behavior: {}  # @schema skipProperties: true; additionalProperties: true
   vpa:
     enabled: false
     # Off | Initial | Recreate | Auto. Auto rolls pods with new resource recs.
     updateMode: Auto
     # Per-container policy (minAllowed, maxAllowed, controlledResources, ...).
-    resourcePolicy: {}
+    resourcePolicy: {}  # @schema skipProperties: true; additionalProperties: true
 
 # --- MCP application configuration ---
 # All of these become env vars on the deployment. Secrets are mounted from
@@ -239,11 +246,11 @@ rbac:
 extraEnvVars: []
 extraEnvFrom: []
 
-podLabels: {}
-podAnnotations: {}
+podLabels: {}  # @schema skipProperties: true; additionalProperties: true
+podAnnotations: {}  # @schema skipProperties: true; additionalProperties: true
 
-nodeSelector: {}
+nodeSelector: {}  # @schema skipProperties: true; additionalProperties: true
 tolerations: []
-affinity: {}
+affinity: {}  # @schema skipProperties: true; additionalProperties: true
 topologySpreadConstraints: []
 priorityClassName: ""

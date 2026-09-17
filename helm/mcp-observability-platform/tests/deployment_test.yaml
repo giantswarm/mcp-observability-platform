@@ -77,3 +77,38 @@ tests:
       - template: templates/deployment.yaml
         exists:
           path: spec.template.metadata.annotations["checksum/config"]
+
+  # helm unittest validates `set:` against values.schema.json, so this fails if
+  # the generator closes these free-form maps again (giantswarm/giantswarm#37619).
+  - it: podLabels, podAnnotations, nodeSelector and affinity are toYaml'd verbatim
+    set:
+      podLabels:
+        team.giantswarm.io/owner: atlas
+      podAnnotations:
+        kubectl.kubernetes.io/default-container: mcp-observability-platform
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: mcp-observability-platform
+    asserts:
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.metadata.labels["team.giantswarm.io/owner"]
+          value: atlas
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.metadata.annotations["kubectl.kubernetes.io/default-container"]
+          value: mcp-observability-platform
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.nodeSelector["kubernetes.io/arch"]
+          value: arm64
+      - template: templates/deployment.yaml
+        equal:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
+          value: kubernetes.io/hostname
