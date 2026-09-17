@@ -1,11 +1,149 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "_definitions.json": {
+            "definitions": {
+                "io.k8s.api.networking.v1.IPBlock": {
+                    "type": "object",
+                    "description": "IPBlock describes a particular CIDR (Ex. \"192.168.1.0/24\",\"2001:db8::/64\") that is allowed to the pods matched by a NetworkPolicySpec's podSelector. The except entry describes CIDRs that should not be included within this rule.",
+                    "required": [
+                        "cidr"
+                    ],
+                    "properties": {
+                        "cidr": {
+                            "type": "string",
+                            "description": "cidr is a string representing the IPBlock Valid examples are \"192.168.1.0/24\" or \"2001:db8::/64\""
+                        },
+                        "except": {
+                            "type": "array",
+                            "description": "except is a slice of CIDRs that should not be included within an IPBlock Valid examples are \"192.168.1.0/24\" or \"2001:db8::/64\" Except values will be rejected if they are outside the cidr range",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "io.k8s.api.networking.v1.NetworkPolicyIngressRule": {
+                    "type": "object",
+                    "description": "NetworkPolicyIngressRule describes a particular set of traffic that is allowed to the pods matched by a NetworkPolicySpec's podSelector. The traffic must match both ports and from.",
+                    "properties": {
+                        "from": {
+                            "type": "array",
+                            "description": "from is a list of sources which should be able to access the pods selected for this rule. Items in this list are combined using a logical OR operation. If this field is empty or missing, this rule matches all sources (traffic not restricted by source). If this field is present and contains at least one item, this rule allows traffic only if the traffic matches at least one item in the from list.",
+                            "items": {
+                                "$ref": "#/$defs/_definitions.json/definitions/io.k8s.api.networking.v1.NetworkPolicyPeer"
+                            }
+                        },
+                        "ports": {
+                            "type": "array",
+                            "description": "ports is a list of ports which should be made accessible on the pods selected for this rule. Each item in this list is combined using a logical OR. If this field is empty or missing, this rule matches all ports (traffic not restricted by port). If this field is present and contains at least one item, then this rule allows traffic only if the traffic matches at least one port in the list.",
+                            "items": {
+                                "$ref": "#/$defs/_definitions.json/definitions/io.k8s.api.networking.v1.NetworkPolicyPort"
+                            }
+                        }
+                    }
+                },
+                "io.k8s.api.networking.v1.NetworkPolicyPeer": {
+                    "type": "object",
+                    "description": "NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of fields are allowed",
+                    "properties": {
+                        "ipBlock": {
+                            "$ref": "#/$defs/_definitions.json/definitions/io.k8s.api.networking.v1.IPBlock",
+                            "description": "ipBlock defines policy on a particular IPBlock. If this field is set then neither of the other fields can be."
+                        },
+                        "namespaceSelector": {
+                            "$ref": "#/$defs/_definitions.json/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector",
+                            "description": "namespaceSelector selects namespaces using cluster-scoped labels. This field follows standard label selector semantics; if present but empty, it selects all namespaces.\n\nIf podSelector is also set, then the NetworkPolicyPeer as a whole selects the pods matching podSelector in the namespaces selected by namespaceSelector. Otherwise it selects all pods in the namespaces selected by namespaceSelector."
+                        },
+                        "podSelector": {
+                            "$ref": "#/$defs/_definitions.json/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector",
+                            "description": "podSelector is a label selector which selects pods. This field follows standard label selector semantics; if present but empty, it selects all pods.\n\nIf namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects the pods matching podSelector in the Namespaces selected by NamespaceSelector. Otherwise it selects the pods matching podSelector in the policy's own namespace."
+                        }
+                    }
+                },
+                "io.k8s.api.networking.v1.NetworkPolicyPort": {
+                    "type": "object",
+                    "description": "NetworkPolicyPort describes a port to allow traffic on",
+                    "properties": {
+                        "endPort": {
+                            "type": "integer",
+                            "description": "endPort indicates that the range of ports from port to endPort if set, inclusive, should be allowed by the policy. This field cannot be defined if the port field is not defined or if the port field is defined as a named (string) port. The endPort must be equal or greater than port.",
+                            "format": "int32"
+                        },
+                        "port": {
+                            "$ref": "#/$defs/_definitions.json/definitions/io.k8s.apimachinery.pkg.util.intstr.IntOrString",
+                            "description": "port represents the port on the given protocol. This can either be a numerical or named port on a pod. If this field is not provided, this matches all port names and numbers. If present, only traffic on the specified protocol AND port will be matched."
+                        },
+                        "protocol": {
+                            "type": "string",
+                            "description": "protocol represents the protocol (TCP, UDP, or SCTP) which traffic must match. If not specified, this field defaults to TCP."
+                        }
+                    }
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector": {
+                    "type": "object",
+                    "description": "A label selector is a label query over a set of resources. The result of matchLabels and matchExpressions are ANDed. An empty label selector matches all objects. A null label selector matches no objects.",
+                    "properties": {
+                        "matchExpressions": {
+                            "type": "array",
+                            "description": "matchExpressions is a list of label selector requirements. The requirements are ANDed.",
+                            "items": {
+                                "$ref": "#/$defs/_definitions.json/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement"
+                            }
+                        },
+                        "matchLabels": {
+                            "type": "object",
+                            "description": "matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is \"key\", the operator is \"In\", and the values array contains only \"value\". The requirements are ANDed.",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement": {
+                    "type": "object",
+                    "description": "A label selector requirement is a selector that contains values, a key, and an operator that relates the key and values.",
+                    "required": [
+                        "key",
+                        "operator"
+                    ],
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "key is the label key that the selector applies to."
+                        },
+                        "operator": {
+                            "type": "string",
+                            "description": "operator represents a key's relationship to a set of values. Valid operators are In, NotIn, Exists and DoesNotExist."
+                        },
+                        "values": {
+                            "type": "array",
+                            "description": "values is an array of string values. If the operator is In or NotIn, the values array must be non-empty. If the operator is Exists or DoesNotExist, the values array must be empty. This array is replaced during a strategic merge patch.",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "io.k8s.apimachinery.pkg.util.intstr.IntOrString": {
+                    "oneOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "integer"
+                        }
+                    ]
+                }
+            }
+        }
+    },
     "type": "object",
     "additionalProperties": false,
     "properties": {
         "affinity": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
         },
         "autoscaling": {
             "type": "object",
@@ -18,7 +156,7 @@
                     "properties": {
                         "behavior": {
                             "type": "object",
-                            "additionalProperties": false
+                            "additionalProperties": true
                         },
                         "enabled": {
                             "type": "boolean"
@@ -46,7 +184,7 @@
                         },
                         "resourcePolicy": {
                             "type": "object",
-                            "additionalProperties": false
+                            "additionalProperties": true
                         },
                         "updateMode": {
                             "type": "string"
@@ -151,7 +289,7 @@
             "properties": {
                 "annotations": {
                     "type": "object",
-                    "additionalProperties": false
+                    "additionalProperties": true
                 },
                 "enabled": {
                     "type": "boolean"
@@ -247,25 +385,9 @@
                 "ingress": {
                     "type": "array",
                     "items": {
+                        "$ref": "#/$defs/_definitions.json/definitions/io.k8s.api.networking.v1.NetworkPolicyIngressRule",
                         "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                            "ports": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": false,
-                                    "properties": {
-                                        "port": {
-                                            "type": "string"
-                                        },
-                                        "protocol": {
-                                            "type": "string"
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        "unevaluatedProperties": false
                     }
                 },
                 "policyTypes": {
@@ -278,7 +400,7 @@
         },
         "nodeSelector": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
         },
         "oauth": {
             "type": "object",
@@ -372,7 +494,7 @@
         },
         "podAnnotations": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
         },
         "podDisruptionBudget": {
             "type": "object",
@@ -388,7 +510,7 @@
         },
         "podLabels": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": true
         },
         "podSecurityContext": {
             "type": "object",
@@ -484,7 +606,7 @@
                 },
                 "annotations": {
                     "type": "object",
-                    "additionalProperties": false
+                    "additionalProperties": true
                 },
                 "metricsPort": {
                     "type": "integer"
@@ -500,7 +622,7 @@
             "properties": {
                 "annotations": {
                     "type": "object",
-                    "additionalProperties": false
+                    "additionalProperties": true
                 },
                 "create": {
                     "type": "boolean"
@@ -522,12 +644,7 @@
                 },
                 "labels": {
                     "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                        "observability.giantswarm.io/tenant": {
-                            "type": "string"
-                        }
-                    }
+                    "additionalProperties": true
                 },
                 "metricRelabelings": {
                     "type": "array"
