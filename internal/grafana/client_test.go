@@ -257,15 +257,16 @@ func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 }
 
 func TestNew_Validation(t *testing.T) {
+	const onlyOne = "only one of"
 	cases := []struct {
 		cfg  Config
 		want string
 	}{
 		{Config{}, "URL is required"},
 		{Config{URL: "x"}, "Token, BasicAuth or JWTHeader"},
-		{Config{URL: "x", Token: "t", BasicAuth: "a:b"}, "only one of"},
-		{Config{URL: "x", Token: "t", JWTHeader: testJWTHeader}, "only one of"},
-		{Config{URL: "x", BasicAuth: "a:b", JWTHeader: testJWTHeader}, "only one of"},
+		{Config{URL: "x", Token: "t", BasicAuth: "a:b"}, onlyOne},
+		{Config{URL: "x", Token: "t", JWTHeader: testJWTHeader}, onlyOne},
+		{Config{URL: "x", BasicAuth: "a:b", JWTHeader: testJWTHeader}, onlyOne},
 	}
 	for _, c := range cases {
 		_, err := New(c.cfg)
