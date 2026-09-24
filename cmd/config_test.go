@@ -60,6 +60,7 @@ func TestLoadConfig_RejectsBothSATokenAndBasicAuth(t *testing.T) {
 }
 
 func TestLoadConfig_GrafanaAuthMode(t *testing.T) {
+	const testBasicAuth = "u:p"
 	cases := []struct {
 		name       string
 		mode       string
@@ -71,20 +72,20 @@ func TestLoadConfig_GrafanaAuthMode(t *testing.T) {
 		wantErr    string
 	}{
 		{name: "unset infers SA token", saToken: "t", wantMode: grafanaAuthModeSAToken},
-		{name: "unset infers basic auth", basicAuth: "u:p", wantMode: grafanaAuthModeBasicAuth},
+		{name: "unset infers basic auth", basicAuth: testBasicAuth, wantMode: grafanaAuthModeBasicAuth},
 		{name: "unset needs a credential", wantErr: "GRAFANA_SA_TOKEN or GRAFANA_BASIC_AUTH"},
-		{name: "unset rejects both", saToken: "t", basicAuth: "u:p", wantErr: "mutually exclusive"},
-		{name: "SA token", mode: "serviceAccountToken", saToken: "t", wantMode: grafanaAuthModeSAToken},
+		{name: "unset rejects both", saToken: "t", basicAuth: testBasicAuth, wantErr: "mutually exclusive"},
+		{name: "SA token", mode: grafanaAuthModeSAToken, saToken: "t", wantMode: grafanaAuthModeSAToken},
 		{name: "SA token case-insensitive", mode: "SERVICEACCOUNTTOKEN", saToken: "t", wantMode: grafanaAuthModeSAToken},
-		{name: "SA token missing", mode: "serviceAccountToken", wantErr: "GRAFANA_SA_TOKEN"},
-		{name: "SA token rejects basic auth", mode: "serviceAccountToken", saToken: "t", basicAuth: "u:p", wantErr: "unset GRAFANA_BASIC_AUTH"},
-		{name: "basic auth", mode: "basicAuth", basicAuth: "u:p", wantMode: grafanaAuthModeBasicAuth},
-		{name: "basic auth missing", mode: "basicAuth", wantErr: "GRAFANA_BASIC_AUTH"},
-		{name: "basic auth rejects SA token", mode: "basicAuth", saToken: "t", basicAuth: "u:p", wantErr: "unset GRAFANA_SA_TOKEN"},
-		{name: "jwt default header", mode: "jwt", wantMode: grafanaAuthModeJWT, wantHeader: defaultGrafanaJWTHeader},
-		{name: "jwt custom header", mode: "jwt", jwtHeader: "X-Id-Token", wantMode: grafanaAuthModeJWT, wantHeader: "X-Id-Token"},
-		{name: "jwt rejects SA token", mode: "jwt", saToken: "t", wantErr: "unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH"},
-		{name: "jwt rejects basic auth", mode: "jwt", basicAuth: "u:p", wantErr: "unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH"},
+		{name: "SA token missing", mode: grafanaAuthModeSAToken, wantErr: "GRAFANA_SA_TOKEN"},
+		{name: "SA token rejects basic auth", mode: grafanaAuthModeSAToken, saToken: "t", basicAuth: testBasicAuth, wantErr: "unset GRAFANA_BASIC_AUTH"},
+		{name: "basic auth", mode: grafanaAuthModeBasicAuth, basicAuth: testBasicAuth, wantMode: grafanaAuthModeBasicAuth},
+		{name: "basic auth missing", mode: grafanaAuthModeBasicAuth, wantErr: "GRAFANA_BASIC_AUTH"},
+		{name: "basic auth rejects SA token", mode: grafanaAuthModeBasicAuth, saToken: "t", basicAuth: testBasicAuth, wantErr: "unset GRAFANA_SA_TOKEN"},
+		{name: "jwt default header", mode: grafanaAuthModeJWT, wantMode: grafanaAuthModeJWT, wantHeader: defaultGrafanaJWTHeader},
+		{name: "jwt custom header", mode: grafanaAuthModeJWT, jwtHeader: "X-Id-Token", wantMode: grafanaAuthModeJWT, wantHeader: "X-Id-Token"},
+		{name: "jwt rejects SA token", mode: grafanaAuthModeJWT, saToken: "t", wantErr: "unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH"},
+		{name: "jwt rejects basic auth", mode: grafanaAuthModeJWT, basicAuth: testBasicAuth, wantErr: "unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH"},
 		{name: "unknown mode", mode: "oauth", saToken: "t", wantErr: "GRAFANA_AUTH_MODE"},
 	}
 	for _, c := range cases {

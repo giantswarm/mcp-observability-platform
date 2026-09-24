@@ -15,14 +15,14 @@ import (
 
 func TestIDTokenResolver(t *testing.T) {
 	const (
-		mcpBearer  = "mcp-opaque-token"
-		dexIDToken = "dex-id-token"
+		opaqueMCP = "mcp-opaque-token"
+		dexJWT    = "dex-id-token"
 	)
 	store := memory.New()
 	t.Cleanup(store.Stop)
 	dexTok := (&oauth2.Token{AccessToken: "dex-access", Expiry: time.Now().Add(time.Hour)}).
-		WithExtra(map[string]any{"id_token": dexIDToken})
-	if err := store.SaveToken(context.Background(), mcpBearer, dexTok); err != nil {
+		WithExtra(map[string]any{"id_token": dexJWT})
+	if err := store.SaveToken(context.Background(), opaqueMCP, dexTok); err != nil {
 		t.Fatalf("SaveToken: %v", err)
 	}
 	resolve := idTokenResolver(store)
@@ -33,7 +33,7 @@ func TestIDTokenResolver(t *testing.T) {
 		bearer string
 		want   string
 	}{
-		{"oauth looks up the stored Dex token by bearer", providers.TokenSourceOAuth, mcpBearer, dexIDToken},
+		{"oauth looks up the stored Dex token by bearer", providers.TokenSourceOAuth, opaqueMCP, dexJWT},
 		{"oauth with unknown bearer", providers.TokenSourceOAuth, "unknown", ""},
 		{"sso forwards the bearer", providers.TokenSourceSSO, "forwarded-dex-id-token", "forwarded-dex-id-token"},
 		{"trusted-issuer has no Dex token", providers.TokenSourceTrustedIssuer, "muster-jwt", ""},
@@ -52,7 +52,7 @@ func TestIDTokenResolver(t *testing.T) {
 
 	t.Run("no user info", func(t *testing.T) {
 		r := httptest.NewRequest("POST", "/mcp", nil)
-		r.Header.Set("Authorization", "Bearer "+mcpBearer)
+		r.Header.Set("Authorization", "Bearer "+opaqueMCP)
 		if got := resolve(r.Context(), r); got != "" {
 			t.Errorf("resolve = %q, want empty without validated UserInfo", got)
 		}

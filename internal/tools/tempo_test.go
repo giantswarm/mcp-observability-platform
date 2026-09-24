@@ -22,6 +22,7 @@ const (
 	testTempoUID  = "u-tempo"
 	testTempoTool = "traceql-search"
 	testJWTHeader = "X-JWT-Assertion"
+	testAlice     = "alice@example.com"
 )
 
 // fakeTempoGrafana serves a real mcp-go MCP server at Grafana's Tempo
@@ -56,7 +57,7 @@ func TestRegisterTempoTools_JWT_DeferredToFirstCaller(t *testing.T) {
 	var gotJWT atomic.Value
 	ts := fakeTempoGrafana(t, &gotJWT)
 	org := orgFixture()
-	gc := &fakeGrafana{listDS: []grafana.Datasource{{ID: 3, UID: testTempoUID, Name: "tempo", Type: "tempo"}}}
+	gc := &fakeGrafana{listDS: []grafana.Datasource{{ID: 3, UID: testTempoUID, Name: "gs-tempo", Type: string(grafana.DSTypeTempo)}}}
 	b, err := newGFBinder(&authztest.Fake{Org: org}, gc, ts.URL, GrafanaAuth{JWTHeader: testJWTHeader}, nil)
 	if err != nil {
 		t.Fatalf("newGFBinder: %v", err)
@@ -70,7 +71,7 @@ func TestRegisterTempoTools_JWT_DeferredToFirstCaller(t *testing.T) {
 		t.Fatal("Tempo tool registered at startup in JWT mode; want deferred")
 	}
 
-	callerCtx := oauthCtx("sub-123", "alice@example.com")
+	callerCtx := oauthCtx("sub-123", testAlice)
 	listTools(callerCtx, s)
 	if s.GetTool(testTempoTool) != nil {
 		t.Fatal("Tempo tool registered by a caller without a token")
@@ -83,7 +84,7 @@ func TestRegisterTempoTools_JWT_DeferredToFirstCaller(t *testing.T) {
 	if got, _ := gotJWT.Load().(string); got != "id-token-alice" {
 		t.Errorf("Tempo dial %s = %q, want id-token-alice", testJWTHeader, got)
 	}
-	if gc.gotList.Caller != "alice@example.com" || gc.gotList.OrgID != org.OrgID {
+	if gc.gotList.Caller != testAlice || gc.gotList.OrgID != org.OrgID {
 		t.Errorf("seed ListDatasources opts = %+v, want caller alice@example.com in org %d", gc.gotList, org.OrgID)
 	}
 

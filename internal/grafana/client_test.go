@@ -624,6 +624,11 @@ func TestClient_ListDatasources_CacheTTLExpiry(t *testing.T) {
 	}
 }
 
+const (
+	testCallerA = "alice"
+	testCallerB = "bob"
+)
+
 // A per-user result (JWT auth mode) must never serve another caller in
 // the same org.
 func TestClient_ListDatasources_CachePerCallerIsolation(t *testing.T) {
@@ -631,7 +636,7 @@ func TestClient_ListDatasources_CachePerCallerIsolation(t *testing.T) {
 	defer ts.Close()
 	c.jwtHeader = "X-JWT-Assertion"
 
-	for _, caller := range []string{"alice", "bob", "alice"} {
+	for _, caller := range []string{testCallerA, testCallerB, testCallerA} {
 		ctx := WithUserToken(context.Background(), caller+"-token")
 		if _, err := c.ListDatasources(ctx, RequestOpts{OrgID: 1, Caller: caller}); err != nil {
 			t.Fatalf("caller %s: %v", caller, err)
@@ -648,7 +653,7 @@ func TestClient_ListDatasources_CacheSharedAcrossCallersWithSA(t *testing.T) {
 	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
 	defer ts.Close()
 
-	for _, caller := range []string{"alice", "bob"} {
+	for _, caller := range []string{testCallerA, testCallerB} {
 		if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1, Caller: caller}); err != nil {
 			t.Fatalf("caller %s: %v", caller, err)
 		}
