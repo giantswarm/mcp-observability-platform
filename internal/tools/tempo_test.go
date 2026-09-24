@@ -86,6 +86,15 @@ func TestRegisterTempoTools_JWT_DeferredToFirstCaller(t *testing.T) {
 	if gc.gotList.Caller != "alice@example.com" || gc.gotList.OrgID != org.OrgID {
 		t.Errorf("seed ListDatasources opts = %+v, want caller alice@example.com in org %d", gc.gotList, org.OrgID)
 	}
+
+	// The cached client was dialled with alice's token; a later caller's
+	// call must reach Tempo with their own token.
+	bobCtx := grafana.WithUserToken(oauthCtx("sub-456", "bob@example.com"), "id-token-bob")
+	call := json.RawMessage(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"` + testTempoTool + `","arguments":{"org":"` + org.Name + `"}}}`)
+	_ = s.HandleMessage(bobCtx, call)
+	if got, _ := gotJWT.Load().(string); got != "id-token-bob" {
+		t.Errorf("Tempo call %s = %q, want id-token-bob", testJWTHeader, got)
+	}
 }
 
 func TestTempoDiscovery_RetriesAfterBackoff(t *testing.T) {
