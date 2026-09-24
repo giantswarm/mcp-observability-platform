@@ -278,6 +278,9 @@
                 "existingSecret": {
                     "type": "string"
                 },
+                "jwtHeader": {
+                    "type": "string"
+                },
                 "url": {
                     "type": "string"
                 }

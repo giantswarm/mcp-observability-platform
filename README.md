@@ -225,6 +225,8 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
+| `GRAFANA_AUTH_MODE`                         | no             | `serviceAccountToken`, `basicAuth`, or `jwt`. Empty = inferred from which of `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` is set. `jwt` forwards each caller's Dex `id_token` to Grafana and needs no Grafana secret (see [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity)). |
+| `GRAFANA_JWT_HEADER`                        | no             | Header carrying the caller's Dex `id_token` in `jwt` mode (default `X-JWT-Assertion`). Must match `header_name` in Grafana's `[auth.jwt]`. |
 | `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
 | `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
 | `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
@@ -283,6 +285,61 @@ is not server-admin it fails to start.
 **Known phase-1 blast-radius limitation**: one compromised MCP pod exposes
 every Grafana org. Phase 2 narrows this by switching to per-org SA tokens
 provisioned by the observability-operator (tracked in the plan).
+
+### Grafana JWT mode (forward caller identity)
+
+`GRAFANA_AUTH_MODE=jwt` (Helm: `grafana.authMode: jwt`) drops the shared
+server-admin credential. The MCP forwards each caller's own Dex `id_token`
+to Grafana in `GRAFANA_JWT_HEADER`. Grafana validates it against Dex,
+resolves the user and applies the user's own org roles. Audit logs show
+the real user.
+
+In this mode:
+
+- No Grafana secret is needed. Setting `GRAFANA_SA_TOKEN` or
+  `GRAFANA_BASIC_AUTH` is a startup error.
+- The startup server-admin self-check (`GET /api/orgs`) is skipped.
+- The authorizer reads the caller's orgs via `GET /api/user/orgs` with the
+  caller's token.
+- Tempo tools are discovered on the first authenticated `tools/list` or
+  `tools/call`, not at startup.
+- `MCP_TRANSPORT=stdio` is rejected. Stdio has no caller token.
+- Deeplinks may use the internal `GRAFANA_URL`. The
+  `/api/frontend/settings` probe runs without credentials.
+
+Callers:
+
+| Caller | Works | Token sent to Grafana |
+| --- | --- | --- |
+| MCP OAuth client (Claude Code, mcp-inspector, …) | yes | The stored Dex `id_token` for the caller's MCP access token. mcp-oauth refreshes it. |
+| SSO-forwarded Dex ID token (e.g. muster `forwardToken: true`) | yes | The forwarded token as is. Its `aud` is the audiences muster requested; Grafana's `expect_claims.aud` must list one of them. |
+| Trusted-issuer caller (`OAUTH_TRUSTED_ISSUERS`, e.g. muster-issued or Kubernetes SA JWTs) | no | None. The call fails with a clear error. |
+
+Grafana config (verified on Grafana 13.2.0; needs a version with
+`org_mapping` in `[auth.jwt]`):
+
+```ini
+[auth.jwt]
+enabled = true
+header_name = X-JWT-Assertion
+jwk_set_url = https://dex.<domain>/keys
+expect_claims = {"iss": "https://dex.<domain>", "aud": "<MCP Dex client id>"}
+username_claim = email
+email_claim = email
+auto_sign_up = true
+org_attribute_path = groups
+org_mapping = "<group>:<Org name>:<Role>" ...
+role_attribute_path = to_string('None')
+role_attribute_strict = true
+```
+
+Limitations:
+
+- Grafana supports a single `[auth.jwt]` section: one `header_name`, one
+  JWKS. If the instance already uses `[auth.jwt]` for another IdP (e.g.
+  Teleport app access), jwt mode needs that setup reworked first.
+- `org_mapping` is static ini. It does not pick up `generic_oauth` org
+  mappings managed at runtime through the SSO settings API.
 
 ## Install
 

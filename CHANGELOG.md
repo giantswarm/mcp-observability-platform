@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `subjectClaim` and `allowPrivateIPJWKSHosts` on `OAUTH_TRUSTED_ISSUERS` entries (and the `oauth.trustedIssuers` Helm values). `subjectClaim` remaps the caller subject to another claim's value (e.g. `email`); `allowPrivateIPJWKSHosts` allows the listed hostnames' JWKS URLs to resolve to a private IP while keeping SSRF protection elsewhere.
 - Tool-call audit records and spans carry the acting agent of a delegated (on-behalf-of) token: `caller_actor` and the full RFC 8693 `act` chain.
+- Grafana JWT auth mode (`GRAFANA_AUTH_MODE=jwt`, Helm `grafana.authMode: jwt`). The MCP forwards each caller's own Dex `id_token` to Grafana in `GRAFANA_JWT_HEADER` (default `X-JWT-Assertion`; Helm `grafana.jwtHeader`). No Grafana secret is needed, Grafana enforces the caller's own roles, and audit logs show the real user. Requires Grafana `[auth.jwt]` against Dex. Trusted-issuer callers and the stdio transport are not supported in this mode.
+- `GRAFANA_AUTH_MODE` selects `serviceAccountToken` or `basicAuth` explicitly. Empty keeps inferring the mode from which credential is set.
 
 ### Changed
 
