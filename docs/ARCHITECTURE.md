@@ -100,6 +100,12 @@ but a process compromise gives the attacker every org. The Phase-2 fix
 (per-org SAs, listed under "Post-v0.1.0 priorities" in the roadmap)
 needs `observability-operator` coordination and is deferred past v0.1.0.
 
+**JWT mode (`GRAFANA_AUTH_MODE=jwt`): no admin credential.** The MCP
+forwards each caller's own Dex `id_token` to Grafana. Grafana enforces
+the caller's own org roles. A process compromise exposes only the tokens
+of active callers held in the OAuth token store, each limited to that
+user's Grafana access. Requires Grafana `[auth.jwt]` against Dex.
+
 **OAuth trust boundary.** Tokens are validated against `OAUTH_DEX_ISSUER_URL`
 (or an SSO forwarder when `OAUTH_TRUSTED_AUDIENCES` is configured). The
 `RequireCaller` middleware fails closed on calls without a caller —

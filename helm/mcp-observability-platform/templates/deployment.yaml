@@ -120,10 +120,16 @@ spec:
                   key: encryptionKey
             {{- end }}
 
-            # Grafana access — one of serviceAccountToken (preferred) or basicAuth
+            # Grafana access — one of serviceAccountToken (preferred), basicAuth
+            # or jwt (forwards the caller's Dex id_token; no secret).
             - name: GRAFANA_URL
               value: {{ .Values.grafana.url | quote }}
-            {{- if eq .Values.grafana.authMode "basicAuth" }}
+            {{- if eq .Values.grafana.authMode "jwt" }}
+            - name: GRAFANA_AUTH_MODE
+              value: "jwt"
+            - name: GRAFANA_JWT_HEADER
+              value: {{ .Values.grafana.jwtHeader | quote }}
+            {{- else if eq .Values.grafana.authMode "basicAuth" }}
             - name: GRAFANA_BASIC_AUTH
               valueFrom:
                 secretKeyRef:

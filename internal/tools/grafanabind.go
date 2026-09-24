@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -57,8 +56,7 @@ type gfBinder struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
 	url        string
-	apiKey     string
-	basicAuth  *url.Userinfo
+	auth       GrafanaAuth
 	disabled   map[string]bool // --disabled-tools lookup; nil = no filter
 
 	upstreamOnce sync.Once
@@ -66,11 +64,11 @@ type gfBinder struct {
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
-// APIKey/BasicAuth mutual-exclusivity is enforced upstream at config load
+// GrafanaAuth mutual-exclusivity is enforced upstream at config load
 // (cmd/config.go) and at grafana.New — not re-checked here. disabled may
 // be nil; bind* methods route s.AddTool through maybeAddTool, which is
 // nil-safe.
-func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) (*gfBinder, error) {
+func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) (*gfBinder, error) {
 	if authorizer == nil {
 		return nil, errors.New("authorizer is required")
 	}
@@ -84,19 +82,21 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 		authorizer: authorizer,
 		grafana:    gc,
 		url:        grafanaURL,
-		apiKey:     apiKey,
-		basicAuth:  basicAuth,
+		auth:       auth,
 		disabled:   disabled,
 	}, nil
 }
 
 // client returns the shared upstream GrafanaClient, building it on
 // first call. The /api/frontend/settings probe inside NewGrafanaClient
-// runs once for the lifetime of the process.
+// runs once for the lifetime of the process. In JWT auth mode the client
+// is built with no credential (APIKey and BasicAuth are empty): the
+// probe fails with a warning and the per-call ExtraHeaders carry the
+// caller's token.
 func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 	b.upstreamOnce.Do(func() {
-		cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth}
-		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.apiKey, b.basicAuth)
+		cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.auth.APIKey, BasicAuth: b.auth.BasicAuth}
+		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.auth.APIKey, b.auth.BasicAuth)
 	})
 	return b.upstream
 }
@@ -344,18 +344,27 @@ func (b *gfBinder) requireOrg(ctx context.Context, req mcp.CallToolRequest, role
 // attachGrafana stashes the per-request GrafanaConfig (carrying the
 // resolved OrgID and the OIDC-subject ExtraHeader) and the shared
 // upstream GrafanaClient on ctx. mcp-grafana's RoundTrippers read both
-// per request, so a single client serves every org.
+// per request, so a single client serves every org. In JWT auth mode the
+// caller's own token rides in ExtraHeaders[JWTHeader] instead of a
+// shared credential.
 func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Context {
 	cfg := mcpgrafana.GrafanaConfig{
 		URL:       b.url,
-		APIKey:    b.apiKey,
-		BasicAuth: b.basicAuth,
+		APIKey:    b.auth.APIKey,
+		BasicAuth: b.auth.BasicAuth,
 		OrgID:     orgID,
 	}
+	headers := map[string]string{}
 	if subj := authz.CallerSubject(ctx); subj != "" {
 		// Grafana audit-log attribution to the OIDC subject rather
 		// than the server-admin SA we authenticate with.
-		cfg.ExtraHeaders = map[string]string{"X-Grafana-User": subj}
+		headers["X-Grafana-User"] = subj
+	}
+	if b.auth.JWTHeader != "" {
+		headers[b.auth.JWTHeader] = grafana.UserTokenFromContext(ctx)
+	}
+	if len(headers) > 0 {
+		cfg.ExtraHeaders = headers
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
 	ctx = mcpgrafana.WithGrafanaClient(ctx, b.client())

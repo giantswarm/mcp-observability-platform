@@ -66,6 +66,11 @@ pod exposes every Grafana org on compromise.
 Needs `observability-operator` coordination — open an issue there
 describing the contract so the dependency is visible from both sides.
 
+`GRAFANA_AUTH_MODE=jwt` removes the shared admin credential where Grafana
+can accept Dex JWTs (`[auth.jwt]`). Per-org SAs remain the fix for
+Grafana instances that cannot, e.g. when `[auth.jwt]` already serves
+another IdP.
+
 ### 2. Write tools gated on Editor / Admin
 
 The authz model (`Role` with Editor/Admin,

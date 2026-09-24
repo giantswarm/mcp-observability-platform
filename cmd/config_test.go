@@ -17,7 +17,7 @@ const testMalformedIsHardError = "malformed is a hard error"
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"GRAFANA_URL", "GRAFANA_SA_TOKEN", "GRAFANA_BASIC_AUTH",
+		"GRAFANA_URL", "GRAFANA_SA_TOKEN", "GRAFANA_BASIC_AUTH", "GRAFANA_AUTH_MODE", "GRAFANA_JWT_HEADER",
 		"TOOL_TIMEOUT", "TOOL_MAX_RESPONSE_BYTES",
 		"DEBUG", "LOG_FORMAT", "KUBERNETES_SERVICE_HOST",
 	} {
@@ -56,6 +56,63 @@ func TestLoadConfig_RejectsBothSATokenAndBasicAuth(t *testing.T) {
 	_, err := loadConfig()
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("expected mutually-exclusive error, got: %v", err)
+	}
+}
+
+func TestLoadConfig_GrafanaAuthMode(t *testing.T) {
+	const testBasicAuth = "u:p"
+	cases := []struct {
+		name       string
+		mode       string
+		saToken    string
+		basicAuth  string
+		jwtHeader  string
+		wantMode   string
+		wantHeader string
+		wantErr    string
+	}{
+		{name: "unset infers SA token", saToken: "t", wantMode: grafanaAuthModeSAToken},
+		{name: "unset infers basic auth", basicAuth: testBasicAuth, wantMode: grafanaAuthModeBasicAuth},
+		{name: "unset needs a credential", wantErr: "GRAFANA_SA_TOKEN or GRAFANA_BASIC_AUTH"},
+		{name: "unset rejects both", saToken: "t", basicAuth: testBasicAuth, wantErr: "mutually exclusive"},
+		{name: "SA token", mode: grafanaAuthModeSAToken, saToken: "t", wantMode: grafanaAuthModeSAToken},
+		{name: "SA token case-insensitive", mode: "SERVICEACCOUNTTOKEN", saToken: "t", wantMode: grafanaAuthModeSAToken},
+		{name: "SA token missing", mode: grafanaAuthModeSAToken, wantErr: "GRAFANA_SA_TOKEN"},
+		{name: "SA token rejects basic auth", mode: grafanaAuthModeSAToken, saToken: "t", basicAuth: testBasicAuth, wantErr: "unset GRAFANA_BASIC_AUTH"},
+		{name: "basic auth", mode: grafanaAuthModeBasicAuth, basicAuth: testBasicAuth, wantMode: grafanaAuthModeBasicAuth},
+		{name: "basic auth missing", mode: grafanaAuthModeBasicAuth, wantErr: "GRAFANA_BASIC_AUTH"},
+		{name: "basic auth rejects SA token", mode: grafanaAuthModeBasicAuth, saToken: "t", basicAuth: testBasicAuth, wantErr: "unset GRAFANA_SA_TOKEN"},
+		{name: "jwt default header", mode: grafanaAuthModeJWT, wantMode: grafanaAuthModeJWT, wantHeader: defaultGrafanaJWTHeader},
+		{name: "jwt custom header", mode: grafanaAuthModeJWT, jwtHeader: "X-Id-Token", wantMode: grafanaAuthModeJWT, wantHeader: "X-Id-Token"},
+		{name: "jwt rejects SA token", mode: grafanaAuthModeJWT, saToken: "t", wantErr: "unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH"},
+		{name: "jwt rejects basic auth", mode: grafanaAuthModeJWT, basicAuth: testBasicAuth, wantErr: "unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH"},
+		{name: "unknown mode", mode: "oauth", saToken: "t", wantErr: "GRAFANA_AUTH_MODE"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("GRAFANA_URL", "http://grafana.local")
+			t.Setenv("GRAFANA_AUTH_MODE", c.mode)
+			t.Setenv("GRAFANA_SA_TOKEN", c.saToken)
+			t.Setenv("GRAFANA_BASIC_AUTH", c.basicAuth)
+			t.Setenv("GRAFANA_JWT_HEADER", c.jwtHeader)
+			cfg, err := loadConfig()
+			if c.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+					t.Fatalf("err = %v, want substring %q", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if cfg.GrafanaAuthMode != c.wantMode {
+				t.Errorf("GrafanaAuthMode = %q, want %q", cfg.GrafanaAuthMode, c.wantMode)
+			}
+			if cfg.GrafanaJWTHeader != c.wantHeader {
+				t.Errorf("GrafanaJWTHeader = %q, want %q", cfg.GrafanaJWTHeader, c.wantHeader)
+			}
+		})
 	}
 }
 

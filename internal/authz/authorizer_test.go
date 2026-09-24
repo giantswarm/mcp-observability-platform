@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -674,5 +675,89 @@ func TestRequireOrg_AmbiguousDisplayName(t *testing.T) {
 	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "Prod", RoleViewer)
 	if !errors.Is(err, ErrAmbiguousOrgRef) {
 		t.Errorf("err = %v, want wraps ErrAmbiguousOrgRef", err)
+	}
+}
+
+// currentUserGrafana stubs grafana.Client for WithCallerToken tests. Only
+// CurrentUserOrgs is expected; LookupUser / UserOrgs nil-panic through the
+// embedded interface, proving the server-admin path is not taken.
+type currentUserGrafana struct {
+	grafana.Client // nil — unused methods panic
+	orgs           []grafana.UserOrgMembership
+	err            error
+	calls          int
+	gotToken       string
+}
+
+func (f *currentUserGrafana) CurrentUserOrgs(ctx context.Context) ([]grafana.UserOrgMembership, error) {
+	f.calls++
+	f.gotToken = grafana.UserTokenFromContext(ctx)
+	return f.orgs, f.err
+}
+
+func callerTokenCtx(tok string) context.Context {
+	return grafana.WithUserToken(ctxWithCaller(Caller{Subject: testSubject, Email: testEmail}), tok)
+}
+
+func TestAuthorizer_CallerToken_UsesCurrentUserOrgs(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
+	g := &currentUserGrafana{orgs: []grafana.UserOrgMembership{{OrgID: 42, Role: testRoleAdmin}}}
+	r := NewAuthorizer(registry(alpha), g, DefaultCacheTTL, DefaultNegativeCacheTTL, WithCallerToken())
+
+	org, err := r.RequireOrg(callerTokenCtx("id-token"), "alpha", RoleEditor)
+	if err != nil {
+		t.Fatalf("RequireOrg: %v", err)
+	}
+	if org.Role != RoleAdmin {
+		t.Errorf("role = %s, want admin", org.Role)
+	}
+	if g.gotToken != "id-token" {
+		t.Errorf("CurrentUserOrgs saw token %q, want id-token", g.gotToken)
+	}
+	// Positive cache still applies.
+	_, _ = r.ListOrgs(callerTokenCtx("id-token"))
+	if g.calls != 1 {
+		t.Errorf("CurrentUserOrgs calls = %d, want 1 (cached)", g.calls)
+	}
+}
+
+func TestAuthorizer_CallerToken_UnauthorizedIsRejectedToken(t *testing.T) {
+	g := &currentUserGrafana{err: fmt.Errorf("%w: invalid JWT", grafana.ErrUnauthorized)}
+	r := NewAuthorizer(registry(), g, DefaultCacheTTL, DefaultNegativeCacheTTL, WithCallerToken())
+
+	for i := 0; i < 2; i++ {
+		_, err := r.ListOrgs(callerTokenCtx("id-token"))
+		if !errors.Is(err, ErrGrafanaRejectedToken) || !strings.Contains(err.Error(), "invalid JWT") {
+			t.Fatalf("call %d: want ErrGrafanaRejectedToken with Grafana's reason, got %v", i, err)
+		}
+	}
+	if g.calls != 2 {
+		t.Errorf("CurrentUserOrgs calls = %d, want 2 (not cached)", g.calls)
+	}
+}
+
+func TestAuthorizer_CallerToken_NoTokenNotForwardable(t *testing.T) {
+	alpha := newOrg("alpha", "Alpha", 42, TenantTypeData)
+	g := &currentUserGrafana{orgs: []grafana.UserOrgMembership{{OrgID: 42, Role: testRoleAdmin}}}
+	r := NewAuthorizer(registry(alpha), g, DefaultCacheTTL, DefaultNegativeCacheTTL, WithCallerToken())
+
+	// Warm the cache for the subject, then call without a token: the
+	// cached roles must not admit a caller whose token can't be forwarded.
+	if _, err := r.ListOrgs(callerTokenCtx("id-token")); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	_, err := r.RequireOrg(callerTokenCtx(""), "alpha", RoleViewer)
+	if !errors.Is(err, ErrCallerTokenNotForwardable) {
+		t.Fatalf("want ErrCallerTokenNotForwardable, got %v", err)
+	}
+}
+
+func TestAuthorizer_CallerToken_ClientNoTokenMapsToNotForwardable(t *testing.T) {
+	g := &currentUserGrafana{err: grafana.ErrNoUserToken}
+	r := NewAuthorizer(registry(), g, DefaultCacheTTL, DefaultNegativeCacheTTL, WithCallerToken())
+
+	_, err := r.ListOrgs(callerTokenCtx("id-token"))
+	if !errors.Is(err, ErrCallerTokenNotForwardable) {
+		t.Fatalf("want ErrCallerTokenNotForwardable, got %v", err)
 	}
 }

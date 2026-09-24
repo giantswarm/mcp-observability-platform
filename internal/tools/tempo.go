@@ -18,6 +18,8 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -30,14 +32,20 @@ import (
 const tempoMCPPath = "/api/mcp"
 
 // tempoClients caches one mcp-grafana ProxiedClient per Tempo
-// datasource UID. The transport reads OrgID/auth from per-call ctx
-// (attached by gfBinder.wrap), so a single client serves any caller
-// whose org points at that UID.
+// datasource UID. Per-call ctx (attached by gfBinder.wrap) overrides the
+// transport's OrgID/auth, so a single client serves any caller whose org
+// points at that UID. The transport keeps the dialling caller's
+// credentials as its base (in JWT auth mode, that caller's token).
 type tempoClients struct {
 	grafanaURL string
 	mu         sync.Mutex
 	cache      map[string]*mcpgrafana.ProxiedClient
 }
+
+// tempoDiscoveryRetry is the minimum gap between two deferred discovery
+// attempts after a failure, so a Grafana without Tempo MCP does not
+// re-dial on every tools/list.
+const tempoDiscoveryRetry = 30 * time.Second
 
 // registerTempoTools dials a seed Tempo to enumerate its MCP tool list,
 // then registers each tool through gfBinder.bindDatasourceTool — same
@@ -45,20 +53,50 @@ type tempoClients struct {
 // delegated datasource tool. Skipped silently on any startup-discovery
 // failure (no orgs, no Tempo datasource, chart not yet rolled out →
 // 404 on /api/mcp) so the rest of the surface still boots.
+//
+// In JWT auth mode there is no Grafana credential at startup, so
+// discovery is deferred to the first tools/list or tools/call carrying a
+// caller token (see tempoDiscovery). The tools are added before that
+// request is served; the server's listChanged capability notifies other
+// sessions.
 func registerTempoTools(ctx context.Context, s *server.MCPServer, logger *slog.Logger, b *gfBinder, ol authz.OrgLister) error {
-	seedOrgID, seedUID, err := findSeedTempoUID(ctx, b.grafana, ol)
-	if err != nil {
-		logger.Warn("tempo MCP not registered", "reason", err)
-		return nil
-	}
 	c := &tempoClients{
 		grafanaURL: b.url,
 		cache:      make(map[string]*mcpgrafana.ProxiedClient),
 	}
+	if b.auth.JWTHeader == "" {
+		discoverTempoTools(ctx, s, logger, b, ol, c)
+		return nil
+	}
+	hooks := s.GetHooks()
+	if hooks == nil {
+		logger.Warn("tempo MCP not registered", "reason", "deferred discovery needs server hooks")
+		return nil
+	}
+	d := &tempoDiscovery{
+		discover: func(ctx context.Context) bool { return discoverTempoTools(ctx, s, logger, b, ol, c) },
+		now:      time.Now,
+	}
+	hooks.AddBeforeListTools(func(ctx context.Context, _ any, _ *mcp.ListToolsRequest) { d.run(ctx) })
+	hooks.AddBeforeCallTool(func(ctx context.Context, _ any, _ *mcp.CallToolRequest) { d.run(ctx) })
+	logger.Info("Tempo MCP discovery deferred to the first caller (Grafana auth mode: jwt)")
+	return nil
+}
+
+// discoverTempoTools finds a seed Tempo reachable with ctx's credentials,
+// dials it, and registers its tools. Returns false (after logging) on any
+// failure.
+func discoverTempoTools(ctx context.Context, s *server.MCPServer, logger *slog.Logger, b *gfBinder, ol authz.OrgLister, c *tempoClients) bool {
+	opts := grafana.RequestOpts{Caller: authz.CallerSubject(ctx)}
+	seedOrgID, seedUID, err := findSeedTempoUID(ctx, b.grafana, ol, opts)
+	if err != nil {
+		logger.Warn("tempo MCP not registered", "reason", err)
+		return false
+	}
 	seed, err := c.clientFor(b.attachGrafana(ctx, seedOrgID), seedUID)
 	if err != nil {
 		logger.Warn("tempo MCP not registered", "uid", seedUID, "error", err)
-		return nil
+		return false
 	}
 
 	tools := seed.ListTools()
@@ -70,7 +108,39 @@ func registerTempoTools(ctx context.Context, s *server.MCPServer, logger *slog.L
 		})
 	}
 	logger.Info("registered Tempo MCP tools", "count", len(tools))
-	return nil
+	return true
+}
+
+// tempoDiscovery runs deferred Tempo discovery (JWT auth mode) until it
+// succeeds once. Requests without a caller token are skipped; a failure
+// is retried no sooner than tempoDiscoveryRetry later. Requests arriving
+// while a run is in flight skip it rather than wait on its network I/O;
+// listChanged notifies them once the tools are added.
+type tempoDiscovery struct {
+	discover func(ctx context.Context) bool
+	now      func() time.Time
+
+	done  atomic.Bool
+	mu    sync.Mutex
+	retry time.Time
+}
+
+func (d *tempoDiscovery) run(ctx context.Context) {
+	if d.done.Load() || grafana.UserTokenFromContext(ctx) == "" {
+		return
+	}
+	if !d.mu.TryLock() {
+		return
+	}
+	defer d.mu.Unlock()
+	if d.done.Load() || d.now().Before(d.retry) {
+		return
+	}
+	if d.discover(ctx) {
+		d.done.Store(true)
+		return
+	}
+	d.retry = d.now().Add(tempoDiscoveryRetry)
 }
 
 // handler reads the datasourceUid that gfBinder.wrap injected, finds
@@ -118,8 +188,10 @@ func (c *tempoClients) dial(ctx context.Context, uid string) (*mcpgrafana.Proxie
 
 // findSeedTempoUID returns any (orgID, tempo UID) pair from the live
 // datasource list — used at startup to enumerate Tempo's tool list.
-// Per-call routing uses the caller's own org via gfBinder.
-func findSeedTempoUID(ctx context.Context, gc grafana.Client, ol authz.OrgLister) (int64, string, error) {
+// Per-call routing uses the caller's own org via gfBinder. opts.Caller
+// is set in JWT auth mode, where the lookup runs as the first caller and
+// orgs they cannot read are skipped.
+func findSeedTempoUID(ctx context.Context, gc grafana.Client, ol authz.OrgLister, opts grafana.RequestOpts) (int64, string, error) {
 	orgs, err := ol.List(ctx)
 	if err != nil {
 		return 0, "", fmt.Errorf("list orgs: %w", err)
@@ -128,7 +200,8 @@ func findSeedTempoUID(ctx context.Context, gc grafana.Client, ol authz.OrgLister
 		if !org.HasTenantType(authz.TenantTypeData) {
 			continue
 		}
-		dss, err := gc.ListDatasources(ctx, grafana.RequestOpts{OrgID: org.OrgID})
+		opts.OrgID = org.OrgID
+		dss, err := gc.ListDatasources(ctx, opts)
 		if err != nil {
 			continue
 		}

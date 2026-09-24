@@ -69,6 +69,98 @@ func TestClient_AuthHeader_Basic(t *testing.T) {
 	}
 }
 
+const testJWTHeader = "X-JWT-Assertion"
+
+// newJWTTestServer is newTestServer in JWT auth mode.
+func newJWTTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, Client) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		handler(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	c, err := New(Config{URL: ts.URL, JWTHeader: testJWTHeader})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return ts, c
+}
+
+func TestClient_JWT_ForwardsCallerToken(t *testing.T) {
+	var gotJWT, gotAuth string
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotJWT = r.Header.Get(testJWTHeader)
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("{}"))
+	})
+
+	ctx := WithUserToken(context.Background(), "id-token-alice")
+	if _, err := c.DatasourceProxy(ctx, RequestOpts{OrgID: 1}, 1, "api/v1/query", nil); err != nil {
+		t.Fatalf("DatasourceProxy: %v", err)
+	}
+	if gotJWT != "id-token-alice" {
+		t.Errorf("%s = %q, want id-token-alice", testJWTHeader, gotJWT)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want none in JWT mode", gotAuth)
+	}
+}
+
+func TestClient_JWT_NoTokenSendsNothing(t *testing.T) {
+	var hits atomic.Int64
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("[]"))
+	})
+
+	_, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1})
+	if !errors.Is(err, ErrNoUserToken) {
+		t.Fatalf("err = %v, want ErrNoUserToken", err)
+	}
+	if _, err := c.CurrentUserOrgs(context.Background()); !errors.Is(err, ErrNoUserToken) {
+		t.Fatalf("CurrentUserOrgs err = %v, want ErrNoUserToken", err)
+	}
+	if got := hits.Load(); got != 0 {
+		t.Errorf("upstream hit %d times, want 0 without a caller token", got)
+	}
+}
+
+func TestClient_CurrentUserOrgs(t *testing.T) {
+	var gotPath, gotOrg string
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotOrg = r.Header.Get("X-Grafana-Org-Id")
+		_, _ = w.Write([]byte(`[{"orgId":1,"name":"Main","role":"Viewer"},{"orgId":7,"name":"acme","role":"Admin"}]`))
+	})
+
+	got, err := c.CurrentUserOrgs(WithUserToken(context.Background(), "tok"))
+	if err != nil {
+		t.Fatalf("CurrentUserOrgs: %v", err)
+	}
+	if gotPath != "/api/user/orgs" {
+		t.Errorf("path = %q, want /api/user/orgs", gotPath)
+	}
+	if gotOrg != "" {
+		t.Errorf("X-Grafana-Org-Id = %q, want none", gotOrg)
+	}
+	want := []UserOrgMembership{{OrgID: 1, Role: "Viewer"}, {OrgID: 7, Role: "Admin"}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("orgs = %+v, want %+v", got, want)
+	}
+}
+
+func TestClient_CurrentUserOrgs_Unauthorized(t *testing.T) {
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"invalid JWT"}`))
+	})
+
+	_, err := c.CurrentUserOrgs(WithUserToken(context.Background(), "tok"))
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+}
+
 func TestClient_OrgIDAndCallerHeaders(t *testing.T) {
 	var gotOrg, gotUser string
 	ts, c := newTestServer(func(w http.ResponseWriter, r *http.Request) {
@@ -165,13 +257,16 @@ func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 }
 
 func TestNew_Validation(t *testing.T) {
+	const onlyOne = "only one of"
 	cases := []struct {
 		cfg  Config
 		want string
 	}{
 		{Config{}, "URL is required"},
-		{Config{URL: "x"}, "Token or BasicAuth"},
-		{Config{URL: "x", Token: "t", BasicAuth: "a:b"}, "only one of"},
+		{Config{URL: "x"}, "Token, BasicAuth or JWTHeader"},
+		{Config{URL: "x", Token: "t", BasicAuth: "a:b"}, onlyOne},
+		{Config{URL: "x", Token: "t", JWTHeader: testJWTHeader}, onlyOne},
+		{Config{URL: "x", BasicAuth: "a:b", JWTHeader: testJWTHeader}, onlyOne},
 	}
 	for _, c := range cases {
 		_, err := New(c.cfg)
@@ -527,6 +622,45 @@ func TestClient_ListDatasources_CacheTTLExpiry(t *testing.T) {
 	}
 	if got := atomic.LoadInt64(hits); got != 2 {
 		t.Errorf("upstream hit %d times, want 2 (TTL did not expire)", got)
+	}
+}
+
+const (
+	testCallerA = "alice"
+	testCallerB = "bob"
+)
+
+// A per-user result (JWT auth mode) must never serve another caller in
+// the same org.
+func TestClient_ListDatasources_CachePerCallerIsolation(t *testing.T) {
+	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+	c.jwtHeader = "X-JWT-Assertion"
+
+	for _, caller := range []string{testCallerA, testCallerB, testCallerA} {
+		ctx := WithUserToken(context.Background(), caller+"-token")
+		if _, err := c.ListDatasources(ctx, RequestOpts{OrgID: 1, Caller: caller}); err != nil {
+			t.Fatalf("caller %s: %v", caller, err)
+		}
+	}
+	if got := atomic.LoadInt64(hits); got != 2 {
+		t.Errorf("upstream hit %d times, want 2 (per-caller isolation broken)", got)
+	}
+}
+
+// With the shared SA credential every caller sees the same list, so
+// callers in one org share one cache entry.
+func TestClient_ListDatasources_CacheSharedAcrossCallersWithSA(t *testing.T) {
+	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+
+	for _, caller := range []string{testCallerA, testCallerB} {
+		if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1, Caller: caller}); err != nil {
+			t.Fatalf("caller %s: %v", caller, err)
+		}
+	}
+	if got := atomic.LoadInt64(hits); got != 1 {
+		t.Errorf("upstream hit %d times, want 1 (SA mode shares the org entry)", got)
 	}
 }
 

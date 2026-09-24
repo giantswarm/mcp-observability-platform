@@ -27,12 +27,15 @@ type Config struct {
 	// against. Per-call routing uses the caller's own org via gfBinder.
 	OrgLister authz.OrgLister
 	Grafana   grafana.Client
-	// GrafanaURL / GrafanaAPIKey / GrafanaBasicAuth are forwarded to the
-	// gfBinder, which builds an upstream mcpgrafana client per call.
-	// APIKey and BasicAuth are mutually exclusive; exactly one must be set.
+	// GrafanaURL / GrafanaAPIKey / GrafanaBasicAuth / GrafanaJWTHeader
+	// are forwarded to the gfBinder, which builds an upstream mcpgrafana
+	// client per call. APIKey, BasicAuth and JWTHeader are mutually
+	// exclusive; exactly one must be set. JWTHeader selects JWT auth
+	// mode: the caller's own token is forwarded in that header.
 	GrafanaURL       string
 	GrafanaAPIKey    string
 	GrafanaBasicAuth *url.Userinfo
+	GrafanaJWTHeader string
 	Version          string
 	// ToolTimeout: 0 disables the per-handler deadline.
 	ToolTimeout time.Duration
@@ -78,6 +81,9 @@ func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
 		// no resources/prompts.
 		mcpsrv.WithToolCapabilities(true),
 		mcpsrv.WithRecovery(),
+		// Empty Hooks so RegisterAll can attach its own via GetHooks
+		// (deferred Tempo discovery in JWT auth mode).
+		mcpsrv.WithHooks(&mcpsrv.Hooks{}),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
 		mcpsrv.WithToolHandlerMiddleware(responsecap.New(responsecap.Options{
@@ -89,7 +95,11 @@ func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(timeout.New(cfg.ToolTimeout)),
 	)
 
-	if err := tools.RegisterAll(ctx, mcp, cfg.Logger, cfg.Authorizer, cfg.OrgLister, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth, cfg.DisabledTools); err != nil {
+	if err := tools.RegisterAll(ctx, mcp, cfg.Logger, cfg.Authorizer, cfg.OrgLister, cfg.Grafana, cfg.GrafanaURL, tools.GrafanaAuth{
+		APIKey:    cfg.GrafanaAPIKey,
+		BasicAuth: cfg.GrafanaBasicAuth,
+		JWTHeader: cfg.GrafanaJWTHeader,
+	}, cfg.DisabledTools); err != nil {
 		return nil, fmt.Errorf("server: register tools: %w", err)
 	}
 
@@ -98,23 +108,25 @@ func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
 
 // StreamableHTTPHandler mounts the streamable-HTTP transport at /mcp.
 // The handler trusts the caller identity already on the request context,
-// so it MUST be gated behind mcp-oauth's ValidateToken.
-func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
+// so it MUST be gated behind mcp-oauth's ValidateToken. resolve is set
+// only in JWT auth mode (see middleware.InjectCaller); nil otherwise.
+func StreamableHTTPHandler(mcp *mcpsrv.MCPServer, resolve middleware.TokenResolver) http.Handler {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
-		mcpsrv.WithHTTPContextFunc(middleware.InjectCallerFromRequest),
+		mcpsrv.WithHTTPContextFunc(middleware.InjectCaller(resolve)),
 	)
 }
 
 // SSEHandler mounts the SSE transport. SSE needs both /sse (event
 // stream) and /message (client→server posts) on the same handler;
-// mcp-go routes between them by path. Caller gates with OAuth.
-func SSEHandler(mcp *mcpsrv.MCPServer) http.Handler {
+// mcp-go routes between them by path. Caller gates with OAuth. resolve
+// as for StreamableHTTPHandler.
+func SSEHandler(mcp *mcpsrv.MCPServer, resolve middleware.TokenResolver) http.Handler {
 	return mcpsrv.NewSSEServer(
 		mcp,
 		mcpsrv.WithSSEEndpoint("/sse"),
 		mcpsrv.WithMessageEndpoint("/message"),
-		mcpsrv.WithSSEContextFunc(middleware.InjectCallerFromRequest),
+		mcpsrv.WithSSEContextFunc(middleware.InjectCaller(resolve)),
 	)
 }

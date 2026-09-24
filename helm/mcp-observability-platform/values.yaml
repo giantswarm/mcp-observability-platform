@@ -227,9 +227,18 @@ grafana:
   #   - basicAuth            ("admin:password" — fallback when SAs can't be
   #                           promoted to Grafana Server Admin via API)
   # A regular org-Admin SA will NOT work: it ignores X-Grafana-Org-Id.
+  # Unused when authMode is "jwt".
   existingSecret: "mcp-observability-platform-grafana"
-  # Which key from existingSecret to use: "serviceAccountToken" or "basicAuth".
+  # How the MCP authenticates to Grafana:
+  #   - serviceAccountToken  uses that key from existingSecret
+  #   - basicAuth            uses that key from existingSecret
+  #   - jwt                  forwards each caller's Dex id_token in jwtHeader.
+  #                          Grafana must enable [auth.jwt] against Dex. No
+  #                          secret. See the README "Grafana JWT mode" section.
   authMode: "serviceAccountToken"
+  # Header carrying the caller's Dex id_token. Used when authMode is "jwt".
+  # Must match header_name in Grafana's [auth.jwt] section.
+  jwtHeader: "X-JWT-Assertion"
 
 # OpenTelemetry tracing — leave endpoint empty to disable.
 otel:
