@@ -16,11 +16,13 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
+	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
 // buildMCPMux wraps the OAuth + MCP routes in otelhttp so inbound W3C
-// traceparents become server spans.
-func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *handler.Handler) http.Handler {
+// traceparents become server spans. resolveToken is non-nil only in
+// GRAFANA_AUTH_MODE=jwt.
+func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *handler.Handler, resolveToken middleware.TokenResolver) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/oauth/authorize", oauthHandler.ServeAuthorization)
@@ -38,9 +40,9 @@ func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *handler.
 
 	switch transport {
 	case transportStreamableHTTP:
-		mux.Handle("/mcp", oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp)))
+		mux.Handle("/mcp", oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp, resolveToken)))
 	case transportSSE:
-		sseHandler := server.SSEHandler(mcp)
+		sseHandler := server.SSEHandler(mcp, resolveToken)
 		mux.Handle("/sse", oauthHandler.ValidateToken(sseHandler))
 		mux.Handle("/message", oauthHandler.ValidateToken(sseHandler))
 	}

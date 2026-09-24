@@ -50,8 +50,17 @@ func (r redactedHeader) GoString() string { return "[REDACTED]" }
 // /api/datasources/proxy/{id}/ prefix (SSRF defence).
 var errInvalidDatasourceProxyPath = errors.New("grafana: invalid datasource proxy path")
 
+// ErrNoUserToken is returned in JWT auth mode when ctx carries no caller
+// token (see WithUserToken). The request is not sent: there is no shared
+// credential to fall back to.
+var ErrNoUserToken = errors.New("grafana: no caller token to forward")
+
+// ErrUnauthorized is returned when Grafana answers 401 to a call made
+// with the caller's own token (JWT auth mode).
+var ErrUnauthorized = errors.New("grafana: unauthorized")
+
 // Config holds the connection parameters for Grafana. Exactly one of
-// Token or BasicAuth must be set.
+// Token, BasicAuth or JWTHeader must be set.
 type Config struct {
 	URL string
 	// Token is a Grafana server-admin service-account token (preferred).
@@ -59,7 +68,12 @@ type Config struct {
 	// BasicAuth is "user:password" for the built-in admin user. Used
 	// when the Grafana version doesn't allow promoting SAs to Grafana
 	// Server Admin via API. Mutually exclusive with Token.
-	BasicAuth  string
+	BasicAuth string
+	// JWTHeader selects JWT auth mode: every request carries the
+	// caller's own token (UserTokenFromContext) in this header, and no
+	// shared credential is sent. Grafana validates it via [auth.jwt].
+	// Mutually exclusive with Token and BasicAuth.
+	JWTHeader  string
 	HTTPClient *http.Client
 }
 
@@ -78,21 +92,32 @@ type Client interface {
 	LookupDatasourceByUID(ctx context.Context, opts RequestOpts, uid string) (Datasource, error)
 	ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error)
 	UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembership, error)
+	CurrentUserOrgs(ctx context.Context) ([]UserOrgMembership, error)
 	DatasourceProxy(ctx context.Context, opts RequestOpts, dsID int64, path string, query url.Values) (json.RawMessage, error)
 }
 
 type client struct {
 	base       *url.URL
 	authHeader redactedHeader
-	http       *http.Client
+	// jwtHeader, when set, replaces authHeader with the caller's own
+	// token from ctx (JWT auth mode).
+	jwtHeader string
+	http      *http.Client
 
-	// dsCache caches ListDatasources by OrgID. sync.Map fits because
-	// the keyspace (one entry per org seen) is small and writes are
-	// rare relative to reads. now/dsCacheTTL are pluggable for tests;
+	// dsCache caches ListDatasources by (OrgID, Caller). sync.Map fits
+	// because the keyspace (one entry per org and caller seen) is small
+	// and writes are rare relative to reads. Caller is part of the key
+	// so a per-user result (JWT auth mode) never serves another caller. now/dsCacheTTL are pluggable for tests;
 	// defaults are set in New.
 	dsCache    sync.Map
 	dsCacheTTL time.Duration
 	now        func() time.Time
+}
+
+// dsCacheKey is the key half of client.dsCache.
+type dsCacheKey struct {
+	orgID  int64
+	caller string
 }
 
 // dsCacheEntry is the value half of client.dsCache. dss is shared
@@ -104,17 +129,23 @@ type dsCacheEntry struct {
 	deadline time.Time
 }
 
-// New validates cfg and returns a Client. Token and BasicAuth are
-// mutually exclusive; one of them is required.
+// New validates cfg and returns a Client. Token, BasicAuth and
+// JWTHeader are mutually exclusive; one of them is required.
 func New(cfg Config) (Client, error) {
 	if cfg.URL == "" {
 		return nil, errors.New("grafana: URL is required")
 	}
-	if cfg.Token == "" && cfg.BasicAuth == "" {
-		return nil, errors.New("grafana: Token or BasicAuth is required")
+	set := 0
+	for _, v := range []string{cfg.Token, cfg.BasicAuth, cfg.JWTHeader} {
+		if v != "" {
+			set++
+		}
 	}
-	if cfg.Token != "" && cfg.BasicAuth != "" {
-		return nil, errors.New("grafana: set only one of Token or BasicAuth")
+	if set == 0 {
+		return nil, errors.New("grafana: Token, BasicAuth or JWTHeader is required")
+	}
+	if set > 1 {
+		return nil, errors.New("grafana: set only one of Token, BasicAuth or JWTHeader")
 	}
 	u, err := url.Parse(cfg.URL)
 	if err != nil {
@@ -149,6 +180,7 @@ func New(cfg Config) (Client, error) {
 	return &client{
 		base:       u,
 		authHeader: authHeader,
+		jwtHeader:  cfg.JWTHeader,
 		http:       hc,
 		dsCacheTTL: defaultDatasourceCacheTTL,
 		now:        time.Now,
@@ -174,8 +206,13 @@ type UserOrgMembership struct {
 // fetch is the sole HTTP entry point in this package. URL is built from
 // c.base.JoinPath(path) locally — no caller can construct a *http.Request
 // and hand it in, so the SA-token-bearing request cannot be directed
-// off-origin from inside this package.
+// off-origin from inside this package. In JWT auth mode a missing
+// caller token fails with ErrNoUserToken before any request is built.
 func (c *client) fetch(ctx context.Context, path string, query url.Values, opts RequestOpts) (status int, respBody []byte, contentType string, err error) {
+	userToken := UserTokenFromContext(ctx)
+	if c.jwtHeader != "" && userToken == "" {
+		return 0, nil, "", ErrNoUserToken
+	}
 	u := c.base.JoinPath(path)
 	if len(query) > 0 {
 		u.RawQuery = query.Encode()
@@ -191,7 +228,11 @@ func (c *client) fetch(ctx context.Context, path string, query url.Values, opts 
 		span.SetStatus(codes.Error, err.Error())
 		return 0, nil, "", fmt.Errorf("grafana: new request: %w", err)
 	}
-	req.Header.Set("Authorization", string(c.authHeader))
+	if c.jwtHeader != "" {
+		req.Header.Set(c.jwtHeader, userToken)
+	} else {
+		req.Header.Set("Authorization", string(c.authHeader))
+	}
 	req.Header.Set("Accept", "application/json")
 	// OrgID==0 is the no-switch sentinel: server-admin calls and
 	// /api/health run in the SA's global context, not a per-org one.
@@ -324,10 +365,11 @@ func (c *client) LookupDatasourceByUID(ctx context.Context, opts RequestOpts, ui
 // given org, with the jsonData.manageAlerts flag parsed. Grafana
 // defaults manageAlerts to true and omits it when true; absent ⇒ true.
 //
-// Results are cached per-OrgID for dsCacheTTL (30s by default). Errors
-// are not cached.
+// Results are cached per (OrgID, Caller) for dsCacheTTL (30s by
+// default). Errors are not cached.
 func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error) {
-	if v, ok := c.dsCache.Load(opts.OrgID); ok {
+	key := dsCacheKey{orgID: opts.OrgID, caller: opts.Caller}
+	if v, ok := c.dsCache.Load(key); ok {
 		if entry := v.(dsCacheEntry); c.now().Before(entry.deadline) {
 			return entry.dss, nil
 		}
@@ -336,7 +378,7 @@ func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) ([]Datas
 	if err != nil {
 		return nil, err
 	}
-	c.dsCache.Store(opts.OrgID, dsCacheEntry{dss: dss, deadline: c.now().Add(c.dsCacheTTL)})
+	c.dsCache.Store(key, dsCacheEntry{dss: dss, deadline: c.now().Add(c.dsCacheTTL)})
 	return dss, nil
 }
 
@@ -388,6 +430,27 @@ func (c *client) UserOrgs(ctx context.Context, userID int64) ([]UserOrgMembershi
 	var out []UserOrgMembership
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("grafana: user orgs unmarshal: %w", err)
+	}
+	return out, nil
+}
+
+// CurrentUserOrgs returns the per-org roles of the user the request
+// authenticates as (GET /api/user/orgs). Used in JWT auth mode, where
+// that user is the caller. A 401 wraps ErrUnauthorized.
+func (c *client) CurrentUserOrgs(ctx context.Context) ([]UserOrgMembership, error) {
+	status, body, _, err := c.fetch(ctx, "/api/user/orgs", nil, RequestOpts{})
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusUnauthorized {
+		return nil, fmt.Errorf("%w: GET /api/user/orgs: %s", ErrUnauthorized, string(body))
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("grafana: GET /api/user/orgs: status %d: %s", status, string(body))
+	}
+	var out []UserOrgMembership
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("grafana: current user orgs unmarshal: %w", err)
 	}
 	return out, nil
 }

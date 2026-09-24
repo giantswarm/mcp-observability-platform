@@ -278,7 +278,7 @@ func TestNewGFBinder_Validation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := newGFBinder(c.az, c.gc, c.url, c.apiKey, c.basicAuth, nil)
+			_, err := newGFBinder(c.az, c.gc, c.url, GrafanaAuth{APIKey: c.apiKey, BasicAuth: c.basicAuth}, nil)
 			if c.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -296,7 +296,7 @@ func TestNewGFBinder_Validation(t *testing.T) {
 
 func TestBinder_Wrap_MissingOrg(t *testing.T) {
 	ts := fakeGrafanaServer(t)
-	b, _ := newGFBinder(&authztest.Fake{}, &fakeGrafana{}, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(&authztest.Fake{}, &fakeGrafana{}, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
@@ -315,7 +315,7 @@ func TestBinder_Wrap_MissingOrg(t *testing.T) {
 func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 	az := &authztest.Fake{Err: errors.New("not authorised")}
 	ts := fakeGrafanaServer(t)
-	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
@@ -335,7 +335,7 @@ func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	az := &authztest.Fake{Org: orgFixture()}
 	ts := fakeGrafanaServer(t)
-	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
@@ -359,10 +359,38 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	}
 }
 
+func TestBinder_Wrap_JWT_ForwardsCallerToken(t *testing.T) {
+	const header = "X-JWT-Assertion"
+	az := &authztest.Fake{Org: orgFixture()}
+	ts := fakeGrafanaServer(t)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, GrafanaAuth{JWTHeader: header}, nil)
+	captured := &capturedCall{}
+	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
+
+	ctx := grafana.WithUserToken(oauthCtx("sub-123", "alice@example.com"), "id-token-alice")
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{testOrgArg: testOrgName}}}
+	res, err := h(ctx, req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %+v", res)
+	}
+	if captured.cfg.APIKey != "" || captured.cfg.BasicAuth != nil {
+		t.Errorf("shared credential set in JWT mode: APIKey=%q BasicAuth=%v", captured.cfg.APIKey, captured.cfg.BasicAuth)
+	}
+	if got := captured.cfg.ExtraHeaders[header]; got != "id-token-alice" {
+		t.Errorf("%s = %q, want id-token-alice", header, got)
+	}
+	if got := captured.cfg.ExtraHeaders["X-Grafana-User"]; got != "alice@example.com" {
+		t.Errorf("X-Grafana-User = %q, want alice@example.com", got)
+	}
+}
+
 func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	az := &authztest.Fake{Org: orgFixture()}
 	ts := fakeGrafanaServer(t)
-	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, &fakeGrafana{}, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
@@ -400,7 +428,7 @@ func TestBinder_Single_DefaultPicksFirstMatch(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
@@ -431,7 +459,7 @@ func TestBinder_Single_ExplicitUIDOverrides(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
@@ -461,7 +489,7 @@ func TestBinder_Single_RejectsUIDFromOtherType(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
@@ -488,7 +516,7 @@ func TestBinder_Single_RejectsUIDNotInOrg(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listDS: threeMimirsAndOneLoki()}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
@@ -514,7 +542,7 @@ func TestBinder_Single_NoMatchingDatasource(t *testing.T) {
 	gc := &fakeGrafana{listDS: []grafana.Datasource{
 		{ID: 99, UID: "u-tempo", Name: "tempo-only", Type: "tempo"},
 	}}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
@@ -538,7 +566,7 @@ func TestBinder_Single_ListDatasourcesError(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listErr: errors.New("grafana down")}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
@@ -600,7 +628,7 @@ func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 			{ID: 4, UID: "u4", Name: "tempo-gs", Type: "tempo", ManageAlerts: true},
 		},
 	}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	cap := &fanoutStub{
 		respond: func(args map[string]any) (*mcp.CallToolResult, error) {
 			return mcp.NewToolResultText(fmt.Sprintf(`[{"uid":%q}]`, args[datasourceUIDArgSnake])), nil
@@ -659,7 +687,7 @@ func TestBinder_Fanout_EscapeHatch_BypassesListing(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listErr: errors.New("ListDatasources should not be called")}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	cap := &fanoutStub{}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
@@ -691,7 +719,7 @@ func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 			{ID: 2, UID: "u2", Name: "bad", Type: testDSPrometheus, ManageAlerts: true},
 		},
 	}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	cap := &fanoutStub{
 		respond: func(args map[string]any) (*mcp.CallToolResult, error) {
 			if args[datasourceUIDArgSnake] == "u2" {
@@ -735,7 +763,7 @@ func TestBinder_Fanout_ListDatasourcesError(t *testing.T) {
 	ts := fakeGrafanaServer(t)
 	az := &authztest.Fake{Org: orgFixture()}
 	gc := &fakeGrafana{listErr: errors.New("grafana down")}
-	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
+	b, _ := newGFBinder(az, gc, ts.URL, GrafanaAuth{APIKey: "tok"}, nil)
 	cap := &fanoutStub{}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 

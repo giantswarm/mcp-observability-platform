@@ -23,6 +23,7 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
+	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
 var serveCmd = &cobra.Command{
@@ -105,6 +106,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err := guardStdioInCluster(flagTransport); err != nil {
 		return err
 	}
+	jwtMode := cfg.GrafanaAuthMode == grafanaAuthModeJWT
+	if jwtMode && flagTransport == transportStdio {
+		return fmt.Errorf("GRAFANA_AUTH_MODE=%s requires an HTTP transport: stdio has no caller token to forward to Grafana", grafanaAuthModeJWT)
+	}
 	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
 	logLevel := slog.LevelInfo
 	if cfg.Debug || flagDebug {
@@ -129,29 +134,42 @@ func runServe(_ *cobra.Command, _ []string) error {
 		URL:       cfg.GrafanaURL,
 		Token:     cfg.GrafanaSAToken,
 		BasicAuth: cfg.GrafanaBasicAuth,
+		JWTHeader: cfg.GrafanaJWTHeader,
 	})
 	if err != nil {
 		return fmt.Errorf("grafana client: %w", err)
 	}
-	if err := grafanaClient.VerifyServerAdmin(shutdownCtx); err != nil {
-		return fmt.Errorf(
-			"grafana credential is not server-admin (cannot list all orgs); "+
-				"use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
+	// jwt mode has no shared credential to verify at startup: every call
+	// carries the caller's own Dex ID token.
+	var authzOpts []authz.Option
+	if jwtMode {
+		authzOpts = append(authzOpts, authz.WithCallerToken())
+		logger.Info("Grafana auth mode: jwt", "header", cfg.GrafanaJWTHeader)
+	} else {
+		if err := grafanaClient.VerifyServerAdmin(shutdownCtx); err != nil {
+			return fmt.Errorf(
+				"grafana credential is not server-admin (cannot list all orgs); "+
+					"use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
+		}
+		logger.Info("Grafana server-admin credential verified")
 	}
-	logger.Info("Grafana server-admin credential verified")
 
 	// authz uses Grafana as the source of truth for per-org roles. Positive
 	// entries cache 30s; negative ones (user-not-found, no roles) use a 5s
 	// TTL so a mid-SSO-outage failure doesn't lock anyone out for half a
 	// minute.
 	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
-		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL)
+		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authzOpts...)
 
-	oauthHandler, storeClose, err := buildOAuthHandler(logger)
+	oauthHandler, tokenStore, storeClose, err := buildOAuthHandler(logger)
 	if err != nil {
 		return err
 	}
 	defer storeClose()
+	var resolveToken middleware.TokenResolver
+	if jwtMode {
+		resolveToken = idTokenResolver(tokenStore)
+	}
 
 	// Best-effort OTEL tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is
 	// unset. The cluster log pipeline ships stderr to Loki; we don't run
@@ -196,6 +214,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		GrafanaURL:       cfg.GrafanaURL,
 		GrafanaAPIKey:    apiKey,
 		GrafanaBasicAuth: basicAuth,
+		GrafanaJWTHeader: cfg.GrafanaJWTHeader,
 		Version:          version,
 		ToolTimeout:      cfg.ToolTimeout,
 		MaxResponseBytes: cfg.MaxResponseBytes,
@@ -215,7 +234,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return mcpsrv.ServeStdio(mcp)
 	}
 
-	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
+	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler, resolveToken)
 	obsMux := buildObsMux(orgLister, cacheAlive)
 
 	// IdleTimeout closes keep-alives idle past 60s on both servers.

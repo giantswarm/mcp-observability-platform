@@ -5,7 +5,8 @@
 // org_mapping string to Grafana's SSO settings, and Grafana itself evaluates
 // that mapping at each user login to compute per-user (org -> role).
 // This package asks Grafana "what orgs does caller X have, and in what role?"
-// via /api/users/lookup + /api/users/{id}/orgs, then enriches each result
+// via /api/users/lookup + /api/users/{id}/orgs (or /api/user/orgs with the
+// caller's own token under WithCallerToken), then enriches each result
 // with tenant metadata drawn from an OrgLister (an informer cache of
 // GrafanaOrganization CRs in production, an in-memory stub in tests).
 // Datasource resolution is not part of authz — tool handlers fetch the
