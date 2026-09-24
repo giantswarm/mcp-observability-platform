@@ -629,14 +629,32 @@ func TestClient_ListDatasources_CacheTTLExpiry(t *testing.T) {
 func TestClient_ListDatasources_CachePerCallerIsolation(t *testing.T) {
 	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
 	defer ts.Close()
+	c.jwtHeader = "X-JWT-Assertion"
 
 	for _, caller := range []string{"alice", "bob", "alice"} {
-		if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1, Caller: caller}); err != nil {
+		ctx := WithUserToken(context.Background(), caller+"-token")
+		if _, err := c.ListDatasources(ctx, RequestOpts{OrgID: 1, Caller: caller}); err != nil {
 			t.Fatalf("caller %s: %v", caller, err)
 		}
 	}
 	if got := atomic.LoadInt64(hits); got != 2 {
 		t.Errorf("upstream hit %d times, want 2 (per-caller isolation broken)", got)
+	}
+}
+
+// With the shared SA credential every caller sees the same list, so
+// callers in one org share one cache entry.
+func TestClient_ListDatasources_CacheSharedAcrossCallersWithSA(t *testing.T) {
+	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+
+	for _, caller := range []string{"alice", "bob"} {
+		if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1, Caller: caller}); err != nil {
+			t.Fatalf("caller %s: %v", caller, err)
+		}
+	}
+	if got := atomic.LoadInt64(hits); got != 1 {
+		t.Errorf("upstream hit %d times, want 1 (SA mode shares the org entry)", got)
 	}
 }
 

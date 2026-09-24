@@ -104,11 +104,11 @@ type client struct {
 	jwtHeader string
 	http      *http.Client
 
-	// dsCache caches ListDatasources by (OrgID, Caller). sync.Map fits
-	// because the keyspace (one entry per org and caller seen) is small
-	// and writes are rare relative to reads. Caller is part of the key
-	// so a per-user result (JWT auth mode) never serves another caller. now/dsCacheTTL are pluggable for tests;
-	// defaults are set in New.
+	// dsCache caches ListDatasources by OrgID, plus Caller in JWT auth
+	// mode so a per-user result never serves another caller. sync.Map
+	// fits because the keyspace is small and writes are rare relative
+	// to reads. now/dsCacheTTL are pluggable for tests; defaults are set
+	// in New.
 	dsCache    sync.Map
 	dsCacheTTL time.Duration
 	now        func() time.Time
@@ -368,7 +368,10 @@ func (c *client) LookupDatasourceByUID(ctx context.Context, opts RequestOpts, ui
 // Results are cached per (OrgID, Caller) for dsCacheTTL (30s by
 // default). Errors are not cached.
 func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error) {
-	key := dsCacheKey{orgID: opts.OrgID, caller: opts.Caller}
+	key := dsCacheKey{orgID: opts.OrgID}
+	if c.jwtHeader != "" {
+		key.caller = opts.Caller
+	}
 	if v, ok := c.dsCache.Load(key); ok {
 		if entry := v.(dsCacheEntry); c.now().Before(entry.deadline) {
 			return entry.dss, nil

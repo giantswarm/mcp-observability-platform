@@ -262,16 +262,17 @@ func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error
 }
 
 // loadCurrentUser is load for WithCallerToken: Grafana resolves the
-// caller from their own forwarded token. A 401 means Grafana does not
-// accept the token as a user (negative-cached like an unknown user); a
-// missing token is not a Grafana answer, so it is not cached.
+// caller from their own forwarded token. A 401 means Grafana rejected
+// the token ([auth.jwt] auto-signs users up, so there is no "unknown
+// user" state); it keeps Grafana's reason and is not cached, like a
+// missing token.
 func (a *authorizer) loadCurrentUser(ctx context.Context, caller Caller) (cacheEntry, error) {
 	entries, err := a.grafana.CurrentUserOrgs(ctx)
 	switch {
 	case errors.Is(err, grafana.ErrNoUserToken):
 		return cacheEntry{}, ErrCallerTokenNotForwardable
 	case errors.Is(err, grafana.ErrUnauthorized):
-		return a.cacheStore(caller.Subject, statusUnknownToGrafana, nil), nil
+		return cacheEntry{}, fmt.Errorf("%w: %w", ErrGrafanaRejectedToken, err)
 	case err != nil:
 		return cacheEntry{}, fmt.Errorf("grafana current user orgs: %w", err)
 	}

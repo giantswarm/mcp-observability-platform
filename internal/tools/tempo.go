@@ -18,6 +18,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcpgrafana "github.com/grafana/mcp-grafana"
@@ -31,9 +32,10 @@ import (
 const tempoMCPPath = "/api/mcp"
 
 // tempoClients caches one mcp-grafana ProxiedClient per Tempo
-// datasource UID. The transport reads OrgID/auth from per-call ctx
-// (attached by gfBinder.wrap), so a single client serves any caller
-// whose org points at that UID.
+// datasource UID. Per-call ctx (attached by gfBinder.wrap) overrides the
+// transport's OrgID/auth, so a single client serves any caller whose org
+// points at that UID. The transport keeps the dialling caller's
+// credentials as its base (in JWT auth mode, that caller's token).
 type tempoClients struct {
 	grafanaURL string
 	mu         sync.Mutex
@@ -111,28 +113,31 @@ func discoverTempoTools(ctx context.Context, s *server.MCPServer, logger *slog.L
 
 // tempoDiscovery runs deferred Tempo discovery (JWT auth mode) until it
 // succeeds once. Requests without a caller token are skipped; a failure
-// is retried no sooner than tempoDiscoveryRetry later. Concurrent callers
-// wait on mu so the first successful run's tools are in their response.
+// is retried no sooner than tempoDiscoveryRetry later. Requests arriving
+// while a run is in flight skip it rather than wait on its network I/O;
+// listChanged notifies them once the tools are added.
 type tempoDiscovery struct {
 	discover func(ctx context.Context) bool
 	now      func() time.Time
 
+	done  atomic.Bool
 	mu    sync.Mutex
-	done  bool
 	retry time.Time
 }
 
 func (d *tempoDiscovery) run(ctx context.Context) {
-	if grafana.UserTokenFromContext(ctx) == "" {
+	if d.done.Load() || grafana.UserTokenFromContext(ctx) == "" {
 		return
 	}
-	d.mu.Lock()
+	if !d.mu.TryLock() {
+		return
+	}
 	defer d.mu.Unlock()
-	if d.done || d.now().Before(d.retry) {
+	if d.done.Load() || d.now().Before(d.retry) {
 		return
 	}
 	if d.discover(ctx) {
-		d.done = true
+		d.done.Store(true)
 		return
 	}
 	d.retry = d.now().Add(tempoDiscoveryRetry)

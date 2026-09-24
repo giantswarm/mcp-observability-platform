@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -720,18 +721,18 @@ func TestAuthorizer_CallerToken_UsesCurrentUserOrgs(t *testing.T) {
 	}
 }
 
-func TestAuthorizer_CallerToken_UnauthorizedIsUnknownToGrafana(t *testing.T) {
+func TestAuthorizer_CallerToken_UnauthorizedIsRejectedToken(t *testing.T) {
 	g := &currentUserGrafana{err: fmt.Errorf("%w: invalid JWT", grafana.ErrUnauthorized)}
 	r := NewAuthorizer(registry(), g, DefaultCacheTTL, DefaultNegativeCacheTTL, WithCallerToken())
 
 	for i := 0; i < 2; i++ {
 		_, err := r.ListOrgs(callerTokenCtx("id-token"))
-		if !errors.Is(err, ErrCallerUnknownToGrafana) {
-			t.Fatalf("call %d: want ErrCallerUnknownToGrafana, got %v", i, err)
+		if !errors.Is(err, ErrGrafanaRejectedToken) || !strings.Contains(err.Error(), "invalid JWT") {
+			t.Fatalf("call %d: want ErrGrafanaRejectedToken with Grafana's reason, got %v", i, err)
 		}
 	}
-	if g.calls != 1 {
-		t.Errorf("CurrentUserOrgs calls = %d, want 1 (negative-cached)", g.calls)
+	if g.calls != 2 {
+		t.Errorf("CurrentUserOrgs calls = %d, want 2 (not cached)", g.calls)
 	}
 }
 
