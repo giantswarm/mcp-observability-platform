@@ -340,6 +340,13 @@ Limitations:
   Teleport app access), jwt mode needs that setup reworked first.
 - `org_mapping` is static ini. It does not pick up `generic_oauth` org
   mappings managed at runtime through the SSO settings API.
+- `expect_claims.aud` accepts an array and passes when any entry matches.
+  List the MCP Dex client id plus every `OAUTH_TRUSTED_AUDIENCES` client
+  whose tokens reach the MCP. A token Grafana rejects fails with
+  `grafana rejected the caller token`.
+- Grafana caches the Dex JWKS. After a Dex key reset (e.g. Dex with
+  memory storage restarted), calls fail with `no keys found` until the
+  cache expires.
 
 ## Install
 
