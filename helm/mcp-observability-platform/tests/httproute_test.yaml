@@ -70,3 +70,44 @@ tests:
       - equal:
           path: spec.rules[0].matches[0].path.value
           value: /mcp
+
+  - it: parentRefs and matches accept every Gateway API field, not just the defaults' keys
+    set:
+      httpRoute:
+        enabled: true
+        parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: custom-gateway
+            namespace: gateways
+            sectionName: https
+            port: 443
+        matches:
+          - path:
+              type: PathPrefix
+              value: /mcp
+            method: POST
+            headers:
+              - type: Exact
+                name: x-tenant
+                value: acme
+            queryParams:
+              - type: Exact
+                name: debug
+                value: "1"
+    asserts:
+      - equal:
+          path: spec.parentRefs[0].port
+          value: 443
+      - equal:
+          path: spec.parentRefs[0].kind
+          value: Gateway
+      - equal:
+          path: spec.rules[0].matches[0].method
+          value: POST
+      - equal:
+          path: spec.rules[0].matches[0].headers[0].name
+          value: x-tenant
+      - equal:
+          path: spec.rules[0].matches[0].queryParams[0].name
+          value: debug

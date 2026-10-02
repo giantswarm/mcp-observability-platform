@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-02
+
 ### Added
 
 - `subjectClaim` and `allowPrivateIPJWKSHosts` on `OAUTH_TRUSTED_ISSUERS` entries (and the `oauth.trustedIssuers` Helm values). `subjectClaim` remaps the caller subject to another claim's value (e.g. `email`); `allowPrivateIPJWKSHosts` allows the listed hostnames' JWKS URLs to resolve to a private IP while keeping SSRF protection elsewhere.
@@ -15,11 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - mcp-oauth updated to v1.x.
+- mcp-grafana updated to v1.4.2, fixing CVE-2026-15583 and CVE-2026-19516 (SSRF and service-account token exfiltration through the `X-Grafana-URL` header) and, through its dependencies, CVE-2026-93450 in `go-openapi/swag/jsonutils`. v1.4.2 is the last release that still ships the proxied MCP client the Tempo tools use. mcp-grafana now rejects argument keys a tool does not declare, so the synthetic `org` argument is stripped before a call is handed to it, and the Tempo client cache is keyed by organization and datasource UID because the client now pins the organization it was dialled for.
+- OpenTelemetry-Go exporters updated to v1.46.0 and the log modules to v0.22.0, fixing GO-2026-6505, GO-2026-6508 and GO-2026-6615.
+- `google.golang.org/grpc` updated to v1.83.2, fixing GO-2026-6443.
+- `.nancy-ignore` no longer carries exceptions for dependency versions that are no longer in the build.
 - `google.golang.org/grpc` updated to v1.83.0, fixing GO-2026-6061 (HTTP/2 transport).
 
 ### Fixed
 
 - `values.schema.json` no longer rejects the free-form values the templates pass through with `toYaml`. The generator inferred a closed schema from the defaults, so `podLabels`, `podAnnotations`, `nodeSelector`, `affinity`, `service.annotations`, `serviceAccount.annotations`, `serviceMonitor.labels`, `httpRoute.annotations`, `autoscaling.hpa.behavior` and `autoscaling.vpa.resourcePolicy` accepted no keys at all, and `networkPolicy.ingress` accepted only `ports`. `networkPolicy.ingress` items now validate against the upstream Kubernetes `NetworkPolicyIngressRule`. This broke `helm unittest`, which validates values against the schema.
+- `values.schema.json` no longer rejects valid Gateway API fields on `httpRoute.parentRefs` and `httpRoute.matches`. Their items were inferred from the defaults and accepted only `name`/`namespace`/`sectionName` and `path`; they now validate against the Gateway API HTTPRoute v1 `ParentReference` and `HTTPRouteMatch` schemas, so `group`, `kind`, `port`, `headers`, `method` and `queryParams` pass.
 
 ## [0.3.0] - 2026-06-30
 
@@ -82,7 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.0...v0.2.1
