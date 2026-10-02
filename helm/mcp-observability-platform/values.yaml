@@ -102,21 +102,19 @@ networkPolicy:
 # shape the Gateway API accepts. The chart owns only the backendRef (it has to
 # point at the rendered Service).
 #
-# NOTE: values.schema.json narrows `parentRefs` and `matches` to the fields the
-# defaults below happen to use. helm-values-schema-json v2.6.0 infers an array
-# item schema from the example and offers no annotation to reopen it, and the
-# Gateway API types are not in the Kubernetes schema bundle, so `itemRef` (as
-# used on networkPolicy.ingress) has nothing to point at. Extra fields on these
-# two keys are rejected until upstream grows an item-level additionalProperties.
+# values.schema.json validates `parentRefs` and `matches` items against the
+# Gateway API HTTPRoute v1 schema (ParentReference, HTTPRouteMatch) from
+# datreeio/CRDs-catalog, pinned to a commit so the generated schema is
+# reproducible; bump the commit to pick up a newer Gateway API.
 httpRoute:
   enabled: false
   annotations: {}  # @schema skipProperties: true; additionalProperties: true
-  parentRefs:
+  parentRefs:  # @schema itemProperties: {}; itemRef: https://raw.githubusercontent.com/datreeio/CRDs-catalog/d373c2da9702bc9509a004db83e57263fe3bdfc1/gateway.networking.k8s.io/httproute_v1.json#/properties/spec/properties/parentRefs/items
     - name: giantswarm-default
       namespace: envoy-gateway-system
       sectionName: https
   hostnames: []
-  matches:
+  matches:  # @schema itemProperties: {}; itemRef: https://raw.githubusercontent.com/datreeio/CRDs-catalog/d373c2da9702bc9509a004db83e57263fe3bdfc1/gateway.networking.k8s.io/httproute_v1.json#/properties/spec/properties/rules/items/properties/matches/items
     - path:
         type: PathPrefix
         value: /
