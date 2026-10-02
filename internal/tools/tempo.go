@@ -29,14 +29,20 @@ import (
 
 const tempoMCPPath = "/api/mcp"
 
-// tempoClients caches one mcp-grafana ProxiedClient per Tempo
-// datasource UID. The transport reads OrgID/auth from per-call ctx
-// (attached by gfBinder.wrap), so a single client serves any caller
-// whose org points at that UID.
+// tempoClients caches one mcp-grafana ProxiedClient per (org, Tempo
+// datasource UID). The client pins the org it was dialled for (the
+// proxy sends that X-Grafana-Org-Id regardless of the per-call ctx), and
+// a datasource UID is only unique within an org, so both form the key.
+// Auth still comes from the per-call ctx attached by gfBinder.wrap.
 type tempoClients struct {
 	grafanaURL string
 	mu         sync.Mutex
-	cache      map[string]*mcpgrafana.ProxiedClient
+	cache      map[tempoClientKey]*mcpgrafana.ProxiedClient
+}
+
+type tempoClientKey struct {
+	orgID int64
+	uid   string
 }
 
 // registerTempoTools dials a seed Tempo to enumerate its MCP tool list,
@@ -53,7 +59,7 @@ func registerTempoTools(ctx context.Context, s *server.MCPServer, logger *slog.L
 	}
 	c := &tempoClients{
 		grafanaURL: b.url,
-		cache:      make(map[string]*mcpgrafana.ProxiedClient),
+		cache:      make(map[tempoClientKey]*mcpgrafana.ProxiedClient),
 	}
 	seed, err := c.clientFor(b.attachGrafana(ctx, seedOrgID), seedUID)
 	if err != nil {
@@ -95,25 +101,27 @@ func (c *tempoClients) handler(name string) server.ToolHandlerFunc {
 }
 
 func (c *tempoClients) clientFor(ctx context.Context, uid string) (*mcpgrafana.ProxiedClient, error) {
+	key := tempoClientKey{orgID: mcpgrafana.GrafanaConfigFromContext(ctx).OrgID, uid: uid}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if cl, ok := c.cache[uid]; ok {
+	if cl, ok := c.cache[key]; ok {
 		return cl, nil
 	}
-	cl, err := c.dial(ctx, uid)
+	cl, err := c.dial(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	c.cache[uid] = cl
+	c.cache[key] = cl
 	return cl, nil
 }
 
 // dial connects to Tempo's MCP server through Grafana's datasource
-// proxy. ctx must already carry a GrafanaConfig (gfBinder.attachGrafana
-// or our seed-dial ctx) — the transport reads it for OrgID/auth.
-func (c *tempoClients) dial(ctx context.Context, uid string) (*mcpgrafana.ProxiedClient, error) {
-	mcpURL := strings.TrimRight(c.grafanaURL, "/") + "/api/datasources/proxy/uid/" + uid + tempoMCPPath
-	return mcpgrafana.NewProxiedClient(ctx, uid, "tempo-"+uid, string(grafana.DSTypeTempo), mcpURL)
+// proxy, pinned to key.orgID. ctx must already carry a GrafanaConfig
+// (gfBinder.attachGrafana or our seed-dial ctx) — the transport reads
+// it for auth.
+func (c *tempoClients) dial(ctx context.Context, key tempoClientKey) (*mcpgrafana.ProxiedClient, error) {
+	mcpURL := strings.TrimRight(c.grafanaURL, "/") + "/api/datasources/proxy/uid/" + key.uid + tempoMCPPath
+	return mcpgrafana.NewProxiedClient(ctx, key.orgID, key.uid, "tempo-"+key.uid, string(grafana.DSTypeTempo), mcpURL)
 }
 
 // findSeedTempoUID returns any (orgID, tempo UID) pair from the live
