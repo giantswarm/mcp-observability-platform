@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - mcp-oauth updated to v1.x.
+- mcp-grafana updated to v1.4.2, fixing CVE-2026-15583 and CVE-2026-19516 (SSRF and service-account token exfiltration through the `X-Grafana-URL` header) and, through its dependencies, CVE-2026-93450 in `go-openapi/swag/jsonutils`. v1.4.2 is the last release that still ships the proxied MCP client the Tempo tools use. mcp-grafana now rejects argument keys a tool does not declare, so the synthetic `org` argument is stripped before a call is handed to it, and the Tempo client cache is keyed by organization and datasource UID because the client now pins the organization it was dialled for.
+- OpenTelemetry-Go exporters updated to v1.46.0 and the log modules to v0.22.0, fixing GO-2026-6505, GO-2026-6508 and GO-2026-6615.
+- `google.golang.org/grpc` updated to v1.83.2, fixing GO-2026-6443.
+- `.nancy-ignore` no longer carries exceptions for dependency versions that are no longer in the build.
 - `google.golang.org/grpc` updated to v1.83.0, fixing GO-2026-6061 (HTTP/2 transport).
 
 ### Fixed
