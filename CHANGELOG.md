@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `values.schema.json` no longer rejects the free-form values the templates pass through with `toYaml`. The generator inferred a closed schema from the defaults, so `podLabels`, `podAnnotations`, `nodeSelector`, `affinity`, `service.annotations`, `serviceAccount.annotations`, `serviceMonitor.labels`, `httpRoute.annotations`, `autoscaling.hpa.behavior` and `autoscaling.vpa.resourcePolicy` accepted no keys at all, and `networkPolicy.ingress` accepted only `ports`. `networkPolicy.ingress` items now validate against the upstream Kubernetes `NetworkPolicyIngressRule`. This broke `helm unittest`, which validates values against the schema.
+- `values.schema.json` no longer rejects valid Gateway API fields on `httpRoute.parentRefs` and `httpRoute.matches`. Their items were inferred from the defaults and accepted only `name`/`namespace`/`sectionName` and `path`; they now validate against the Gateway API HTTPRoute v1 `ParentReference` and `HTTPRouteMatch` schemas, so `group`, `kind`, `port`, `headers`, `method` and `queryParams` pass.
 
 ## [0.3.0] - 2026-06-30
 
