@@ -137,6 +137,9 @@ func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argN
 		if errRes != nil {
 			return errRes, nil
 		}
+		if err := stripOrgArg(&req); err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		}
 		ctx = b.attachGrafana(ctx, org.OrgID)
 
 		if uid := req.GetString(argName, ""); uid != "" {
@@ -289,6 +292,9 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, dsType gra
 		if errRes != nil {
 			return errRes, nil
 		}
+		if err := stripOrgArg(&req); err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		}
 		ctx = b.attachGrafana(ctx, org.OrgID)
 		if dsType == "" {
 			return upstream.Handler(ctx, req)
@@ -367,23 +373,32 @@ func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Conte
 // shape is malformed (json.RawMessage that doesn't decode as an object,
 // or any other unexpected type).
 func injectArg(req *mcp.CallToolRequest, key string, value any) error {
+	return editArgs(req, func(args map[string]any) { args[key] = value })
+}
+
+// stripOrgArg removes the synthetic "org" argument before a call goes to
+// the upstream handler: upstream rejects argument keys it does not
+// declare, and "org" is ours (see withOrg).
+func stripOrgArg(req *mcp.CallToolRequest) error {
+	return editArgs(req, func(args map[string]any) { delete(args, "org") })
+}
+
+// editArgs applies edit to a copy of req.Params.Arguments and stores the
+// copy, so the caller's request is never mutated in place.
+func editArgs(req *mcp.CallToolRequest, edit func(map[string]any)) error {
+	next := map[string]any{}
 	switch a := req.Params.Arguments.(type) {
 	case nil:
-		req.Params.Arguments = map[string]any{key: value}
 	case map[string]any:
-		next := make(map[string]any, len(a)+1)
 		maps.Copy(next, a)
-		next[key] = value
-		req.Params.Arguments = next
 	case json.RawMessage:
-		next := map[string]any{}
 		if err := json.Unmarshal(a, &next); err != nil {
 			return fmt.Errorf("decode arguments: %w", err)
 		}
-		next[key] = value
-		req.Params.Arguments = next
 	default:
 		return fmt.Errorf("unexpected arguments type %T", a)
 	}
+	edit(next)
+	req.Params.Arguments = next
 	return nil
 }
