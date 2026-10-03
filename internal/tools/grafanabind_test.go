@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"

@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
-	mcpgrafanatools "github.com/grafana/mcp-grafana/tools"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
+	mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
