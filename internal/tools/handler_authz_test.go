@@ -9,7 +9,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -101,7 +100,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 	}
 
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(context.Background(), s, slog.Default(), az, emptyOrgLister, gf, ts.URL, "test-token", nil, nil); err != nil {
+	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s, ts.Close
@@ -144,7 +143,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 		"id":             testUID,
 		"dashboardUid":   testUID,
 		"panelId":        1,
-		"datasource_uid": "any", // alerting_manage_rules: bridge clobbers, but its own validate() expects an operation
+		"datasource_uid": "any", // alerting_rules_read: bridge clobbers, but its own validate() expects an operation
 		"operation":      "list",
 		"q":              "{}",
 		"logql":          `{job="x"}`,

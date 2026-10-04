@@ -58,16 +58,11 @@ security boundaries are, and where to add a new tool.
               │        type, UID injected server-side                          │
               │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
               │     5. delegate to upstream grafana/mcp-grafana handler        │
+              │        (MCP Go SDK types, bridged to mark3labs/mcp-go)         │
               │                                                                │
               │ Local tools (Alertmanager v2) call az.RequireOrg then          │
               │ grafana.Client.DatasourceProxy directly. list_orgs uses        │
               │ az.ListOrgs (no datasource).                                   │
-              │                                                                │
-              │ Tempo tools delegate to Tempo's own MCP server                 │
-              │ (internal/tools/tempo.go): registered via                      │
-              │ gfBinder.bindDatasourceTool with a per-UID ProxiedClient cache │
-              │ behind the handler. Endpoint:                                  │
-              │ /api/datasources/proxy/uid/<uid>/api/mcp.                      │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
@@ -87,7 +82,7 @@ security boundaries are, and where to add a new tool.
 | `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
 | `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `ListDatasources`, `LookupDatasourceByUID`, `DatasourceProxy`) plus `Datasource` and `DatasourceType` (`MatchesType` / `FilterDatasourcesByType`). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. `ListDatasources` is cached per-OrgID (30s TTL); `LookupDatasourceByUID` inherits transparently. |
-| `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go`, `examples.go` (plus the delegated datasource tools in `orgs.go`). Delegated to Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`, registered through the same `gfBinder.bindDatasourceTool` path: `tempo.go`. Local: `orgs.go` (`list_orgs`), `alerts.go`, `silences.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). Every `s.AddTool` call site goes through `maybeAddTool`, which honours the `--disabled-tools` filter wired in from `cmd/serve.go` so operators can drop individual tools at deployment time. |
+| `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go`, `examples.go`, `tempo.go` (plus the delegated datasource tools in `orgs.go`). Local: `orgs.go` (`list_orgs`), `alerts.go`, `silences.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server, converting upstream's MCP Go SDK types to `mark3labs/mcp-go` (`toolFromSDK`, `callUpstream`) — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). Every `s.AddTool` call site goes through `maybeAddTool`, which honours the `--disabled-tools` filter wired in from `cmd/serve.go` so operators can drop individual tools at deployment time. |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -134,10 +129,8 @@ only"; do not expose stdio to untrusted users.
 
 **First, check upstream.** Before adding a local handler, look at
 `grafana/mcp-grafana` for a tool with the same intent. If it exists,
-register it via `gfBinder` (Loki/Prometheus/dashboards/alert-rules all
-do this). For Tempo, the corresponding tool likely already lives in
-Tempo's own MCP server (`/api/mcp`); the `tempo.go` bridge picks it up
-automatically. The *only* place we add local code is when neither
+register it via `gfBinder` (Loki/Prometheus/Tempo/dashboards/alert-rules
+all do this). The *only* place we add local code is when neither
 upstream surface has an equivalent (today: Alertmanager v2, `list_orgs` —
 see `internal/tools/doc.go` for the rationale per category).
 
@@ -149,7 +142,7 @@ upstream:
 
 ```go
 import (
-    mcpgrafanatools "github.com/grafana/mcp-grafana/tools"
+    mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
     "github.com/giantswarm/mcp-observability-platform/internal/authz"
     "github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
@@ -168,7 +161,7 @@ expected plugin type. The `tenantType` argument gates the call to
 orgs that carry that tenant type (`TenantTypeData` for
 metrics/logs/traces/rules; `TenantTypeAlerting` is reserved for
 Alertmanager-shaped tools, which today are local). Tools whose
-upstream arg name isn't `datasourceUid` (e.g. `alerting_manage_rules`
+upstream arg name isn't `datasourceUid` (e.g. `alerting_rules_read`
 uses `datasource_uid`) pass that string explicitly as the `argName`
 parameter.
 

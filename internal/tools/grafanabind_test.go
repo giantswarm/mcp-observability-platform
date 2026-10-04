@@ -14,6 +14,7 @@ import (
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/mark3labs/mcp-go/mcp"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
@@ -29,9 +30,10 @@ const (
 	testDSLoki         = "loki"
 	testDSUIDMimirGS   = "u-mimir-gs"
 	testToolQueryProm  = "query_prometheus"
-	testToolAlertRules = "alerting_manage_rules"
+	testToolAlertRules = "alerting_rules_read"
 	testUID            = "abc"
 	testAPIKey         = "tok"
+	testArgOther       = "other"
 )
 
 // fakeGrafanaServer satisfies the few endpoints upstream's GrafanaClient
@@ -98,21 +100,43 @@ func oauthCtx(sub, email string) context.Context {
 // binder passed in: the GrafanaConfig, the datasourceUid arg (if any),
 // and the request name.
 func stubTool(name string, required []string, captured *capturedCall) mcpgrafana.Tool {
-	t := mcp.NewTool(name, mcp.WithDescription("stub"))
-	t.InputSchema.Properties = map[string]any{
-		datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString},
-		"other":          map[string]any{jsonSchemaTypeKey: jsonTypeString},
-	}
-	t.InputSchema.Required = slices.Clone(required)
 	return mcpgrafana.Tool{
-		Tool: t,
-		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Tool: stubSDKTool(name, map[string]any{
+			datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString},
+			testArgOther:     map[string]any{jsonSchemaTypeKey: jsonTypeString},
+		}, required),
+		Handler: func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
 			captured.cfg = mcpgrafana.GrafanaConfigFromContext(ctx)
-			captured.args = req.GetArguments()
+			captured.args = sdkArgs(req)
 			captured.toolName = req.Params.Name
-			return mcp.NewToolResultText("ok"), nil
+			return mcpgrafana.NewToolResultText("ok"), nil
 		},
 	}
+}
+
+// stubSDKTool builds an upstream-shaped tool definition: an SDK tool
+// whose schema is raw JSON, as mcpgrafana.MustTool produces.
+func stubSDKTool(name string, props map[string]any, required []string) *sdkmcp.Tool {
+	schema := map[string]any{jsonSchemaTypeKey: "object", "properties": props}
+	if len(required) > 0 {
+		schema["required"] = slices.Clone(required)
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		panic(err)
+	}
+	return &sdkmcp.Tool{Name: name, Description: "stub", InputSchema: json.RawMessage(raw)}
+}
+
+// sdkArgs decodes the raw arguments an upstream handler receives.
+func sdkArgs(req *sdkmcp.CallToolRequest) map[string]any {
+	args := map[string]any{}
+	if len(req.Params.Arguments) > 0 {
+		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+			panic(err)
+		}
+	}
+	return args
 }
 
 type capturedCall struct {
@@ -566,25 +590,24 @@ type fanoutCall struct {
 
 type fanoutStub struct {
 	calls   []fanoutCall
-	respond func(args map[string]any) (*mcp.CallToolResult, error)
+	respond func(args map[string]any) (*sdkmcp.CallToolResult, error)
 }
 
 func stubFanoutTool(name string, cap *fanoutStub) mcpgrafana.Tool {
-	t := mcp.NewTool(name, mcp.WithDescription("stub"))
-	t.InputSchema.Properties = map[string]any{
-		datasourceUIDArgSnake: map[string]any{jsonSchemaTypeKey: jsonTypeString},
-	}
 	return mcpgrafana.Tool{
-		Tool: t,
-		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Tool: stubSDKTool(name, map[string]any{
+			datasourceUIDArgSnake: map[string]any{jsonSchemaTypeKey: jsonTypeString},
+		}, nil),
+		Handler: func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+			args := sdkArgs(req)
 			cap.calls = append(cap.calls, fanoutCall{
-				args: req.GetArguments(),
+				args: args,
 				cfg:  mcpgrafana.GrafanaConfigFromContext(ctx),
 			})
 			if cap.respond != nil {
-				return cap.respond(req.GetArguments())
+				return cap.respond(args)
 			}
-			return mcp.NewToolResultText(`[]`), nil
+			return mcpgrafana.NewToolResultText(`[]`), nil
 		},
 	}
 }
@@ -602,8 +625,8 @@ func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 	}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
 	cap := &fanoutStub{
-		respond: func(args map[string]any) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultText(fmt.Sprintf(`[{"uid":%q}]`, args[datasourceUIDArgSnake])), nil
+		respond: func(args map[string]any) (*sdkmcp.CallToolResult, error) {
+			return mcpgrafana.NewToolResultText(fmt.Sprintf(`[{"uid":%q}]`, args[datasourceUIDArgSnake])), nil
 		},
 	}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
@@ -693,11 +716,11 @@ func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 	}
 	b, _ := newGFBinder(az, gc, ts.URL, "tok", nil, nil)
 	cap := &fanoutStub{
-		respond: func(args map[string]any) (*mcp.CallToolResult, error) {
+		respond: func(args map[string]any) (*sdkmcp.CallToolResult, error) {
 			if args[datasourceUIDArgSnake] == "u2" {
-				return mcp.NewToolResultError("400 no valid org id found"), nil
+				return mcpgrafana.NewToolResultError("400 no valid org id found"), nil
 			}
-			return mcp.NewToolResultText(`[{"name":"r"}]`), nil
+			return mcpgrafana.NewToolResultText(`[{"name":"r"}]`), nil
 		},
 	}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
@@ -794,5 +817,97 @@ func TestInjectArg_RejectsUnknownShape(t *testing.T) {
 	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: 42}}
 	if err := injectArg(req, "k", "v"); err == nil {
 		t.Fatal("expected error on unknown Arguments type, got nil")
+	}
+}
+
+// ---------- SDK bridge ----------
+
+func TestToolFromSDK_MapsAnnotationsAndSchema(t *testing.T) {
+	in := stubSDKTool("t", map[string]any{
+		datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString},
+		testArgOther:     map[string]any{jsonSchemaTypeKey: jsonTypeString},
+	}, []string{datasourceUIDArg, testArgOther})
+	in.Annotations = &sdkmcp.ToolAnnotations{
+		Title:           "T",
+		ReadOnlyHint:    true,
+		IdempotentHint:  true,
+		DestructiveHint: mcp.ToBoolPtr(false),
+	}
+
+	out := withOrg(toolFromSDK(in), datasourceUIDArg)
+
+	if out.Name != "t" || out.Description != "stub" {
+		t.Errorf("name/description = %q/%q", out.Name, out.Description)
+	}
+	a := out.Annotations
+	if a.Title != "T" || !*a.ReadOnlyHint || !*a.IdempotentHint || *a.DestructiveHint || a.OpenWorldHint != nil {
+		t.Errorf("annotations = %+v", a)
+	}
+	if !slices.Equal(out.InputSchema.Required, []string{testOrgArg, testArgOther}) {
+		t.Errorf("required = %v, want [org other]", out.InputSchema.Required)
+	}
+	for _, p := range []string{testOrgArg, datasourceUIDArg, testArgOther} {
+		if _, ok := out.InputSchema.Properties[p]; !ok {
+			t.Errorf("property %q missing", p)
+		}
+	}
+}
+
+func TestCallUpstream_ConvertsRequestAndResult(t *testing.T) {
+	var gotName string
+	var gotArgs map[string]any
+	upstream := mcpgrafana.Tool{
+		Tool: stubSDKTool("t", nil, nil),
+		Handler: func(_ context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+			gotName = req.Params.Name
+			gotArgs = sdkArgs(req)
+			return &sdkmcp.CallToolResult{
+				Content: []sdkmcp.Content{
+					&sdkmcp.TextContent{Text: "hello"},
+					&sdkmcp.ImageContent{Data: []byte("png"), MIMEType: "image/png"},
+				},
+				IsError: true,
+			}, nil
+		},
+	}
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"k": "v"}}}
+
+	res, err := callUpstream(context.Background(), upstream, req)
+	if err != nil {
+		t.Fatalf("Go error: %v", err)
+	}
+	if gotName != "t" || gotArgs["k"] != "v" {
+		t.Errorf("upstream got name=%q args=%v", gotName, gotArgs)
+	}
+	if !res.IsError {
+		t.Error("IsError lost")
+	}
+	if len(res.Content) != 2 {
+		t.Fatalf("got %d content items, want 2", len(res.Content))
+	}
+	if textOf(res) != "hello" {
+		t.Errorf("text = %q, want hello", textOf(res))
+	}
+	img, ok := res.Content[1].(mcp.ImageContent)
+	if !ok {
+		t.Fatalf("content[1] is %T, want mcp.ImageContent", res.Content[1])
+	}
+	// The SDK base64-encodes []byte on the wire; mark3labs keeps it encoded.
+	if img.Data != "cG5n" || img.MIMEType != "image/png" {
+		t.Errorf("image = %+v", img)
+	}
+}
+
+func TestCallUpstream_PropagatesHandlerError(t *testing.T) {
+	want := errors.New("boom")
+	upstream := mcpgrafana.Tool{
+		Tool: stubSDKTool("t", nil, nil),
+		Handler: func(context.Context, *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+			return nil, want
+		},
+	}
+	_, err := callUpstream(context.Background(), upstream, mcp.CallToolRequest{})
+	if !errors.Is(err, want) {
+		t.Errorf("err = %v, want %v", err, want)
 	}
 }

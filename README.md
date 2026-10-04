@@ -33,10 +33,7 @@ are intentionally out of scope for this MCP.
 Most tool handlers delegate to upstream
 [`grafana/mcp-grafana`](https://github.com/grafana/mcp-grafana) — we add a
 synthetic `org` argument and `gfBinder` resolves it to the org's
-OrgID + datasource UID before delegating. Tempo tools delegate to
-Tempo's own MCP server (`/api/mcp`) via `mcp-grafana`'s `ProxiedClient`,
-through a thin per-UID adapter that keeps the same `(org, …)` shape.
-Alertmanager v2 alerts/silences and `list_orgs` stay local — no usable
+OrgID + datasource UID before delegating. Alertmanager v2 alerts/silences and `list_orgs` stay local — no usable
 upstream equivalent. See `internal/tools/doc.go` for the per-category rationale.
 
 **Orgs & datasources**
@@ -74,9 +71,9 @@ upstream equivalent. See `internal/tools/doc.go` for the per-category rationale.
 
 **Alert rules (Mimir Ruler)**
 
-| Tool                    | Backend                                                                  |
-| ----------------------- | ------------------------------------------------------------------------ |
-| `alerting_manage_rules` | Grafana `/api/prometheus/{datasourceUID}/api/v1/rules` (delegated to upstream `mcp-grafana`); bound to the Mimir datasource. Useful operation is `operation=list` — `get`/`versions` require Grafana-managed RuleUIDs and don't work for Mimir-side rules. |
+| Tool                  | Backend                                                                  |
+| --------------------- | ------------------------------------------------------------------------ |
+| `alerting_rules_read` | Grafana `/api/prometheus/{datasourceUID}/api/v1/rules` (delegated to upstream `mcp-grafana`); bound to the Mimir datasource. Useful operation is `operation=list` — `get`/`versions` require Grafana-managed RuleUIDs and don't work for Mimir-side rules. |
 
 > **Known gaps** (tracked in [`docs/roadmap.md`](./docs/roadmap.md)): recording rules are dropped by upstream's projection; Loki rules are not exposed at all. Both Mimir and Loki rulers expose the same Prometheus-shape `/prometheus/api/v1/rules` endpoint and would unblock once upstream stops filtering recording rules.
 
@@ -90,19 +87,17 @@ upstream equivalent. See `internal/tools/doc.go` for the per-category rationale.
 | `list_loki_label_names`    | `loki/api/v1/labels`                                     |
 | `list_loki_label_values`   | `loki/api/v1/label/{label}/values`                       |
 
-**Traces (Tempo)** — delegated to Tempo's own MCP server (`/api/mcp`) via Grafana's datasource proxy. Requires the `tempo-app` chart with `query_frontend.mcp_server.enabled=true`; if not reachable at startup the binder logs a warning and skips registration.
+**Traces (Tempo)** — delegated to upstream `mcp-grafana`, which calls Tempo's HTTP API through Grafana's datasource proxy.
 
-Tools are exposed verbatim under their upstream Tempo MCP names (kebab-case):
-
-| Tool                      | Tempo MCP tool                |
-| ------------------------- | ----------------------------- |
-| `traceql-search`          | TraceQL search                |
-| `get-trace`               | Fetch a single trace by ID    |
-| `get-attribute-names`     | List attribute names by scope |
-| `get-attribute-values`    | List values for an attribute  |
-| `traceql-metrics-instant` | TraceQL metrics — instant     |
-| `traceql-metrics-range`   | TraceQL metrics — range       |
-| `docs-traceql`            | Embedded TraceQL reference    |
+| Tool                          | Purpose                                                  |
+| ----------------------------- | -------------------------------------------------------- |
+| `search_tempo_traces`         | TraceQL search                                           |
+| `query_tempo_metrics`         | TraceQL metrics — `type=range` (default) or `instant`    |
+| `get_tempo_trace`             | Fetch a single trace by ID                               |
+| `diff_tempo_traces`           | Compare two traces                                       |
+| `list_tempo_attribute_names`  | List attribute names by scope                            |
+| `list_tempo_attribute_values` | List values for an attribute                             |
+| `get_tempo_traceql_docs`      | Embedded TraceQL reference (no datasource)               |
 
 **Alerts (Alertmanager)**
 
@@ -132,14 +127,14 @@ only picks the right datasource and lets Grafana apply the header.
 The default first-match is the multi-tenant aggregate (`gs-mimir`,
 `gs-loki`) — the right choice for org-wide queries. To scope a query
 to a specific tenant, pass the optional `datasourceUid` argument
-(snake-case `datasource_uid` on `alerting_manage_rules`, which keeps
+(snake-case `datasource_uid` on `alerting_rules_read`, which keeps
 upstream's quirk). Operator-managed mono-tenant datasources
 follow the convention `gs-{kind}-{tenant}`; call `list_datasources` to
 discover available UIDs. Caller-supplied UIDs are validated against
 the org's live datasource list and the expected plugin type — a UID
 from another org or wrong type is rejected before the upstream call.
 
-`alerting_manage_rules` is the exception: with no `datasource_uid` it
+`alerting_rules_read` is the exception: with no `datasource_uid` it
 fans out across every datasource where Grafana's `manageAlerts` flag
 is set, returning per-DS results merged into a stable envelope.
 
@@ -259,7 +254,7 @@ caller identity instead.
 
 | Flag                 | Purpose                                                  |
 | -------------------- | -------------------------------------------------------- |
-| `--disabled-tools`   | CSV of MCP tool names to skip at startup (e.g. `--disabled-tools=alerting_manage_rules,get_panel_image`). Surfaced as `tools.disabled` in the Helm chart. Empty = all tools registered. |
+| `--disabled-tools`   | CSV of MCP tool names to skip at startup (e.g. `--disabled-tools=alerting_rules_read,get_panel_image`). Surfaced as `tools.disabled` in the Helm chart. Empty = all tools registered. |
 | `--debug`            | Enable debug logging (overrides `DEBUG` env).            |
 | `--transport`        | `streamable-http` (default), `sse`, or `stdio`. Mirrors `MCP_TRANSPORT`. |
 | `--mcp-addr`         | Listen address for the MCP HTTP surface. Mirrors `MCP_ADDR`. |

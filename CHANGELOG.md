@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `diff_tempo_traces` compares two traces.
+
 ### Changed
 
-- mcp-grafana updated to v2.0.0.
+- mcp-grafana updated to v2.0.0. mcp-grafana now exposes MCP Go SDK types; `gfBinder` converts them to `mark3labs/mcp-go`, which this server keeps using.
+- `alerting_manage_rules` is renamed to `alerting_rules_read`. Update `--disabled-tools` / `tools.disabled` entries that name it.
+- Tempo tools use mcp-grafana's native Tempo tools, which call Tempo's HTTP API through Grafana's datasource proxy. Tool names change: `traceql-search` → `search_tempo_traces`, `get-trace` → `get_tempo_trace`, `get-attribute-names` → `list_tempo_attribute_names`, `get-attribute-values` → `list_tempo_attribute_values`, `traceql-metrics-instant` / `traceql-metrics-range` → `query_tempo_metrics` (`type=instant|range`), `docs-traceql` → `get_tempo_traceql_docs`. The `tempo-app` MCP server (`query_frontend.mcp_server.enabled`) is no longer required, and Tempo tools register at startup without probing a Tempo datasource.
 
 ## [0.4.0] - 2026-10-02
 

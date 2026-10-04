@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"context"
-	"log/slog"
 	"net/url"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -32,8 +30,7 @@ var readOnlyToolAnnotation = mcp.ToolAnnotation{
 }
 
 // readOnlyAnnotation is the mcp.NewTool option form of
-// readOnlyToolAnnotation. Use the value directly when mutating an
-// existing mcp.Tool (e.g. tools delegated through ProxiedClient).
+// readOnlyToolAnnotation.
 func readOnlyAnnotation() mcp.ToolOption {
 	return mcp.WithToolAnnotation(readOnlyToolAnnotation)
 }
@@ -55,11 +52,10 @@ func maybeAddTool(s *mcpsrv.MCPServer, disabled map[string]bool, t mcp.Tool, h m
 }
 
 // RegisterAll wires every category of tool into the MCP server. See
-// doc.go for the per-category breakdown. ctx is used only for the
-// Tempo binder's one-shot startup discovery. disabled (typically
+// doc.go for the per-category breakdown. disabled (typically
 // sourced from --disabled-tools) is consulted at every s.AddTool site
 // via maybeAddTool; nil = no filter.
-func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, az authz.Authorizer, ol authz.OrgLister, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
 	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth, disabled)
 	if err != nil {
 		return err
@@ -72,8 +68,6 @@ func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, 
 	registerAlertTools(s, disabled, az, gc)
 	registerSilenceTools(s, disabled, az, gc)
 	registerExampleTools(s, b)
-	if err := registerTempoTools(ctx, s, logger, b, ol); err != nil {
-		return err
-	}
+	registerTempoTools(s, b)
 	return nil
 }
