@@ -7,7 +7,7 @@
 //	dashboards.go  — delegated: dashboards, search, navigation, run_panel_query
 //	metrics.go     — delegated: Mimir Prometheus tools (query, label/metric/value lists, metadata, histogram)
 //	logs.go        — delegated: Loki tools (query, label names/values, stats, patterns)
-//	alerting.go    — delegated: alerting_manage_rules (read meta-tool over alert rules)
+//	alerting.go    — delegated: alerting_rules_read (read-only alert rules tool)
 //	examples.go    — delegated: get_query_examples (PromQL/LogQL/SQL syntax helper)
 //	orgs.go        — list_orgs (local) + delegated list/get_datasource
 //	alerts.go      — local: Alertmanager v2 alerts (no upstream equivalent)

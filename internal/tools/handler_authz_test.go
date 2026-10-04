@@ -144,7 +144,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 		"id":             testUID,
 		"dashboardUid":   testUID,
 		"panelId":        1,
-		"datasource_uid": "any", // alerting_manage_rules: bridge clobbers, but its own validate() expects an operation
+		"datasource_uid": "any", // alerting_rules_read: bridge clobbers, but its own validate() expects an operation
 		"operation":      "list",
 		"q":              "{}",
 		"logql":          `{job="x"}`,

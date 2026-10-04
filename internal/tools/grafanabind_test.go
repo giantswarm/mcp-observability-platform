@@ -30,7 +30,7 @@ const (
 	testDSLoki         = "loki"
 	testDSUIDMimirGS   = "u-mimir-gs"
 	testToolQueryProm  = "query_prometheus"
-	testToolAlertRules = "alerting_manage_rules"
+	testToolAlertRules = "alerting_rules_read"
 	testUID            = "abc"
 	testAPIKey         = "tok"
 	testArgOther       = "other"

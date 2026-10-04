@@ -25,7 +25,7 @@ import (
 const orgArgDescription = "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs."
 
 // datasourceUIDArg is upstream's conventional argument name for the
-// datasource UID. Most upstream tools use this; alerting_manage_rules
+// datasource UID. Most upstream tools use this; alerting_rules_read
 // uses datasourceUIDArgSnake.
 const (
 	datasourceUIDArg      = "datasourceUid"
@@ -119,7 +119,7 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 // reserved for Alertmanager-shaped tools, which today are local).
 //
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
-// "datasource_uid" (snake_case) for alerting_manage_rules.
+// "datasource_uid" (snake_case) for alerting_rules_read.
 func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
 	maybeAddTool(s, b.disabled, withOrg(toolFromSDK(t.Tool), argName), b.wrap(role, tenantType, dsType, argName, t))
 }
