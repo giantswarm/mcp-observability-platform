@@ -188,10 +188,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Info("disabled tools at startup", "names", names)
 	}
 
-	mcp, err := server.New(shutdownCtx, server.Config{
+	mcp, err := server.New(server.Config{
 		Logger:           logger,
 		Authorizer:       authorizer,
-		OrgLister:        orgLister,
 		Grafana:          grafanaClient,
 		GrafanaURL:       cfg.GrafanaURL,
 		GrafanaAPIKey:    apiKey,

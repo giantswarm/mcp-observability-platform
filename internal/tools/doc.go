@@ -12,7 +12,7 @@
 //	orgs.go        — list_orgs (local) + delegated list/get_datasource
 //	alerts.go      — local: Alertmanager v2 alerts (no upstream equivalent)
 //	silences.go    — local: Alertmanager v2 silences (no upstream equivalent)
-//	tempo.go       — delegated to Tempo's own MCP server (/api/mcp) via Grafana datasource proxy
+//	tempo.go       — delegated: Tempo tools (TraceQL search/metrics, traces, attributes, TraceQL docs)
 //
 // gfBinder.bindOrgTool covers org-only delegated tools;
 // gfBinder.bindDatasourceTool covers delegated tools that need a
