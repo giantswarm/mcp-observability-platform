@@ -8,9 +8,9 @@ package tools
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,12 +21,6 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
-
-// emptyOrgLister returns no orgs, so the Tempo binder finds no seed
-// datasource and skips registration. Tempo's MCP server isn't runnable
-// in-process; integration coverage of the binder is the deploy-time
-// smoke test in the PR description.
-var emptyOrgLister = staticOrgLister{}
 
 // newGrafanaJSONServer wraps handler with a default Content-Type:
 // application/json so the production fetchJSON content-type guard is
@@ -63,7 +57,7 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 		}},
 	}}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(context.Background(), s, slog.Default(), az, emptyOrgLister, gf, ts.URL, "test-token", nil, nil); err != nil {
+	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s
@@ -322,5 +316,85 @@ func TestHandler_RegistersNewTools(t *testing.T) {
 		if s.GetTool(name) == nil {
 			t.Errorf("tool %q not registered", name)
 		}
+	}
+}
+
+// TestHandler_RegistersTempoTools pins the native Tempo tool surface:
+// every tool takes the required `org` argument, and the datasource
+// tools keep `datasourceUid` as an optional override.
+func TestHandler_RegistersTempoTools(t *testing.T) {
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	defer ts.Close()
+	s := wireHandlerTest(t, ts)
+	for _, name := range []string{
+		"search_tempo_traces",
+		"query_tempo_metrics",
+		"get_tempo_trace",
+		"diff_tempo_traces",
+		"list_tempo_attribute_names",
+		"list_tempo_attribute_values",
+		"get_tempo_traceql_docs",
+	} {
+		st := s.GetTool(name)
+		if st == nil {
+			t.Errorf("tool %q not registered", name)
+			continue
+		}
+		schema := st.Tool.InputSchema
+		if !slices.Contains(schema.Required, testOrgArg) {
+			t.Errorf("tool %q: org not required (required=%v)", name, schema.Required)
+		}
+		if slices.Contains(schema.Required, datasourceUIDArg) {
+			t.Errorf("tool %q: %s must be optional", name, datasourceUIDArg)
+		}
+		_, hasUID := schema.Properties[datasourceUIDArg]
+		if wantUID := name != "get_tempo_traceql_docs"; hasUID != wantUID {
+			t.Errorf("tool %q: has %s = %v, want %v", name, datasourceUIDArg, hasUID, wantUID)
+		}
+	}
+}
+
+// TestHandler_SearchTempoTraces_PropagatesOrgID pins multi-org routing for
+// the native Tempo tools: the binder resolves the caller's org, injects the
+// org's Tempo datasource UID, and upstream's Tempo client sends the resolved
+// OrgID and the caller's audit handle to Grafana's datasource proxy.
+func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
+	const tempoSearchPath = "/api/datasources/proxy/uid/tempo-uid/api/search"
+	var sawSearch bool
+	var sawOrgID, sawUser string
+	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case dsListPath:
+			_, _ = w.Write([]byte(`[{"id":3,"uid":"tempo-uid","name":"GS Tempo","type":"tempo"}]`))
+		case "/api/datasources/uid/tempo-uid":
+			_, _ = w.Write([]byte(`{"id":3,"uid":"tempo-uid","name":"GS Tempo","type":"tempo"}`))
+		case tempoSearchPath:
+			sawSearch = true
+			sawOrgID = r.Header.Get("X-Grafana-Org-Id")
+			sawUser = r.Header.Get("X-Grafana-User")
+			_, _ = w.Write([]byte(`{"traces":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	})
+	defer ts.Close()
+
+	const caller = "alice@example.com"
+	res := callToolWithCtx(t, callerCtx(caller), wireHandlerTest(t, ts), "search_tempo_traces", map[string]any{
+		testOrgArg: testOrgName, "query": "{}",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected IsError: %s", resultText(res))
+	}
+	if !sawSearch {
+		t.Fatalf("Tempo search not sent to %s", tempoSearchPath)
+	}
+	if sawOrgID != "1" {
+		t.Errorf("X-Grafana-Org-Id = %q, want %q (the resolved OrgID for caller's org)", sawOrgID, "1")
+	}
+	if sawUser != caller {
+		t.Errorf("X-Grafana-User = %q, want %q (the caller's audit handle)", sawUser, caller)
 	}
 }

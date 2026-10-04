@@ -129,7 +129,7 @@ runtime:
 
 # --- Tool registration ---
 # `disabled` is a list of MCP tool names to skip at startup, e.g.
-# ["alerting_manage_rules", "get_panel_image"]. Names match the tool
+# ["alerting_rules_read", "get_panel_image"]. Names match the tool
 # identifier exposed in tools/list. Empty = all tools registered.
 tools:
   disabled: []

@@ -57,7 +57,7 @@ func init() {
 	serveCmd.Flags().BoolVar(&flagDebug, "debug", false, "enable debug logging (overrides DEBUG env)")
 	serveCmd.Flags().StringSliceVar(&flagDisabledTools, "disabled-tools", nil,
 		"comma-separated MCP tool names to skip at startup "+
-			"(e.g. --disabled-tools=alerting_manage_rules,get_panel_image)")
+			"(e.g. --disabled-tools=alerting_rules_read,get_panel_image)")
 }
 
 // toSet collapses a flag-supplied list into a lookup map: trims
@@ -188,10 +188,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Info("disabled tools at startup", "names", names)
 	}
 
-	mcp, err := server.New(shutdownCtx, server.Config{
+	mcp, err := server.New(server.Config{
 		Logger:           logger,
 		Authorizer:       authorizer,
-		OrgLister:        orgLister,
 		Grafana:          grafanaClient,
 		GrafanaURL:       cfg.GrafanaURL,
 		GrafanaAPIKey:    apiKey,
