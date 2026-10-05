@@ -62,6 +62,12 @@ workflows:
           executor: app-build-suite
           context: architect
           name: build-mcp-observability-platform-chart
+          # Runs before the image is pushed: skip the image check for this
+          # pipeline's own image. The chart-push jobs keep the full check.
+          pre-steps:
+            - run:
+                name: Skip the image check for this pipeline's own image
+                command: echo 'export ABS_HELM_IMAGE_REFERENCE_VALIDATOR_OWN_IMAGE=gsoci.azurecr.io/giantswarm/mcp-observability-platform' >> "$BASH_ENV"
           app_catalog: giantswarm-catalog
           app_catalog_test: giantswarm-test-catalog
           chart: mcp-observability-platform
