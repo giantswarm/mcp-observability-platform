@@ -239,6 +239,11 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace go.mongodb.org/mongo-driver v1.17.6 => go.mongodb.org/mongo-driver v1.17.9
+replace (
+	go.mongodb.org/mongo-driver v1.14.0 => go.mongodb.org/mongo-driver v1.17.10
+	go.mongodb.org/mongo-driver v1.17.6 => go.mongodb.org/mongo-driver v1.17.9
+)
 
 replace google.golang.org/grpc v1.83.0 => google.golang.org/grpc v1.83.2
+
+replace golang.org/x/image v0.0.0-20190802002840-cff245a6509b => golang.org/x/image v0.46.0
