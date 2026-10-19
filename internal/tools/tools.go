@@ -60,6 +60,11 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	if err != nil {
 		return err
 	}
+	registerAll(s, az, gc, b, disabled)
+	return nil
+}
+
+func registerAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
 	registerOrgTools(s, disabled, az, b)
 	registerDashboardTools(s, b)
 	registerMetricsTools(s, b)
@@ -69,5 +74,4 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	registerSilenceTools(s, disabled, az, gc)
 	registerExampleTools(s, b)
 	registerTempoTools(s, b)
-	return nil
 }

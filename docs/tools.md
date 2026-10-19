@@ -1,6 +1,6 @@
 # The tools
 
-Generated from the registered tools (`make tools-doc`), none disabled by `--disabled-tools`. The descriptions and schemas of the tools delegated to grafana/mcp-grafana are upstream's, led by a summary line of ours where upstream's first line is longer than muster shows; the binder adds the `org` argument and replaces the `datasourceUid` description.
+Generated from the registered tools (`make tools-doc`), none disabled by `--disabled-tools`. The descriptions and schemas of the tools delegated to grafana/mcp-grafana are upstream's, led by a summary line of ours where upstream's first line is longer than muster shows; the binder adds the `org` argument and, on the datasource-bound tools, replaces the `datasourceUid` description.
 
 | Tool | Kind |
 |---|---|
@@ -178,7 +178,7 @@ Compare two complete traces. Returns a compact summary and includes the full spa
       "type": "string"
     },
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "format": {
@@ -313,7 +313,7 @@ Get one Alertmanager alert by its fingerprint from list_alerts: labels, annotati
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "fingerprint": {
@@ -652,14 +652,14 @@ Get example queries for a specific datasource type. Provides sample queries with
 ## `get_silence`
 
 ```text
-Get one Alertmanager silence by id, e.g. from list_alerts' silencedBy: matchers, times, author, comment, state.
+Get one Alertmanager silence by id, e.g. from get_alert's silencedBy: matchers, times, author, comment, state.
 ```
 
 ```json
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "id": {
@@ -689,7 +689,7 @@ Retrieve a specific trace by ID
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "focus_span_id": {
@@ -757,7 +757,7 @@ List the org's Alertmanager alerts, most severe first, paged; get_alert has one 
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "filter": {
@@ -791,7 +791,7 @@ List the org's Alertmanager alerts, most severe first, paged; get_alert has one 
 ## `list_datasources`
 
 ```text
-List the org's Grafana datasources with their UIDs, filtered by type or name, paged.
+List the org's Grafana datasources with their UIDs, optionally filtered by type or name, paged.
 
 List all configured datasources in Grafana. Use this to discover available datasources and their UIDs. Supports filtering by type and/or name (case-insensitive substring match) and pagination.
 ```
@@ -841,7 +841,7 @@ Lists all available label/field names (keys) found in logs within a specified Lo
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -880,7 +880,7 @@ Retrieves all unique values associated with a specific `labelName` within a Loki
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -940,7 +940,7 @@ List label names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, C
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -1018,7 +1018,7 @@ Gets the values for a specific label name in a PromQL-compatible datasource (Pro
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -1101,7 +1101,7 @@ List Prometheus metric metadata. Returns metadata about metrics currently scrape
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "limit": {
@@ -1136,7 +1136,7 @@ List Prometheus metric metadata. Returns metadata about metrics currently scrape
 ## `list_prometheus_metric_names`
 
 ```text
-List the metric names in the org's Mimir metrics, filtered by regex and paged, optionally for a time range.
+List the metric names in the org's Mimir metrics, optionally by regex and time range, paged.
 
 Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.). Filters metric names using the provided regex. Supports pagination (page * limit must not exceed 10000) and an optional time range to restrict results to metrics active within that window. Cloud Monitoring ignores the time range.
 ```
@@ -1145,7 +1145,7 @@ Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir,
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -1196,7 +1196,7 @@ List the org's Alertmanager silences, soonest expiring first, paged; get_silence
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "matcher": {
@@ -1239,7 +1239,7 @@ List available attribute names for TraceQL queries. Without a scope (resource, s
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "org": {
@@ -1270,7 +1270,7 @@ List values for a fully scoped attribute name (e.g. resource.service.name). Usef
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "filter-query": {
@@ -1306,7 +1306,7 @@ Executes a log query against a Loki or VictoriaLogs datasource and returns match
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "direction": {
@@ -1371,7 +1371,7 @@ Retrieves detected log patterns from a Loki datasource for a given stream select
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -1415,7 +1415,7 @@ Retrieves index-level statistics about log streams matching a given selector wit
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endRfc3339": {
@@ -1455,7 +1455,7 @@ Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitorin
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endTime": {
@@ -1510,7 +1510,7 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "endTime": {
@@ -1571,7 +1571,7 @@ Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlik
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "end": {
@@ -1611,7 +1611,7 @@ Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlik
 ## `run_panel_query`
 
 ```text
-Run the queries of one or more Grafana dashboard panels, with variables and macros substituted.
+Run one query (default the first) of each given Grafana dashboard panel, with variables and macros substituted.
 
 Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval), and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.
 ```
@@ -1758,7 +1758,7 @@ Search for traces using TraceQL queries
 {
   "properties": {
     "datasourceUid": {
-      "description": "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). Default: the org's first of this type. See list_datasources.",
+      "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
     "end": {

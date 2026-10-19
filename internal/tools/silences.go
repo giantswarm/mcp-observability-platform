@@ -78,7 +78,7 @@ func registerSilenceDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az
 	maybeAddTool(s, disabled,
 		mcp.NewTool("get_silence",
 			readOnlyAnnotation(),
-			tooldesc.Describe("Get one Alertmanager silence by id, e.g. from list_alerts' silencedBy: matchers, times, author, comment, state.", ""),
+			tooldesc.Describe("Get one Alertmanager silence by id, e.g. from get_alert's silencedBy: matchers, times, author, comment, state.", ""),
 			orgArg(),
 			mcp.WithString("id", mcp.Required(), mcp.Description("Alertmanager silence id (UUID).")),
 			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),

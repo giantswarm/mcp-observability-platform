@@ -34,13 +34,14 @@ const (
 	jsonSchemaTypeKey     = "type"
 )
 
-// datasourceUIDHint replaces the LLM-visible description of every
-// datasource-UID argument the binder demotes to optional. The hint
+// datasourceUIDHint describes the optional datasource-UID argument: the
+// binder puts it in place of upstream's description on every argument it
+// demotes, and the local Alertmanager tools use it as theirs. The hint
 // teaches the LLM the operator naming convention so it can resolve
 // "the giantswarm tenant" → gs-{kind}-giantswarm via list_datasources
 // without us baking name-parsing into server code.
-const datasourceUIDHint = "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). " +
-	"Default: the org's first of this type. See list_datasources."
+const datasourceUIDHint = "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). " +
+	"One tenant: gs-{kind}-{tenant}. See list_datasources."
 
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
@@ -63,6 +64,9 @@ type gfBinder struct {
 
 	upstreamOnce sync.Once
 	upstream     *mcpgrafana.GrafanaClient
+
+	// bound holds every upstream tool bound, by name, as upstream defines it.
+	bound map[string]mcp.Tool
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
@@ -87,6 +91,7 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL, api
 		apiKey:     apiKey,
 		basicAuth:  basicAuth,
 		disabled:   disabled,
+		bound:      map[string]mcp.Tool{},
 	}, nil
 }
 
@@ -105,7 +110,7 @@ func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 // resolution. The synthetic "org" argument is prepended to the
 // LLM-visible schema; every other arg passes through unchanged.
 func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(withSummary(toolFromSDK(t.Tool)), ""), b.wrap(role, "", "", "", t))
+	maybeAddTool(s, b.disabled, b.describe(t, ""), b.wrap(role, "", "", "", t))
 }
 
 // bindDatasourceTool registers an upstream tool that needs a datasource
@@ -120,7 +125,7 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
 // "datasource_uid" (snake_case) for alerting_rules_read.
 func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(withSummary(toolFromSDK(t.Tool)), argName), b.wrap(role, tenantType, dsType, argName, t))
+	maybeAddTool(s, b.disabled, b.describe(t, argName), b.wrap(role, tenantType, dsType, argName, t))
 }
 
 // bindDatasourceFanoutTool registers a read-only upstream tool that
@@ -128,7 +133,15 @@ func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tena
 // per-DS results. Caller-supplied argName (e.g. "datasource_uid")
 // short-circuits to a single upstream call.
 func (b *gfBinder) bindDatasourceFanoutTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(withSummary(toolFromSDK(t.Tool)), ""), b.wrapFanout(role, tenantType, argName, t))
+	maybeAddTool(s, b.disabled, b.describe(t, ""), b.wrapFanout(role, tenantType, argName, t))
+}
+
+// describe is the LLM-visible definition of upstream tool t: its summary
+// line, if any, and the org argument. It records t in b.bound.
+func (b *gfBinder) describe(t mcpgrafana.Tool, demoteArg string) mcp.Tool {
+	up := toolFromSDK(t.Tool)
+	b.bound[up.Name] = up
+	return withOrg(withSummary(up), demoteArg)
 }
 
 func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
@@ -218,7 +231,7 @@ func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
 // withOrg returns a copy of an upstream tool definition with an "org"
 // argument prepended (string, required). When demoteArg is non-empty,
 // that argument is kept in the schema but moved out of Required and
-// its description gets datasourceUIDHint appended — the LLM sees it as
+// its description is replaced by datasourceUIDHint — the LLM sees it as
 // an optional override and the binder fills it server-side when
 // omitted.
 //
