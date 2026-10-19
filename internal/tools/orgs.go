@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/giantswarm/mcp-toolkit/tooldesc"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -22,7 +23,8 @@ func registerOrgTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Au
 	maybeAddTool(s, disabled,
 		mcp.NewTool("list_orgs",
 			readOnlyAnnotation(),
-			mcp.WithDescription("List orgs the caller can access. Call this first to discover the 'org' value other tools need. Returns name, displayName, orgId, role, and tenantTypes (e.g. [\"data\",\"alerting\"])."),
+			tooldesc.Describe("List the Grafana orgs you can access; call it first for the org value every other tool takes.",
+				"tenantTypes says which tools serve an org: data for metrics, logs, traces and alert rules; alerting for alerts and silences."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			type item struct {

@@ -167,6 +167,8 @@ parameter.
 
 For org-only upstream tools (no datasource), use `b.bindOrgTool(s, role, t)`.
 
+If upstream's description opens with a line longer than 120 runes (all muster's `filter_tools` shows), add a summary line for the tool in `internal/tools/summaries.go`, with the hash `TestUpstreamSummariesAreCurrent` reports for upstream's current text. That test fails whenever an mcp-grafana bump changes the text: re-read the handler, check the summary, update the hash, and run `make tools-doc`.
+
 ### Path B — local handler (only when upstream has no equivalent)
 
 Document why in the file header. Then add the registration through
@@ -176,7 +178,7 @@ Document why in the file header. Then add the registration through
 maybeAddTool(s, disabled,
     mcp.NewTool("your_tool_name",
         readOnlyAnnotation(),
-        mcp.WithDescription("..."),
+        tooldesc.Describe("Summary line, at most 120 runes.", "Details, if a model needs them before calling."),
         orgArg(),
         // ... other args
     ),

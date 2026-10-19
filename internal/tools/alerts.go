@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/giantswarm/mcp-toolkit/tooldesc"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -30,7 +31,7 @@ func registerAlertTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.
 	maybeAddTool(s, disabled,
 		mcp.NewTool("list_alerts",
 			readOnlyAnnotation(),
-			mcp.WithDescription("List alerts in the org's Alertmanager, paginated and sorted by severity desc. Each item is minimal (name, state, severity, fingerprint); call get_alert with the fingerprint for full detail."),
+			tooldesc.Describe("List the org's Alertmanager alerts, most severe first, paged; get_alert has one alert's full detail.", ""),
 			orgArg(),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'silenced' | 'inhibited' | 'all'")),
 			mcp.WithString("filter", mcp.Description("Alertmanager label matcher, e.g. 'alertname=~\"Kube.*\"' or 'severity=\"critical\"'")),
@@ -70,7 +71,7 @@ func registerAlertDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az a
 	maybeAddTool(s, disabled,
 		mcp.NewTool("get_alert",
 			readOnlyAnnotation(),
-			mcp.WithDescription("Return the full Alertmanager alert object for a single fingerprint: labels, annotations, timestamps, generatorURL, silencedBy/inhibitedBy. Use after list_alerts."),
+			tooldesc.Describe("Get one Alertmanager alert by its fingerprint from list_alerts: labels, annotations, times, silencedBy, inhibitedBy.", ""),
 			orgArg(),
 			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
 			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),

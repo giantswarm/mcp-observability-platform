@@ -19,14 +19,14 @@ const filterAll = "all"
 // happens to use the same literal).
 const amActive = "active"
 
-// readOnlyToolAnnotation is the canonical annotation for every tool in
-// this MCP: read-only, open-world, non-destructive. IdempotentHint is
-// intentionally omitted — many tools (query_prometheus, query_loki_logs,
-// list_alerts) return live data that changes between calls.
+// readOnlyToolAnnotation is the annotation of every local tool: it writes
+// nothing, so it is also idempotent (a repeated call changes nothing more,
+// though live data may differ), and open-world.
 var readOnlyToolAnnotation = mcp.ToolAnnotation{
 	ReadOnlyHint:    mcp.ToBoolPtr(true),
 	OpenWorldHint:   mcp.ToBoolPtr(true),
 	DestructiveHint: mcp.ToBoolPtr(false),
+	IdempotentHint:  mcp.ToBoolPtr(true),
 }
 
 // readOnlyAnnotation is the mcp.NewTool option form of
@@ -60,6 +60,11 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	if err != nil {
 		return err
 	}
+	registerAll(s, az, gc, b, disabled)
+	return nil
+}
+
+func registerAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
 	registerOrgTools(s, disabled, az, b)
 	registerDashboardTools(s, b)
 	registerMetricsTools(s, b)
@@ -69,5 +74,4 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	registerSilenceTools(s, disabled, az, gc)
 	registerExampleTools(s, b)
 	registerTempoTools(s, b)
-	return nil
 }

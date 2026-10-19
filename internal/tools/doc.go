@@ -25,4 +25,6 @@
 // Shared helpers (datasource.go, pagination.go) carry the bits the
 // remaining local handlers depend on. tools.go holds RegisterAll, the
 // shared orgArg() helper, and cross-category constant tokens.
+// summaries.go leads the delegated tools' upstream descriptions with a
+// summary line of ours where upstream's first line is too long for muster.
 package tools
