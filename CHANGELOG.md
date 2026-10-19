@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - mcp-grafana updated to v2.0.0. mcp-grafana now exposes MCP Go SDK types; `gfBinder` converts them to `mark3labs/mcp-go`, which this server keeps using.
 - `alerting_manage_rules` is renamed to `alerting_rules_read`. Update `--disabled-tools` / `tools.disabled` entries that name it.
 - Tempo tools use mcp-grafana's native Tempo tools, which call Tempo's HTTP API through Grafana's datasource proxy. Tool names change: `traceql-search` → `search_tempo_traces`, `get-trace` → `get_tempo_trace`, `get-attribute-names` → `list_tempo_attribute_names`, `get-attribute-values` → `list_tempo_attribute_values`, `traceql-metrics-instant` / `traceql-metrics-range` → `query_tempo_metrics` (`type=instant|range`), `docs-traceql` → `get_tempo_traceql_docs`. The `tempo-app` MCP server (`query_frontend.mcp_server.enabled`) is no longer required, and Tempo tools register at startup without probing a Tempo datasource.
+- Every tool description starts with a summary line of at most 120 runes, all muster's `filter_tools` shows ([giantswarm#38592](https://github.com/giantswarm/giantswarm/issues/38592)): the local tools' descriptions are rewritten with mcp-toolkit's `tooldesc.Describe`, and the 26 delegated tools whose upstream first line is longer get a summary line of ours before upstream's text (`internal/tools/summaries.go`).
+- The `datasourceUid` description of the delegated and Alertmanager tools is one short hint instead of upstream's text plus a 290-rune hint.
+- The local tools (`list_orgs`, `list_alerts`, `get_alert`, `list_silences`, `get_silence`) report `idempotentHint: true`: they write nothing, so a repeated call changes nothing.
+- `docs/tools.md` lists every tool as a model reads it (`make tools-doc`, kept current by a test); a test holds the local tools to the description budget and every tool to the summary line.
 
 ## [0.4.0] - 2026-10-02
 

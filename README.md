@@ -36,6 +36,8 @@ synthetic `org` argument and `gfBinder` resolves it to the org's
 OrgID + datasource UID before delegating. Alertmanager v2 alerts/silences and `list_orgs` stay local — no usable
 upstream equivalent. See `internal/tools/doc.go` for the per-category rationale.
 
+[docs/tools.md](docs/tools.md) lists every tool's description and input schema as a model reads them (`make tools-doc`).
+
 **Orgs & datasources**
 
 | Tool               | Backend     | Notes                                                          |

@@ -213,8 +213,8 @@ func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
 		t.Fatal("output dropped datasourceUid; demote should keep it visible")
 	}
 	desc, _ := prop["description"].(string)
-	if !strings.Contains(desc, "Upstream desc.") || !strings.Contains(desc, "list_datasources") {
-		t.Errorf("description = %q, want upstream prefix + datasourceUIDHint suffix", desc)
+	if desc != datasourceUIDHint {
+		t.Errorf("description = %q, want datasourceUIDHint in place of upstream's", desc)
 	}
 	if slices.Contains(out.InputSchema.Required, datasourceUIDArg) {
 		t.Error("output still requires datasourceUid; demote moves it out of Required")
@@ -275,8 +275,8 @@ func TestWithOrg_HandlesRawInputSchema(t *testing.T) {
 	}
 	dsProp, _ := marshaled.InputSchema.Properties[datasourceUIDArg].(map[string]any)
 	desc, _ := dsProp["description"].(string)
-	if !strings.Contains(desc, "Upstream desc.") || !strings.Contains(desc, "list_datasources") {
-		t.Errorf("description = %q, want upstream prefix + datasourceUIDHint suffix", desc)
+	if desc != datasourceUIDHint {
+		t.Errorf("description = %q, want datasourceUIDHint in place of upstream's", desc)
 	}
 }
 

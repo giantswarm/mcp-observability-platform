@@ -34,14 +34,13 @@ const (
 	jsonSchemaTypeKey     = "type"
 )
 
-// datasourceUIDHint is appended to the LLM-visible description of every
+// datasourceUIDHint replaces the LLM-visible description of every
 // datasource-UID argument the binder demotes to optional. The hint
 // teaches the LLM the operator naming convention so it can resolve
 // "the giantswarm tenant" → gs-{kind}-giantswarm via list_datasources
 // without us baking name-parsing into server code.
-const datasourceUIDHint = "Optional: override the default datasource — pass this when the user asks about a specific tenant. " +
-	"Operator-managed datasources follow `gs-{kind}-{tenant}` (mono-tenant); the unsuffixed `gs-{kind}` is the multi-tenant aggregate. " +
-	"Call list_datasources to discover available UIDs for the org."
+const datasourceUIDHint = "Optional datasource UID, for one tenant: gs-{kind}-{tenant} (gs-{kind} is all tenants). " +
+	"Default: the org's first of this type. See list_datasources."
 
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
@@ -106,7 +105,7 @@ func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 // resolution. The synthetic "org" argument is prepended to the
 // LLM-visible schema; every other arg passes through unchanged.
 func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(toolFromSDK(t.Tool), ""), b.wrap(role, "", "", "", t))
+	maybeAddTool(s, b.disabled, withOrg(withSummary(toolFromSDK(t.Tool)), ""), b.wrap(role, "", "", "", t))
 }
 
 // bindDatasourceTool registers an upstream tool that needs a datasource
@@ -121,7 +120,7 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
 // "datasource_uid" (snake_case) for alerting_rules_read.
 func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(toolFromSDK(t.Tool), argName), b.wrap(role, tenantType, dsType, argName, t))
+	maybeAddTool(s, b.disabled, withOrg(withSummary(toolFromSDK(t.Tool)), argName), b.wrap(role, tenantType, dsType, argName, t))
 }
 
 // bindDatasourceFanoutTool registers a read-only upstream tool that
@@ -129,7 +128,7 @@ func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tena
 // per-DS results. Caller-supplied argName (e.g. "datasource_uid")
 // short-circuits to a single upstream call.
 func (b *gfBinder) bindDatasourceFanoutTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(toolFromSDK(t.Tool), ""), b.wrapFanout(role, tenantType, argName, t))
+	maybeAddTool(s, b.disabled, withOrg(withSummary(toolFromSDK(t.Tool)), ""), b.wrapFanout(role, tenantType, argName, t))
 }
 
 func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
@@ -254,8 +253,7 @@ func withOrg(t mcp.Tool, demoteArg string) mcp.Tool {
 		if cur, ok := props[demoteArg].(map[string]any); ok {
 			merged := make(map[string]any, len(cur))
 			maps.Copy(merged, cur)
-			desc, _ := merged["description"].(string)
-			merged["description"] = strings.TrimSpace(desc + " " + datasourceUIDHint)
+			merged["description"] = datasourceUIDHint
 			props[demoteArg] = merged
 		}
 	}
