@@ -225,8 +225,8 @@ github.com/fxamacker/cbor/v2 v2.9.1/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj2
 github.com/getkin/kin-openapi v0.149.0 h1:ZbhmVJ4yq5RZDUsyP8lcBcGMsjsaTqXEFt6isdtMDfA=
 github.com/getkin/kin-openapi v0.149.0/go.mod h1:1+BHDzstro+P5CKtPy1X4PfofnFgmRe6uvMy9+r9fKY=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
-github.com/giantswarm/mcp-oauth v1.7.0 h1:6tgm7OLs8Eo3iksAFrhuFHfdha7hxJqwMq06fDsqUZs=
-github.com/giantswarm/mcp-oauth v1.7.0/go.mod h1:/qsorGcyP82HF68pxavC0slW5Cru0ziIRZ9C8DcS/eg=
+github.com/giantswarm/mcp-oauth v1.7.10 h1:oskBeTIncC9KuDT40UGyye9bUbw2g8P/wHKOxWW2bvM=
+github.com/giantswarm/mcp-oauth v1.7.10/go.mod h1:OgfTIeWAOu+QZRgyamO3mA0CjbvmUksnctlbAnfkXpc=
 github.com/giantswarm/mcp-toolkit v0.4.4 h1:9h45eZDImi3Nlhw40s5GKAmJ0y0K6SvFb0e7RaC2W3M=
 github.com/giantswarm/mcp-toolkit v0.4.4/go.mod h1:rqRnO6yYEijMcJSgj342nmTVS9tb4n3jJnnnjYpWAn0=
 github.com/giantswarm/observability-operator v0.67.2 h1:6CuEjmDT5poy4B8IcRAnsohJHnB9j0SSD+EWOZLXEI4=
@@ -234,8 +234,8 @@ github.com/giantswarm/observability-operator v0.67.2/go.mod h1:D+W0pwp/Ty9yyrKqH
 github.com/go-gl/glfw v0.0.0-20190409004039-e6da0acd62b1/go.mod h1:vR7hzQXu2zJy9AVAgeJqvqgH9Q5CA+iKCZ2gyEVpxRU=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20191125211704-12ad95a8df72/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20200222043503-6f7a984d4dc4/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
-github.com/go-jose/go-jose/v4 v4.1.5 h1:RjgjO2LOtWOJKUC5wpwY9LR3B3vwVAz6JS2YHfYU6eA=
-github.com/go-jose/go-jose/v4 v4.1.5/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
+github.com/go-jose/go-jose/v4 v4.1.6 h1:sNRkftxFJxwsILiQukqp5z83QBSmntVwmgRY7AqBDO4=
+github.com/go-jose/go-jose/v4 v4.1.6/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/go-kit/kit v0.8.0/go.mod h1:xBxKIO96dXMWWy0MnWVtmwkA9/13aqxPnvrjFYMA2as=
 github.com/go-kit/kit v0.9.0/go.mod h1:xBxKIO96dXMWWy0MnWVtmwkA9/13aqxPnvrjFYMA2as=
 github.com/go-kit/log v0.1.0/go.mod h1:zbhenjAZHb184qTLMA9ZjW7ThYL0H2mk7Q6pNt4vbaY=
@@ -674,8 +674,8 @@ github.com/prometheus/client_golang v1.0.0/go.mod h1:db9x61etRT2tGnBNRi70OPL5Fsn
 github.com/prometheus/client_golang v1.4.0/go.mod h1:e9GMxYsXl05ICDXkRhurwBS4Q3OK1iX/F2sw+iXX5zU=
 github.com/prometheus/client_golang v1.7.1/go.mod h1:PY5Wy2awLA44sXw4AOSfFBetzPP4j5+D6mVACh+pe2M=
 github.com/prometheus/client_golang v1.11.1/go.mod h1:Z6t4BnS23TR94PD6BsDNk8yVqroYurpAkEiz0P2BEV0=
-github.com/prometheus/client_golang v1.24.1 h1:JnJkREXzWxUdCuPFpIWZiPispT9xVV59uiuyR2bPlnU=
-github.com/prometheus/client_golang v1.24.1/go.mod h1:F+oSRECHg4sse5ucfYpYDeIv/hu68Zo0uoHKetWnzcE=
+github.com/prometheus/client_golang v1.25.0 h1:cDtW1TcFsMi1RJc8khwCKB4VhzwV04aKqbYtNOXuiK0=
+github.com/prometheus/client_golang v1.25.0/go.mod h1:j2X/4/kaQHLPnmyEU8zjmkndo1T317VpCIQEml8LTKk=
 github.com/prometheus/client_golang/exp v0.0.0-20260907100614-57bb367da472 h1:4qeIiKMiaj1CH85S6mShB3nHtz1Ti1zg8lg3IQLsAhk=
 github.com/prometheus/client_golang/exp v0.0.0-20260907100614-57bb367da472/go.mod h1:7cN4zh+WBVVoFdl124VnR0F9bcpJluTebOnYYSHgyq8=
 github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910/go.mod h1:MbSGuTsp3dbXC40dX6PRTWyKYBIrTGTE9sqQNg2J8bo=
@@ -771,8 +771,8 @@ github.com/twmb/franz-go/pkg/kmsg v1.14.0 h1:gSxrBEKWl3qnsx3QKWol5OEVujuPmIoDkhM
 github.com/twmb/franz-go/pkg/kmsg v1.14.0/go.mod h1:+DPt4NC8RmI6hqb8G09+3giKObE6uD2Eya6CfqBpeJY=
 github.com/twmb/franz-go/plugin/kslog v1.0.0 h1:I64oEmF+0PDvmyLgwrlOtg4mfpSE9GwlcLxM4af2t60=
 github.com/twmb/franz-go/plugin/kslog v1.0.0/go.mod h1:8pMjK3OJJJNNYddBSbnXZkIK5dCKFIk9GcVVCDgvnQc=
-github.com/valkey-io/valkey-go v1.0.78 h1:1Ce8hRaaNXpKfqmqZQRhnbVh1eW8MGR873pdXVvE4y8=
-github.com/valkey-io/valkey-go v1.0.78/go.mod h1:gvC/r2m3eW4Hbj0YnjogTzNtFdPSM/D+NCqen+5OABM=
+github.com/valkey-io/valkey-go v1.0.79 h1:dryzYka/oOkSMOcNmOTjQI8zfu/4bUzDZNnFW9NlqNM=
+github.com/valkey-io/valkey-go v1.0.79/go.mod h1:gvC/r2m3eW4Hbj0YnjogTzNtFdPSM/D+NCqen+5OABM=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
