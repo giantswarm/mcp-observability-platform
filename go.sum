@@ -565,8 +565,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/leodido/go-urn v1.2.0/go.mod h1:+8+nEpDfqqsY+g338gtMEUOtuK+4dEMhiQEgxpxOKII=
 github.com/magiconair/properties v1.8.6/go.mod h1:y3VJvCyxH9uVvJTWEGAELF3aiYNyPKd5NZ3oSwXrF60=
-github.com/mark3labs/mcp-go v1.4.0 h1:gEWEv7YOTJjW4K9cxuwfr0FLRFgSWOE1Bju1SxPlctI=
-github.com/mark3labs/mcp-go v1.4.0/go.mod h1:6L8eBboqlAMnYrvl8rpbUeV2qE/SJh52aVGrXIomVb0=
+github.com/mark3labs/mcp-go v1.5.0 h1:XMfliGOAan2zHQJHVQb9Y6KZDr/73nLfsxlsByTwHjk=
+github.com/mark3labs/mcp-go v1.5.0/go.mod h1:6L8eBboqlAMnYrvl8rpbUeV2qE/SJh52aVGrXIomVb0=
 github.com/matryer/is v1.4.1 h1:55ehd8zaGABKLXQUe2awZ99BD/PTc2ls+KV/dXphgEQ=
 github.com/matryer/is v1.4.1/go.mod h1:8I/i5uYgLzgsgEloJE1U6xx5HkBQpAZvepWuujKwMRU=
 github.com/mattetti/filebuffer v1.0.1 h1:gG7pyfnSIZCxdoKq+cPa8T0hhYtD9NxCdI4D7PTjRLM=
