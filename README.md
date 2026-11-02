@@ -24,9 +24,6 @@ and Dex.
 - Client ID: `mcp-observability-platform`.
 - Redirect URI: `https://<mcp-host>/oauth/callback`.
 
-The Dex issuer must resolve to a public IP. The SSRF guard on the Dex
-provider rejects private addresses, and no setting allows them yet.
-
 ### 2. Pick a Grafana credential
 
 The MCP calls Grafana with one **server-admin** credential. It scopes each
