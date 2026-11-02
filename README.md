@@ -21,8 +21,33 @@ and Dex.
 
 ### 1. Register a Dex client
 
-- Client ID: `mcp-observability-platform`.
-- Redirect URI: `https://<mcp-host>/oauth/callback`.
+The MCP is a confidential OAuth client of Dex. MCP clients such as Claude
+Code never talk to Dex directly: they register with the MCP's own
+authorization server, and the MCP sends the caller to Dex to log in.
+
+Add a static client to the Dex configuration:
+
+```yaml
+staticClients:
+  - id: mcp-observability-platform
+    name: mcp-observability-platform
+    secretEnv: MCP_OBSERVABILITY_PLATFORM_CLIENT_SECRET
+    redirectURIs:
+      - https://<mcp-host>/oauth/callback
+```
+
+- `id` becomes `oauth.dex.clientId`.
+- The client secret goes into the `mcp-observability-platform-oauth` Secret
+  in step 3. Generate it with `openssl rand -hex 32`.
+- The redirect URI is `oauth.issuer` followed by `/oauth/callback`. The
+  chart derives it, so it must match the issuer exactly.
+- The Dex issuer URL becomes `oauth.dex.issuerUrl`. The MCP must reach it
+  from inside the cluster.
+
+The MCP requests the scopes `openid`, `profile`, `email`, `groups` and
+`offline_access`. It looks up the caller in Grafana by the `email` claim.
+The caller's Grafana account must carry the same email. Logging in to
+Grafana through the same Dex gives it that email.
 
 ### 2. Pick a Grafana credential
 
