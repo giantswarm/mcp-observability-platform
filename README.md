@@ -14,6 +14,119 @@ Authorization is resolved by Grafana from its `org_mapping` (which
 asks Grafana per caller. Role and org-membership changes propagate
 within ~30s (the per-caller cache TTL).
 
+## Install
+
+Install one MCP per Grafana instance, on the cluster that runs Grafana
+and Dex.
+
+### 1. Register a Dex client
+
+- Client ID: `mcp-observability-platform`.
+- Redirect URI: `https://<mcp-host>/oauth/callback`.
+
+The Dex issuer must resolve to a public IP. The SSRF guard on the Dex
+provider rejects private addresses, and no setting allows them yet.
+
+### 2. Pick a Grafana credential
+
+The MCP calls Grafana with one **server-admin** credential. It scopes each
+call to an org with `X-Grafana-Org-Id`. It attributes each call to the
+caller with `X-Grafana-User`. The caller's OAuth token never reaches
+Grafana.
+
+| `grafana.authMode`              | Secret key            | Value                                                         |
+| ------------------------------- | --------------------- | ------------------------------------------------------------- |
+| `serviceAccountToken` (default) | `serviceAccountToken` | Token of a service account with the **Grafana Admin** server role. See [Grafana service-account token](#grafana-service-account-token). |
+| `basicAuth`                     | `basicAuth`           | `user:password` of a Grafana server admin, e.g. the built-in `admin`. Dev/test only. |
+
+An org-level Admin does not work: Grafana ignores `X-Grafana-Org-Id` for
+it. The MCP calls `GET /api/orgs` at startup and exits if the credential is
+not server-admin.
+
+### 3. Create the secrets
+
+```sh
+kubectl -n monitoring create secret generic mcp-observability-platform-grafana \
+  --from-literal=serviceAccountToken=<grafana-sa-token>
+  # or: --from-literal=basicAuth='admin:<password>'
+
+kubectl -n monitoring create secret generic mcp-observability-platform-oauth \
+  --from-literal=clientSecret=<dex-client-secret>
+
+kubectl -n monitoring create secret generic mcp-observability-platform-encryption \
+  --from-literal=encryptionKey="$(openssl rand -base64 32)"
+```
+
+### 4. Write the values
+
+```yaml
+grafana:
+  url: http://grafana.monitoring.svc.cluster.local:3000
+  # authMode: basicAuth
+
+oauth:
+  issuer: https://mcp-observability-platform.<base-domain>
+  allowPublicClientRegistration: true   # MCP CLI clients self-register
+  dex:
+    issuerUrl: https://dex.<base-domain>
+    clientId: mcp-observability-platform
+  encryption:
+    existingSecret: mcp-observability-platform-encryption
+
+httpRoute:
+  enabled: true
+  hostnames:
+    - mcp-observability-platform.<base-domain>
+```
+
+Example overlays live under `helm/mcp-observability-platform/values-*.yaml`:
+
+| Values file                | Scenario                                                         |
+| -------------------------- | ---------------------------------------------------------------- |
+| `values-memory.yaml`       | Dev/test: memory-backed OAuth store, debug logging.              |
+| `values-valkey.yaml`       | Prod: Valkey-backed OAuth store (durable, shared across replicas). |
+| `values-rbac-minimal.yaml` | Externally-managed ServiceAccount + ClusterRoleBinding.          |
+| `values-autoscaling.yaml`  | HPA + VPA (Initial) + PDB + NetworkPolicy (ingress + egress).    |
+
+The default `memory` OAuth store drops every session on a pod restart.
+
+Runtime tunables (tool timeout, response cap, OAuth trust config) live
+under `runtime:` / `oauth:` in `values.yaml` and are delivered through a
+ConfigMap mounted via `envFrom`. A `checksum/config` annotation on the
+pod template rolls the deployment whenever those change.
+
+### 5. Install the chart
+
+```sh
+helm install mcp-observability-platform \
+  oci://gsoci.azurecr.io/charts/giantswarm/mcp-observability-platform \
+  --version <version> --namespace monitoring -f values.yaml
+```
+
+### 6. Verify
+
+```sh
+kubectl -n monitoring rollout status deploy/mcp-observability-platform
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<mcp-host>/mcp   # 401
+curl -s https://<mcp-host>/.well-known/oauth-authorization-server
+```
+
+`/mcp` returns `401` before login. The discovery document lists the
+`registration_endpoint`.
+
+### 7. Connect Claude Code
+
+```sh
+claude mcp add --transport http --scope user observability-platform \
+  https://<mcp-host>/mcp
+```
+
+1. Run `/mcp`, select `observability-platform` and choose **Authenticate**.
+2. Log in through Dex.
+3. Log in to Grafana once through SSO. Grafana creates the account on first
+   login. Until then, `list_orgs` returns `caller has no Grafana account yet`.
+4. Call `list_orgs`. It returns each org with your role.
+
 ## Roadmap
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the productionization
@@ -280,45 +393,6 @@ is not server-admin it fails to start.
 **Known phase-1 blast-radius limitation**: one compromised MCP pod exposes
 every Grafana org. Phase 2 narrows this by switching to per-org SA tokens
 provisioned by the observability-operator (tracked in the plan).
-
-## Install
-
-Create the required secrets first. The `serviceAccountToken` key holds the
-**Grafana** server-admin service-account token (not a Kubernetes one — the
-chart creates the K8s ServiceAccount itself via `templates/serviceaccount.yaml`).
-
-```sh
-kubectl -n observability create secret generic mcp-observability-platform-grafana \
-  --from-literal=serviceAccountToken=<grafana-sa-token>
-
-kubectl -n observability create secret generic mcp-observability-platform-oauth \
-  --from-literal=clientSecret=<dex-client-secret>
-```
-
-Then install the chart:
-
-```sh
-helm install mcp-observability-platform ./helm/mcp-observability-platform \
-  --namespace observability --create-namespace \
-  --set grafana.url=https://grafana.example.com \
-  --set oauth.issuer=https://mcp-observability-platform.example.com \
-  --set oauth.dex.issuerUrl=https://dex.example.com \
-  --set oauth.dex.clientId=mcp-observability-platform
-```
-
-Example overlays live under `helm/mcp-observability-platform/values-*.yaml`:
-
-| Values file                | Scenario                                                         |
-| -------------------------- | ---------------------------------------------------------------- |
-| `values-memory.yaml`       | Dev/test: memory-backed OAuth store, debug logging.              |
-| `values-valkey.yaml`       | Prod: Valkey-backed OAuth store (durable, shared across replicas). |
-| `values-rbac-minimal.yaml` | Externally-managed ServiceAccount + ClusterRoleBinding.          |
-| `values-autoscaling.yaml`  | HPA + VPA (Initial) + PDB + NetworkPolicy (ingress + egress).    |
-
-Runtime tunables (tool timeout, response cap, OAuth trust config) live
-under `runtime:` / `oauth:` in `values.yaml` and are delivered through a
-ConfigMap mounted via `envFrom`. A `checksum/config` annotation on the
-pod template rolls the deployment whenever those change.
 
 ## Run locally (without Kubernetes)
 
