@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every tool description starts with a summary line of at most 120 runes, all muster's `filter_tools` shows ([giantswarm#38592](https://github.com/giantswarm/giantswarm/issues/38592)): the local tools' descriptions are rewritten with mcp-toolkit's `tooldesc.Describe`, and the 26 delegated tools whose upstream first line is longer get a summary line of ours before upstream's text (`internal/tools/summaries.go`).
 - The `datasourceUid` description of the datasource-bound delegated tools and of the Alertmanager tools is one short hint instead of upstream's text plus a 290-rune hint.
 - The local tools (`list_orgs`, `list_alerts`, `get_alert`, `list_silences`, `get_silence`) report `idempotentHint: true`: they write nothing, so a repeated call changes nothing.
+- The README install section sits at the top and walks through the Dex client, the Grafana credential, the chart install from the OCI registry, and connecting Claude Code.
 
 ## [0.4.0] - 2026-10-02
 
