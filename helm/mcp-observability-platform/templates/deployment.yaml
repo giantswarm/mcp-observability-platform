@@ -76,6 +76,8 @@ spec:
               value: {{ .Values.oauth.allowInsecureHTTP | quote }}
             - name: OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
               value: {{ .Values.oauth.allowPublicClientRegistration | quote }}
+            - name: OAUTH_ENABLE_CIMD
+              value: {{ .Values.oauth.enableCIMD | quote }}
 
             # Dex (IdP) — read by upstream oauthconfig.DexFromEnv. The
             # OAUTH_ prefix is the upstream contract, not optional.

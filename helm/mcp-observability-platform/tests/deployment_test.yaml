@@ -61,6 +61,26 @@ tests:
             name: METRICS_ADDR
             value: ":9091"
 
+  - it: OAUTH_ENABLE_CIMD defaults to false
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OAUTH_ENABLE_CIMD
+            value: "false"
+
+  - it: oauth.enableCIMD=true sets OAUTH_ENABLE_CIMD
+    set:
+      oauth.enableCIMD: true
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OAUTH_ENABLE_CIMD
+            value: "true"
+
   - it: honors extra envFrom on top of runtime ConfigMap
     set:
       extraEnvFrom:
