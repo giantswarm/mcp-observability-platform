@@ -1,29 +1,15 @@
-CVE-2025-48431 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-41602 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-41603 until=2026-09-10
-CVE-2026-41605 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-43869 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-41607 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-41606 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-43868 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-5160 until=2026-09-10
-CVE-2026-55968 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-55969 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-58023 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-48144 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-48586 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-58662 until=2026-10-07 # github.com/apache/thrift@v0.22.0
-CVE-2026-76905 until=2026-10-02 # github.com/getkin/kin-openapi@v0.133.0
-CVE-2026-77354 until=2026-10-02 # github.com/getkin/kin-openapi@v0.133.0
-CVE-2026-73502 until=2026-10-02 # github.com/getkin/kin-openapi@v0.133.0
-CVE-2026-73501 until=2026-10-02 # github.com/getkin/kin-openapi@v0.133.0
-CVE-2026-19516 until=2026-12-31 # github.com/grafana/mcp-grafana@v0.17.2 SSRF via caller-supplied X-Grafana-URL header + grafana_api_request tool. Not reachable here: we set GrafanaConfig server-side (no header extraction middleware) and never register grafana_api_request. Fix requires the mcp-grafana v1.x migration (ProxiedClient API removed).
-CVE-2026-56864 until=2026-10-02 # golang.org/x/mod@v0.38.0
-CVE-2026-56865 until=2026-10-02 # golang.org/x/mod@v0.38.0
-CVE-2026-81871 until=2026-10-03 # go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc@v0.20.0
-CVE-2026-81870 until=2026-10-03 # go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp@v1.44.0
-CVE-2026-81872 until=2026-10-03 # go.opentelemetry.io/otel/sdk/log@v0.20.0
-CVE-2026-14362 until=2026-10-07 # github.com/hashicorp/memberlist@v0.5.4
-CVE-2026-63209 until=2026-10-07 # github.com/klauspost/compress@v1.18.5
-CVE-2026-56855 until=2026-10-08 # golang.org/x/crypto@v0.55.0
-CVE-2026-78662 until=2026-10-08 # golang.org/x/crypto@v0.55.0
+CVE-2026-63772 until=2026-11-06 # github.com/apache/thrift@v0.24.0
+CVE-2026-66055 until=2026-11-06 # github.com/apache/thrift@v0.24.0
+CVE-2026-82458 until=2026-11-06 # github.com/apache/thrift@v0.24.0
+CVE-2026-83663 until=2026-11-06 # github.com/apache/thrift@v0.24.0
+CVE-2026-94637 until=2026-11-06 # github.com/apache/thrift@v0.24.0
+CVE-2026-96990 until=2026-11-06 # github.com/apache/thrift@v0.24.0
+CVE-2026-37236 until=2026-11-06 # github.com/grpc-ecosystem/grpc-gateway@v1.16.0
+CVE-2026-5160 until=2026-11-06 # github.com/yuin/goldmark@v1.3.5
+CVE-2026-115804 until=2026-11-27 # github.com/hashicorp/consul/api@v1.34.4 since=2026-10-28
+
+# pkg:golang/golang.org/x/net@v0.61.0
+CVE-2026-97045 until=2026-12-20
+CVE-2026-78661 until=2026-12-20
+# pkg:golang/google.golang.org/grpc@v1.84.0
+CVE-2026-84445 until=2026-12-20

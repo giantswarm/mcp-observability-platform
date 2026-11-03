@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,11 +21,7 @@ import (
 type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
-	// OrgLister is used at startup only — the Tempo binder needs one
-	// org with a Tempo datasource to enumerate Tempo's MCP tool list
-	// against. Per-call routing uses the caller's own org via gfBinder.
-	OrgLister authz.OrgLister
-	Grafana   grafana.Client
+	Grafana    grafana.Client
 	// GrafanaURL / GrafanaAPIKey / GrafanaBasicAuth / GrafanaJWTHeader
 	// are forwarded to the gfBinder, which builds an upstream mcpgrafana
 	// client per call. APIKey, BasicAuth and JWTHeader are mutually
@@ -49,17 +44,13 @@ type Config struct {
 
 // New constructs the tools-only MCP server. Transport wrapping is the
 // caller's concern — use StreamableHTTPHandler / SSEHandler, or drive
-// stdio via mcpsrv.ServeStdio. ctx is used for one-shot startup work
-// (Tempo MCP discovery) and is not retained.
-func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
+// stdio via mcpsrv.ServeStdio.
+func New(cfg Config) (*mcpsrv.MCPServer, error) {
 	if cfg.Logger == nil {
 		return nil, errors.New("server: Logger is required")
 	}
 	if cfg.Authorizer == nil {
 		return nil, errors.New("server: Authorizer is required")
-	}
-	if cfg.OrgLister == nil {
-		return nil, errors.New("server: OrgLister is required")
 	}
 	if cfg.Grafana == nil {
 		return nil, errors.New("server: Grafana is required")
@@ -95,7 +86,7 @@ func New(ctx context.Context, cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(timeout.New(cfg.ToolTimeout)),
 	)
 
-	if err := tools.RegisterAll(ctx, mcp, cfg.Logger, cfg.Authorizer, cfg.OrgLister, cfg.Grafana, cfg.GrafanaURL, tools.GrafanaAuth{
+	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, tools.GrafanaAuth{
 		APIKey:    cfg.GrafanaAPIKey,
 		BasicAuth: cfg.GrafanaBasicAuth,
 		JWTHeader: cfg.GrafanaJWTHeader,

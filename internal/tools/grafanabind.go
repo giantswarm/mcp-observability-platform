@@ -9,9 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	mcpgrafana "github.com/grafana/mcp-grafana"
+	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -23,7 +24,7 @@ import (
 const orgArgDescription = "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs."
 
 // datasourceUIDArg is upstream's conventional argument name for the
-// datasource UID. Most upstream tools use this; alerting_manage_rules
+// datasource UID. Most upstream tools use this; alerting_rules_read
 // uses datasourceUIDArgSnake.
 const (
 	datasourceUIDArg      = "datasourceUid"
@@ -32,14 +33,14 @@ const (
 	jsonSchemaTypeKey     = "type"
 )
 
-// datasourceUIDHint is appended to the LLM-visible description of every
-// datasource-UID argument the binder demotes to optional. The hint
+// datasourceUIDHint describes the optional datasource-UID argument: the
+// binder puts it in place of upstream's description on every argument it
+// demotes, and the local Alertmanager tools use it as theirs. The hint
 // teaches the LLM the operator naming convention so it can resolve
 // "the giantswarm tenant" → gs-{kind}-giantswarm via list_datasources
 // without us baking name-parsing into server code.
-const datasourceUIDHint = "Optional: override the default datasource — pass this when the user asks about a specific tenant. " +
-	"Operator-managed datasources follow `gs-{kind}-{tenant}` (mono-tenant); the unsuffixed `gs-{kind}` is the multi-tenant aggregate. " +
-	"Call list_datasources to discover available UIDs for the org."
+const datasourceUIDHint = "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). " +
+	"One tenant: gs-{kind}-{tenant}. See list_datasources."
 
 // gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
 // authz, per-request Grafana context injection, and (for
@@ -61,6 +62,9 @@ type gfBinder struct {
 
 	upstreamOnce sync.Once
 	upstream     *mcpgrafana.GrafanaClient
+
+	// bound holds every upstream tool bound, by name, as upstream defines it.
+	bound map[string]mcp.Tool
 }
 
 // newGFBinder constructs a gfBinder after validating its dependencies.
@@ -84,6 +88,7 @@ func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL stri
 		url:        grafanaURL,
 		auth:       auth,
 		disabled:   disabled,
+		bound:      map[string]mcp.Tool{},
 	}, nil
 }
 
@@ -105,7 +110,7 @@ func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 // resolution. The synthetic "org" argument is prepended to the
 // LLM-visible schema; every other arg passes through unchanged.
 func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(t.Tool, ""), b.wrap(role, "", "", "", t))
+	maybeAddTool(s, b.disabled, b.describe(t, ""), b.wrap(role, "", "", "", t))
 }
 
 // bindDatasourceTool registers an upstream tool that needs a datasource
@@ -118,9 +123,9 @@ func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafan
 // reserved for Alertmanager-shaped tools, which today are local).
 //
 // Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
-// "datasource_uid" (snake_case) for alerting_manage_rules.
+// "datasource_uid" (snake_case) for alerting_rules_read.
 func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(t.Tool, argName), b.wrap(role, tenantType, dsType, argName, t))
+	maybeAddTool(s, b.disabled, b.describe(t, argName), b.wrap(role, tenantType, dsType, argName, t))
 }
 
 // bindDatasourceFanoutTool registers a read-only upstream tool that
@@ -128,7 +133,15 @@ func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tena
 // per-DS results. Caller-supplied argName (e.g. "datasource_uid")
 // short-circuits to a single upstream call.
 func (b *gfBinder) bindDatasourceFanoutTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, withOrg(t.Tool, ""), b.wrapFanout(role, tenantType, argName, t))
+	maybeAddTool(s, b.disabled, b.describe(t, ""), b.wrapFanout(role, tenantType, argName, t))
+}
+
+// describe is the LLM-visible definition of upstream tool t: its summary
+// line, if any, and the org argument. It records t in b.bound.
+func (b *gfBinder) describe(t mcpgrafana.Tool, demoteArg string) mcp.Tool {
+	up := toolFromSDK(t.Tool)
+	b.bound[up.Name] = up
+	return withOrg(withSummary(up), demoteArg)
 }
 
 func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
@@ -137,10 +150,13 @@ func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argN
 		if errRes != nil {
 			return errRes, nil
 		}
+		if err := stripOrgArg(&req); err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		}
 		ctx = b.attachGrafana(ctx, org.OrgID)
 
 		if uid := req.GetString(argName, ""); uid != "" {
-			return upstream.Handler(ctx, req)
+			return callUpstream(ctx, upstream, req)
 		}
 
 		opts := grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}
@@ -166,7 +182,7 @@ func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argN
 				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: err.Error()})
 				continue
 			}
-			res, err := upstream.Handler(ctx, sub)
+			res, err := callUpstream(ctx, upstream, sub)
 			switch {
 			case err != nil:
 				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: err.Error()})
@@ -215,7 +231,7 @@ func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
 // withOrg returns a copy of an upstream tool definition with an "org"
 // argument prepended (string, required). When demoteArg is non-empty,
 // that argument is kept in the schema but moved out of Required and
-// its description gets datasourceUIDHint appended — the LLM sees it as
+// its description is replaced by datasourceUIDHint — the LLM sees it as
 // an optional override and the binder fills it server-side when
 // omitted.
 //
@@ -223,7 +239,7 @@ func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
 // mutated. Panic at registration, not per-request — every wrapped tool
 // is enumerated by RegisterAll, so a collision shows up at process start.
 //
-// Upstream mcp-grafana tools are produced by MustTool, which stores the
+// Upstream mcp-grafana tools arrive through toolFromSDK, which stores the
 // schema as RawInputSchema (json.RawMessage). mcp.Tool.MarshalJSON emits
 // RawInputSchema verbatim and ignores the structured InputSchema, so we
 // normalize raw→structured up front. The function body then operates on
@@ -250,8 +266,7 @@ func withOrg(t mcp.Tool, demoteArg string) mcp.Tool {
 		if cur, ok := props[demoteArg].(map[string]any); ok {
 			merged := make(map[string]any, len(cur))
 			maps.Copy(merged, cur)
-			desc, _ := merged["description"].(string)
-			merged["description"] = strings.TrimSpace(desc + " " + datasourceUIDHint)
+			merged["description"] = datasourceUIDHint
 			props[demoteArg] = merged
 		}
 	}
@@ -289,9 +304,12 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, dsType gra
 		if errRes != nil {
 			return errRes, nil
 		}
+		if err := stripOrgArg(&req); err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		}
 		ctx = b.attachGrafana(ctx, org.OrgID)
 		if dsType == "" {
-			return upstream.Handler(ctx, req)
+			return callUpstream(ctx, upstream, req)
 		}
 
 		opts := grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}
@@ -304,7 +322,7 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, dsType gra
 			if !grafana.MatchesType(ds, dsType) {
 				return mcp.NewToolResultError(fmt.Sprintf("datasource %q is type %q, not compatible with %s tools", uid, ds.Type, dsType)), nil
 			}
-			return upstream.Handler(ctx, req)
+			return callUpstream(ctx, upstream, req)
 		}
 
 		dss, err := b.grafana.ListDatasources(ctx, opts)
@@ -318,7 +336,7 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, dsType gra
 		if err := injectArg(&req, argName, matches[0].UID); err != nil {
 			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
 		}
-		return upstream.Handler(ctx, req)
+		return callUpstream(ctx, upstream, req)
 	}
 }
 
@@ -376,23 +394,110 @@ func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Conte
 // shape is malformed (json.RawMessage that doesn't decode as an object,
 // or any other unexpected type).
 func injectArg(req *mcp.CallToolRequest, key string, value any) error {
+	return editArgs(req, func(args map[string]any) { args[key] = value })
+}
+
+// stripOrgArg removes the synthetic "org" argument before a call goes to
+// the upstream handler: upstream rejects argument keys it does not
+// declare, and "org" is ours (see withOrg).
+func stripOrgArg(req *mcp.CallToolRequest) error {
+	return editArgs(req, func(args map[string]any) { delete(args, "org") })
+}
+
+// editArgs applies edit to a copy of req.Params.Arguments and stores the
+// copy, so the caller's request is never mutated in place.
+func editArgs(req *mcp.CallToolRequest, edit func(map[string]any)) error {
+	next := map[string]any{}
 	switch a := req.Params.Arguments.(type) {
 	case nil:
-		req.Params.Arguments = map[string]any{key: value}
 	case map[string]any:
-		next := make(map[string]any, len(a)+1)
 		maps.Copy(next, a)
-		next[key] = value
-		req.Params.Arguments = next
 	case json.RawMessage:
-		next := map[string]any{}
 		if err := json.Unmarshal(a, &next); err != nil {
 			return fmt.Errorf("decode arguments: %w", err)
 		}
-		next[key] = value
-		req.Params.Arguments = next
 	default:
 		return fmt.Errorf("unexpected arguments type %T", a)
 	}
+	edit(next)
+	req.Params.Arguments = next
 	return nil
+}
+
+// mcp-grafana v2 exposes its tools with official MCP Go SDK types; our
+// server runs on mark3labs/mcp-go. toolFromSDK, callUpstream and
+// resultFromSDK bridge the two at the gfBinder boundary.
+
+// toolFromSDK converts an upstream tool definition to a mark3labs tool.
+// The schema is carried as RawInputSchema; withOrg normalizes it.
+func toolFromSDK(t *sdkmcp.Tool) mcp.Tool {
+	out := mcp.Tool{Name: t.Name, Description: t.Description}
+	switch schema := t.InputSchema.(type) {
+	case nil:
+	case json.RawMessage:
+		out.RawInputSchema = schema
+	default:
+		raw, err := json.Marshal(schema)
+		if err != nil {
+			panic(fmt.Sprintf("tools: tool %q has unmarshalable input schema: %v", t.Name, err))
+		}
+		out.RawInputSchema = raw
+	}
+	if a := t.Annotations; a != nil {
+		out.Annotations = mcp.ToolAnnotation{
+			Title:           a.Title,
+			ReadOnlyHint:    mcp.ToBoolPtr(a.ReadOnlyHint),
+			DestructiveHint: a.DestructiveHint,
+			IdempotentHint:  mcp.ToBoolPtr(a.IdempotentHint),
+			OpenWorldHint:   a.OpenWorldHint,
+		}
+	}
+	return out
+}
+
+// callUpstream converts req to an SDK request, runs the upstream
+// handler and converts its result back. A handler error (upstream
+// HardError) is returned unchanged.
+func callUpstream(ctx context.Context, upstream mcpgrafana.Tool, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	params := &sdkmcp.CallToolParamsRaw{Name: req.Params.Name}
+	if req.Params.Arguments != nil {
+		args, err := json.Marshal(req.Params.Arguments)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		}
+		params.Arguments = args
+	}
+	if req.Params.Meta != nil {
+		raw, err := json.Marshal(req.Params.Meta)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed _meta", err), nil
+		}
+		if err := json.Unmarshal(raw, &params.Meta); err != nil {
+			return mcp.NewToolResultErrorFromErr("malformed _meta", err), nil
+		}
+	}
+	res, err := upstream.Handler(ctx, &sdkmcp.CallToolRequest{Params: params})
+	if err != nil {
+		return nil, err
+	}
+	return resultFromSDK(res)
+}
+
+// resultFromSDK converts an upstream result through its wire form, so
+// every content type (text, image, embedded resource) and _meta carry
+// over.
+func resultFromSDK(r *sdkmcp.CallToolResult) (*mcp.CallToolResult, error) {
+	if r == nil {
+		return nil, errors.New("upstream returned no result")
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("encode upstream result: %w", err)
+	}
+	msg := json.RawMessage(raw)
+	res, err := mcp.ParseCallToolResult(&msg)
+	if err != nil {
+		return nil, fmt.Errorf("decode upstream result: %w", err)
+	}
+	return res, nil
 }

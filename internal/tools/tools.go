@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"context"
-	"log/slog"
 	"net/url"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -21,19 +19,18 @@ const filterAll = "all"
 // happens to use the same literal).
 const amActive = "active"
 
-// readOnlyToolAnnotation is the canonical annotation for every tool in
-// this MCP: read-only, open-world, non-destructive. IdempotentHint is
-// intentionally omitted — many tools (query_prometheus, query_loki_logs,
-// list_alerts) return live data that changes between calls.
+// readOnlyToolAnnotation is the annotation of every local tool: it writes
+// nothing, so it is also idempotent (a repeated call changes nothing more,
+// though live data may differ), and open-world.
 var readOnlyToolAnnotation = mcp.ToolAnnotation{
 	ReadOnlyHint:    mcp.ToBoolPtr(true),
 	OpenWorldHint:   mcp.ToBoolPtr(true),
 	DestructiveHint: mcp.ToBoolPtr(false),
+	IdempotentHint:  mcp.ToBoolPtr(true),
 }
 
 // readOnlyAnnotation is the mcp.NewTool option form of
-// readOnlyToolAnnotation. Use the value directly when mutating an
-// existing mcp.Tool (e.g. tools delegated through ProxiedClient).
+// readOnlyToolAnnotation.
 func readOnlyAnnotation() mcp.ToolOption {
 	return mcp.WithToolAnnotation(readOnlyToolAnnotation)
 }
@@ -66,16 +63,19 @@ type GrafanaAuth struct {
 }
 
 // RegisterAll wires every category of tool into the MCP server. See
-// doc.go for the per-category breakdown. ctx is used only for the
-// Tempo binder's one-shot startup discovery (deferred to the first
-// caller in JWT auth mode). disabled (typically sourced from
-// --disabled-tools) is consulted at every s.AddTool site via
-// maybeAddTool; nil = no filter.
-func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, az authz.Authorizer, ol authz.OrgLister, gc grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) error {
+// doc.go for the per-category breakdown. disabled (typically
+// sourced from --disabled-tools) is consulted at every s.AddTool site
+// via maybeAddTool; nil = no filter.
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) error {
 	b, err := newGFBinder(az, gc, grafanaURL, auth, disabled)
 	if err != nil {
 		return err
 	}
+	registerAll(s, az, gc, b, disabled)
+	return nil
+}
+
+func registerAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
 	registerOrgTools(s, disabled, az, b)
 	registerDashboardTools(s, b)
 	registerMetricsTools(s, b)
@@ -84,8 +84,5 @@ func RegisterAll(ctx context.Context, s *mcpsrv.MCPServer, logger *slog.Logger, 
 	registerAlertTools(s, disabled, az, gc)
 	registerSilenceTools(s, disabled, az, gc)
 	registerExampleTools(s, b)
-	if err := registerTempoTools(ctx, s, logger, b, ol); err != nil {
-		return err
-	}
-	return nil
+	registerTempoTools(s, b)
 }

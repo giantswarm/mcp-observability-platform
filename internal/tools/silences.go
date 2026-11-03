@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/giantswarm/mcp-toolkit/tooldesc"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 
@@ -40,7 +41,7 @@ func registerSilenceListTool(s *mcpsrv.MCPServer, disabled map[string]bool, az a
 	maybeAddTool(s, disabled,
 		mcp.NewTool("list_silences",
 			readOnlyAnnotation(),
-			mcp.WithDescription("List silences in the org's Alertmanager, paginated and sorted by endsAt asc (soonest expiring first). Each item is minimal (id, state, createdBy, endsAt, matcher count); call get_silence with the id for the full record. Resolves the silencedBy ids that list_alerts returns."),
+			tooldesc.Describe("List the org's Alertmanager silences, soonest expiring first, paged; get_silence has one silence's full record.", ""),
 			orgArg(),
 			mcp.WithString("state", mcp.Description("'active' (default) | 'pending' | 'expired' | 'all'")),
 			mcp.WithString("matcher", mcp.Description("Alertmanager label matcher to filter silences server-side, e.g. 'alertname=~\"Kube.*\"'.")),
@@ -77,7 +78,7 @@ func registerSilenceDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az
 	maybeAddTool(s, disabled,
 		mcp.NewTool("get_silence",
 			readOnlyAnnotation(),
-			mcp.WithDescription("Return the full Alertmanager silence record by id: matchers, startsAt, endsAt, createdBy, comment, state. Use after list_alerts (silencedBy[]) or list_silences."),
+			tooldesc.Describe("Get one Alertmanager silence by id, e.g. from get_alert's silencedBy: matchers, times, author, comment, state.", ""),
 			orgArg(),
 			mcp.WithString("id", mcp.Required(), mcp.Description("Alertmanager silence id (UUID).")),
 			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),

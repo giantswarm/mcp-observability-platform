@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `diff_tempo_traces` compares two traces.
+- `docs/tools.md` lists every tool as a model reads it (`make tools-doc`, kept current by a test). Tests hold the local tools to the description budget, every tool to the summary line, and each summary of an upstream tool to the upstream text it was written against: an mcp-grafana bump that changes that text fails until the summary is checked.
+
+### Changed
+
+- mcp-grafana updated to v2.0.0. mcp-grafana now exposes MCP Go SDK types; `gfBinder` converts them to `mark3labs/mcp-go`, which this server keeps using.
+- `alerting_manage_rules` is renamed to `alerting_rules_read`. Update `--disabled-tools` / `tools.disabled` entries that name it.
+- Tempo tools use mcp-grafana's native Tempo tools, which call Tempo's HTTP API through Grafana's datasource proxy. Tool names change: `traceql-search` → `search_tempo_traces`, `get-trace` → `get_tempo_trace`, `get-attribute-names` → `list_tempo_attribute_names`, `get-attribute-values` → `list_tempo_attribute_values`, `traceql-metrics-instant` / `traceql-metrics-range` → `query_tempo_metrics` (`type=instant|range`), `docs-traceql` → `get_tempo_traceql_docs`. The `tempo-app` MCP server (`query_frontend.mcp_server.enabled`) is no longer required, and Tempo tools register at startup without probing a Tempo datasource.
+- Every tool description starts with a summary line of at most 120 runes, all muster's `filter_tools` shows ([giantswarm#38592](https://github.com/giantswarm/giantswarm/issues/38592)): the local tools' descriptions are rewritten with mcp-toolkit's `tooldesc.Describe`, and the 26 delegated tools whose upstream first line is longer get a summary line of ours before upstream's text (`internal/tools/summaries.go`).
+- The `datasourceUid` description of the datasource-bound delegated tools and of the Alertmanager tools is one short hint instead of upstream's text plus a 290-rune hint.
+- The local tools (`list_orgs`, `list_alerts`, `get_alert`, `list_silences`, `get_silence`) report `idempotentHint: true`: they write nothing, so a repeated call changes nothing.
+
+## [0.4.0] - 2026-10-02
+
+### Added
+
 - `subjectClaim` and `allowPrivateIPJWKSHosts` on `OAUTH_TRUSTED_ISSUERS` entries (and the `oauth.trustedIssuers` Helm values). `subjectClaim` remaps the caller subject to another claim's value (e.g. `email`); `allowPrivateIPJWKSHosts` allows the listed hostnames' JWKS URLs to resolve to a private IP while keeping SSRF protection elsewhere.
 - Tool-call audit records and spans carry the acting agent of a delegated (on-behalf-of) token: `caller_actor` and the full RFC 8693 `act` chain.
 - Grafana JWT auth mode (`GRAFANA_AUTH_MODE=jwt`, Helm `grafana.authMode: jwt`). The MCP forwards each caller's own Dex `id_token` to Grafana in `GRAFANA_JWT_HEADER` (default `X-JWT-Assertion`; Helm `grafana.jwtHeader`). No Grafana secret is needed, Grafana enforces the caller's own roles, and audit logs show the real user. Requires Grafana `[auth.jwt]` against Dex. Trusted-issuer callers and the stdio transport are not supported in this mode.
@@ -17,11 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - mcp-oauth updated to v1.x.
+- mcp-grafana updated to v1.4.2, fixing CVE-2026-15583 and CVE-2026-19516 (SSRF and service-account token exfiltration through the `X-Grafana-URL` header) and, through its dependencies, CVE-2026-93450 in `go-openapi/swag/jsonutils`. v1.4.2 is the last release that still ships the proxied MCP client the Tempo tools use. mcp-grafana now rejects argument keys a tool does not declare, so the synthetic `org` argument is stripped before a call is handed to it, and the Tempo client cache is keyed by organization and datasource UID because the client now pins the organization it was dialled for.
+- OpenTelemetry-Go exporters updated to v1.46.0 and the log modules to v0.22.0, fixing GO-2026-6505, GO-2026-6508 and GO-2026-6615.
+- `google.golang.org/grpc` updated to v1.83.2, fixing GO-2026-6443.
+- `.nancy-ignore` no longer carries exceptions for dependency versions that are no longer in the build.
 - `google.golang.org/grpc` updated to v1.83.0, fixing GO-2026-6061 (HTTP/2 transport).
 
 ### Fixed
 
 - `values.schema.json` no longer rejects the free-form values the templates pass through with `toYaml`. The generator inferred a closed schema from the defaults, so `podLabels`, `podAnnotations`, `nodeSelector`, `affinity`, `service.annotations`, `serviceAccount.annotations`, `serviceMonitor.labels`, `httpRoute.annotations`, `autoscaling.hpa.behavior` and `autoscaling.vpa.resourcePolicy` accepted no keys at all, and `networkPolicy.ingress` accepted only `ports`. `networkPolicy.ingress` items now validate against the upstream Kubernetes `NetworkPolicyIngressRule`. This broke `helm unittest`, which validates values against the schema.
+- `values.schema.json` no longer rejects valid Gateway API fields on `httpRoute.parentRefs` and `httpRoute.matches`. Their items were inferred from the defaults and accepted only `name`/`namespace`/`sectionName` and `path`; they now validate against the Gateway API HTTPRoute v1 `ParentReference` and `HTTPRouteMatch` schemas, so `group`, `kind`, `port`, `headers`, `method` and `queryParams` pass.
 
 ## [0.3.0] - 2026-06-30
 
@@ -84,7 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.0...v0.2.1

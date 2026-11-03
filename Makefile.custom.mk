@@ -27,6 +27,10 @@ test-vet: ## Run go test with race detector and go vet
 .PHONY: check
 check: lint-yaml test-vet ## Run YAML lint + Go tests + vet
 
+.PHONY: tools-doc
+tools-doc: ## Regenerate docs/tools.md from the registered tools (the test TestToolsDocIsCurrent keeps it current)
+	TOOLS_DOC_UPDATE=1 go test -count=1 -run TestToolsDocIsCurrent ./internal/tools
+
 # Vulnerabilities accepted with documented justification (ID plus a comment saying why).
 GOVULN_IGNORE :=
 
