@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strconv"
 	"testing"
 
 	oauthserver "github.com/giantswarm/mcp-oauth/server"
@@ -105,8 +106,8 @@ func TestLoadOAuthConfig_EnableCIMD(t *testing.T) {
 		wantErr   bool
 	}{
 		{"unset defaults to false", "", false, false},
-		{"true", "true", true, false},
-		{"false", "false", false, false},
+		{"enabled", strconv.FormatBool(true), true, false},
+		{"disabled", strconv.FormatBool(false), false, false},
 		{"malformed is a hard error", "yes", false, true},
 	}
 	for _, c := range cases {
