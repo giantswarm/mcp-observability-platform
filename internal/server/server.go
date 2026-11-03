@@ -22,12 +22,15 @@ type Config struct {
 	Logger     *slog.Logger
 	Authorizer authz.Authorizer
 	Grafana    grafana.Client
-	// GrafanaURL / GrafanaAPIKey / GrafanaBasicAuth are forwarded to the
-	// gfBinder, which builds an upstream mcpgrafana client per call.
-	// APIKey and BasicAuth are mutually exclusive; exactly one must be set.
+	// GrafanaURL / GrafanaAPIKey / GrafanaBasicAuth / GrafanaJWTHeader
+	// are forwarded to the gfBinder, which builds an upstream mcpgrafana
+	// client per call. APIKey, BasicAuth and JWTHeader are mutually
+	// exclusive; exactly one must be set. JWTHeader selects JWT auth
+	// mode: the caller's own token is forwarded in that header.
 	GrafanaURL       string
 	GrafanaAPIKey    string
 	GrafanaBasicAuth *url.Userinfo
+	GrafanaJWTHeader string
 	Version          string
 	// ToolTimeout: 0 disables the per-handler deadline.
 	ToolTimeout time.Duration
@@ -69,6 +72,9 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		// no resources/prompts.
 		mcpsrv.WithToolCapabilities(true),
 		mcpsrv.WithRecovery(),
+		// Empty Hooks so RegisterAll can attach its own via GetHooks
+		// (deferred Tempo discovery in JWT auth mode).
+		mcpsrv.WithHooks(&mcpsrv.Hooks{}),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
 		mcpsrv.WithToolHandlerMiddleware(responsecap.New(responsecap.Options{
@@ -80,7 +86,11 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(timeout.New(cfg.ToolTimeout)),
 	)
 
-	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaAPIKey, cfg.GrafanaBasicAuth, cfg.DisabledTools); err != nil {
+	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, tools.GrafanaAuth{
+		APIKey:    cfg.GrafanaAPIKey,
+		BasicAuth: cfg.GrafanaBasicAuth,
+		JWTHeader: cfg.GrafanaJWTHeader,
+	}, cfg.DisabledTools); err != nil {
 		return nil, fmt.Errorf("server: register tools: %w", err)
 	}
 
