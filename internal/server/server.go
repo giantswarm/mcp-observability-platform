@@ -99,23 +99,25 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 
 // StreamableHTTPHandler mounts the streamable-HTTP transport at /mcp.
 // The handler trusts the caller identity already on the request context,
-// so it MUST be gated behind mcp-oauth's ValidateToken.
-func StreamableHTTPHandler(mcp *mcpsrv.MCPServer) http.Handler {
+// so it MUST be gated behind mcp-oauth's ValidateToken. resolve is set
+// only in JWT auth mode (see middleware.InjectCaller); nil otherwise.
+func StreamableHTTPHandler(mcp *mcpsrv.MCPServer, resolve middleware.TokenResolver) http.Handler {
 	return mcpsrv.NewStreamableHTTPServer(
 		mcp,
 		mcpsrv.WithEndpointPath("/mcp"),
-		mcpsrv.WithHTTPContextFunc(middleware.InjectCallerFromRequest),
+		mcpsrv.WithHTTPContextFunc(middleware.InjectCaller(resolve)),
 	)
 }
 
 // SSEHandler mounts the SSE transport. SSE needs both /sse (event
 // stream) and /message (client→server posts) on the same handler;
-// mcp-go routes between them by path. Caller gates with OAuth.
-func SSEHandler(mcp *mcpsrv.MCPServer) http.Handler {
+// mcp-go routes between them by path. Caller gates with OAuth. resolve
+// as for StreamableHTTPHandler.
+func SSEHandler(mcp *mcpsrv.MCPServer, resolve middleware.TokenResolver) http.Handler {
 	return mcpsrv.NewSSEServer(
 		mcp,
 		mcpsrv.WithSSEEndpoint("/sse"),
 		mcpsrv.WithMessageEndpoint("/message"),
-		mcpsrv.WithSSEContextFunc(middleware.InjectCallerFromRequest),
+		mcpsrv.WithSSEContextFunc(middleware.InjectCaller(resolve)),
 	)
 }

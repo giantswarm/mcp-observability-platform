@@ -1,18 +1,23 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 
 	oauth "github.com/giantswarm/mcp-oauth"
 	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/oauthconfig"
+	"github.com/giantswarm/mcp-oauth/providers"
 	"github.com/giantswarm/mcp-oauth/providers/dex"
 	oauthserver "github.com/giantswarm/mcp-oauth/server"
 	"github.com/giantswarm/mcp-oauth/storage"
+
+	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
 // OAUTH_* env vars read directly by this package. Upstream owns the rest
@@ -74,23 +79,58 @@ func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
 	return issuers, nil
 }
 
+// idTokenResolver returns a middleware.TokenResolver that finds the
+// caller's Dex ID token for GRAFANA_AUTH_MODE=jwt. It relies on
+// mcp-oauth's ValidateToken having run (and refreshed an expired Dex
+// token) on r:
+//
+//   - oauth: the bearer is an MCP-issued token; the Dex token is stored
+//     under the bearer string itself.
+//   - sso: the bearer IS a forwarded Dex ID token.
+//   - anything else (trusted-issuer, self-issued jwt): no Dex token.
+func idTokenResolver(store storage.TokenStore) middleware.TokenResolver {
+	return func(ctx context.Context, r *http.Request) string {
+		ui, ok := handler.UserInfoFromContext(r.Context())
+		if !ok || ui == nil {
+			return ""
+		}
+		scheme, bearer, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok || !strings.EqualFold(scheme, "bearer") || bearer == "" {
+			return ""
+		}
+		switch ui.TokenSource {
+		case providers.TokenSourceOAuth:
+			tok, err := store.GetToken(ctx, bearer)
+			if err != nil {
+				return ""
+			}
+			return oauthserver.ExtractIDToken(tok)
+		case providers.TokenSourceSSO:
+			return bearer
+		default:
+			return ""
+		}
+	}
+}
+
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
-// storeClose drains the storage backend on shutdown.
-func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
+// The returned token store backs idTokenResolver. storeClose drains the
+// storage backend on shutdown.
+func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, storage.TokenStore, func(), error) {
 	provider, err := oauthconfig.DexFromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("dex provider: %w", err)
+		return nil, nil, nil, fmt.Errorf("dex provider: %w", err)
 	}
 	// Upstream DexFromEnv does not enforce the dex audience charset on
 	// the client ID; check it here so a typo fails startup rather than
 	// producing tokens Dex rejects mid-flow.
 	if err := dex.ValidateAudience(os.Getenv(envOAuthDexClientID)); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
+		return nil, nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
 	}
 
 	cfg, err := oauthconfig.FromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("oauth config: %w", err)
+		return nil, nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
 	// MCP CLI clients (Claude Code, mcp-inspector) register a loopback
 	// redirect URI per RFC 8252. The binary always permits it; not an
@@ -99,7 +139,7 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 
 	encryptor, err := oauthconfig.NewEncryptorFromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("oauth encryptor: %w", err)
+		return nil, nil, nil, fmt.Errorf("oauth encryptor: %w", err)
 	}
 
 	backend := os.Getenv(envOAuthStorageBackend)
@@ -108,12 +148,12 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	// OAUTH_ALLOW_INSECURE_HTTP=true overrides for local dev (same
 	// escape hatch the upstream issuer-scheme check uses).
 	if backend == storage.BackendValkey && encryptor == nil && !cfg.AllowInsecureHTTP {
-		return nil, nil, fmt.Errorf("OAUTH_STORAGE_BACKEND=valkey requires OAUTH_ENCRYPTION_KEY (set OAUTH_ALLOW_INSECURE_HTTP=true to override for dev)")
+		return nil, nil, nil, fmt.Errorf("OAUTH_STORAGE_BACKEND=valkey requires OAUTH_ENCRYPTION_KEY (set OAUTH_ALLOW_INSECURE_HTTP=true to override for dev)")
 	}
 
 	store, storeCloseErr, err := oauthconfig.StorageFromEnv(encryptor, nil, logger)
 	if err != nil {
-		return nil, nil, fmt.Errorf("oauth store: %w", err)
+		return nil, nil, nil, fmt.Errorf("oauth store: %w", err)
 	}
 	storeClose := func() { _ = storeCloseErr() }
 
@@ -134,7 +174,7 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	issuers, err := parseTrustedIssuers(os.Getenv(envOAuthTrustedIssuers))
 	if err != nil {
 		storeClose()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var opts []oauth.ServerOption
 	if len(issuers) > 0 {
@@ -144,7 +184,7 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger, opts...)
 	if err != nil {
 		storeClose()
-		return nil, nil, fmt.Errorf("oauth server: %w", err)
+		return nil, nil, nil, fmt.Errorf("oauth server: %w", err)
 	}
-	return handler.New(srv, logger), storeClose, nil
+	return handler.New(srv, logger), srv.TokenStore(), storeClose, nil
 }
