@@ -32,7 +32,7 @@ var docsServer = sync.OnceValue(func() docs {
 		panic(err)
 	}
 	az := &authztest.Fake{}
-	b, err := newGFBinder(az, gc, "http://grafana.invalid", "docs", nil, nil)
+	b, err := newGFBinder(az, gc, "http://grafana.invalid", GrafanaAuth{APIKey: "docs"}, nil)
 	if err != nil {
 		panic(err)
 	}
