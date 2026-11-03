@@ -112,3 +112,92 @@ tests:
         equal:
           path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
           value: kubernetes.io/hostname
+
+  - it: serviceAccountToken mode (default) reads GRAFANA_SA_TOKEN from existingSecret
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_SA_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: mcp-observability-platform-grafana
+                key: serviceAccountToken
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_AUTH_MODE
+
+  - it: basicAuth mode reads GRAFANA_BASIC_AUTH from existingSecret
+    set:
+      grafana:
+        authMode: basicAuth
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_BASIC_AUTH
+            valueFrom:
+              secretKeyRef:
+                name: mcp-observability-platform-grafana
+                key: basicAuth
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_SA_TOKEN
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_AUTH_MODE
+
+  - it: jwt mode sets GRAFANA_AUTH_MODE and GRAFANA_JWT_HEADER and mounts no Grafana secret
+    set:
+      grafana:
+        authMode: jwt
+        existingSecret: ""
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_AUTH_MODE
+            value: jwt
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_JWT_HEADER
+            value: X-JWT-Assertion
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_SA_TOKEN
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_BASIC_AUTH
+
+  - it: jwt mode honors a custom jwtHeader
+    set:
+      grafana:
+        authMode: jwt
+        jwtHeader: X-Dex-Token
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_JWT_HEADER
+            value: X-Dex-Token
