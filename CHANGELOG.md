@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CI: architect orb 10.16.7, which pushes the chart to the git app catalogs with the architect GitHub App instead of the `catalogbot` account (giantswarm/giantswarm#34786).
 - mcp-oauth updated to v1.x.
 - mcp-grafana updated to v1.4.2, fixing CVE-2026-15583 and CVE-2026-19516 (SSRF and service-account token exfiltration through the `X-Grafana-URL` header) and, through its dependencies, CVE-2026-93450 in `go-openapi/swag/jsonutils`. v1.4.2 is the last release that still ships the proxied MCP client the Tempo tools use. mcp-grafana now rejects argument keys a tool does not declare, so the synthetic `org` argument is stripped before a call is handed to it, and the Tempo client cache is keyed by organization and datasource UID because the client now pins the organization it was dialled for.
 - OpenTelemetry-Go exporters updated to v1.46.0 and the log modules to v0.22.0, fixing GO-2026-6505, GO-2026-6508 and GO-2026-6615.
