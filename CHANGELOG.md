@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `values.schema.json` no longer rejects the free-form values the templates pass through with `toYaml`. The generator inferred a closed schema from the defaults, so `podLabels`, `podAnnotations`, `nodeSelector`, `affinity`, `service.annotations`, `serviceAccount.annotations`, `serviceMonitor.labels`, `httpRoute.annotations`, `autoscaling.hpa.behavior` and `autoscaling.vpa.resourcePolicy` accepted no keys at all, and `networkPolicy.ingress` accepted only `ports`. `networkPolicy.ingress` items now validate against the upstream Kubernetes `NetworkPolicyIngressRule`. This broke `helm unittest`, which validates values against the schema.
 - `values.schema.json` no longer rejects valid Gateway API fields on `httpRoute.parentRefs` and `httpRoute.matches`. Their items were inferred from the defaults and accepted only `name`/`namespace`/`sectionName` and `path`; they now validate against the Gateway API HTTPRoute v1 `ParentReference` and `HTTPRouteMatch` schemas, so `group`, `kind`, `port`, `headers`, `method` and `queryParams` pass.
 
+### Security
+
+- Update `golang.org/x/net` to v0.62.0 (CVE-2026-97045, CVE-2026-78661 and others), `golang.org/x/crypto` to v0.58.0, `github.com/go-jose/go-jose/v4` to v4.1.6 (CVE-2026-116585, CVE-2026-116586, CVE-2026-116587) and `github.com/mark3labs/mcp-go` to v1.5.0, which caps POST request bodies at 4 MiB (CVE-2026-108859). CVE-2026-119566 in `github.com/prometheus/prometheus` has no fix yet and is ignored until 2026-12-04, as on main.
+
 ## [0.3.0] - 2026-06-30
 
 ### Added
