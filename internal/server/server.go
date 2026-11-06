@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/giantswarm/mcp-toolkit/brand"
 	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
 	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
@@ -68,6 +69,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		// initialize handshake; required because we register tools but
 		// no resources/prompts.
 		mcpsrv.WithToolCapabilities(true),
+		brand.WithGiantSwarmIcon(),
 		mcpsrv.WithRecovery(),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
