@@ -4,7 +4,7 @@ go 1.26.10
 
 require (
 	github.com/giantswarm/mcp-oauth v1.13.2
-	github.com/giantswarm/mcp-toolkit v0.5.2
+	github.com/giantswarm/mcp-toolkit v0.5.3
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.4
 	github.com/grafana/mcp-grafana/v2 v2.2.0
