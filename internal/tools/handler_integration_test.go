@@ -42,7 +42,7 @@ func newGrafanaJSONServer(handler http.HandlerFunc) *httptest.Server {
 // focus on the tool-handler side of the pipeline.
 func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 	t.Helper()
-	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: "test-token"})
+	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: testAPIKey})
 	if err != nil {
 		t.Fatalf("grafana.New: %v", err)
 	}
@@ -57,7 +57,7 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 		}},
 	}}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil, nil); err != nil {
+	if err := RegisterAll(s, az, gf, ts.URL, GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s

@@ -51,12 +51,23 @@ func maybeAddTool(s *mcpsrv.MCPServer, disabled map[string]bool, t mcp.Tool, h m
 	s.AddTool(t, h)
 }
 
+// GrafanaAuth is how the upstream mcpgrafana client authenticates to
+// Grafana. Exactly one field is set (enforced at config load and at
+// grafana.New). JWTHeader selects JWT auth mode: no shared credential,
+// the caller's own token (grafana.UserTokenFromContext) rides in that
+// header on every call.
+type GrafanaAuth struct {
+	APIKey    string
+	BasicAuth *url.Userinfo
+	JWTHeader string
+}
+
 // RegisterAll wires every category of tool into the MCP server. See
 // doc.go for the per-category breakdown. disabled (typically
 // sourced from --disabled-tools) is consulted at every s.AddTool site
 // via maybeAddTool; nil = no filter.
-func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
-	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth, disabled)
+func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) error {
+	b, err := newGFBinder(az, gc, grafanaURL, auth, disabled)
 	if err != nil {
 		return err
 	}
