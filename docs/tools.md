@@ -210,7 +210,7 @@ Compare two complete traces. Returns a compact summary and includes the full spa
 ```text
 Build a Grafana link to a dashboard, panel or Explore query, optionally as a short URL.
 
-Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to also attempt a /goto/<uid> short URL; if shortening fails, the full deeplink is returned.
+Generate deeplink URLs for Grafana resources. Supports dashboards (requires dashboardUid or provisioningPreview), panels (requires dashboardUid or provisioningPreview, plus panelId), and Explore queries (requires datasourceUid and optionally queries). For dashboard and panel links, provisioningPreview points at a dashboard staged on a provisioning repository branch (e.g. a git-sync PR preview). For explore links, the time range and queries are embedded inside the Grafana explore state. Set shorten=true to return a /goto/<uid> short URL instead; if shortening fails, an error containing the full deeplink is returned.
 ```
 
 ```json
@@ -277,7 +277,7 @@ Generate deeplink URLs for Grafana resources. Supports dashboards (requires dash
       "type": "string"
     },
     "shorten": {
-      "description": "If true, try to shorten the generated URL to /goto/<uid>. If shortening fails, return the original deeplink.",
+      "description": "If true, try to shorten the generated URL to /goto/<uid>. If shortening fails, an error containing the full deeplink is returned.",
       "type": "boolean"
     },
     "timeRange": {
@@ -371,12 +371,16 @@ Retrieves the complete dashboard, including panels, variables, and settings, for
 ```text
 Get the queries of a Grafana dashboard's panels, or of one panel, optionally with variables substituted.
 
-Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Optionally provide `variables` for template variable substitution, which populates `processedQuery` and `requiredVariables` fields. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.
+Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.
 ```
 
 ```json
 {
   "properties": {
+    "end": {
+      "description": "Query end time for macros (default now).",
+      "type": "string"
+    },
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
       "type": "string"
@@ -384,6 +388,10 @@ Retrieve panel queries from a Grafana dashboard. Supports all datasource types (
     "panelId": {
       "description": "Optional panel ID to filter to a specific panel",
       "type": "integer"
+    },
+    "start": {
+      "description": "Query start time for macros (default now-1h).",
+      "type": "string"
     },
     "uid": {
       "description": "The UID of the dashboard",
@@ -502,7 +510,7 @@ Retrieves detailed information about a specific datasource by UID or name. Retur
 ```text
 Render a Grafana panel, dashboard or Explore view as a PNG image; needs the Grafana Image Renderer.
 
-Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. Exactly one of dashboardUid (for stored dashboards), provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) or explore (an ad-hoc datasource query rendered in Explore, no saved dashboard needed) must be supplied. Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.
+Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image. Returns the image as base64 encoded data. Requires the Grafana Image Renderer service to be installed. Exactly one of dashboardUid (for stored dashboards), provisioningPreview (for dashboards staged on a provisioning repository branch, e.g. a git-sync PR) or explore (an ad-hoc datasource query rendered in Explore, no saved dashboard needed) must be supplied. Defaults in CSS pixels: panel 1000x750, dashboard 1200x900, Explore 1000x1000. Scale defaults to 1 for all views and is clamped to 1-3. Use this for generating visual snapshots of dashboards for reports, alerts, or presentations.
 ```
 
 ```json
@@ -533,7 +541,7 @@ Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image.
       "type": "object"
     },
     "height": {
-      "description": "Height of the rendered image in pixels. Defaults to 500 (1000 for explore)",
+      "description": "Positive viewport height in CSS pixels, or -1 for full-page rendering. See tool description for per-view defaults. Positive heights are capped so height times scale is at most 3000. The renderer may raise values below its configured minimum (500 by default).",
       "type": "integer"
     },
     "org": {
@@ -567,7 +575,7 @@ Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image.
       "type": "object"
     },
     "scale": {
-      "description": "Scale factor for the image (1-3). Defaults to 1",
+      "description": "Image scale factor. See tool description for default and limits. Higher scales reduce the maximum allowed viewport dimensions.",
       "type": "integer"
     },
     "theme": {
@@ -589,7 +597,7 @@ Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image.
       "type": "object"
     },
     "timeout": {
-      "description": "Rendering timeout in seconds. Defaults to 60",
+      "description": "Rendering timeout in seconds. Defaults to 60, capped at 120",
       "type": "integer"
     },
     "variables": {
@@ -610,7 +618,7 @@ Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image.
       "type": "object"
     },
     "width": {
-      "description": "Width of the rendered image in pixels. Defaults to 1000",
+      "description": "Positive viewport width in CSS pixels. See tool description for per-view defaults. Capped so width times scale is at most 3000. The renderer may raise values below its configured minimum (1000 by default).",
       "type": "integer"
     }
   },
@@ -682,7 +690,9 @@ Get one Alertmanager silence by id, e.g. from get_alert's silencedBy: matchers, 
 ## `get_tempo_trace`
 
 ```text
-Retrieve a specific trace by ID
+Get one Tempo trace by ID: its spans grouped by service and resource, with attributes, events and links.
+
+Retrieve a specific trace by ID. Returns its spans grouped by service and resource, with span attributes, events and links.
 ```
 
 ```json
@@ -692,12 +702,20 @@ Retrieve a specific trace by ID
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
+    "end": {
+      "description": "Optional end of the trace search range in RFC3339 format. Must be provided with start.",
+      "type": "string"
+    },
     "focus_span_id": {
       "description": "Optional 16-character hexadecimal span ID to select initially. The full trace remains available.",
       "type": "string"
     },
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
+      "type": "string"
+    },
+    "start": {
+      "description": "Optional start of the trace search range in RFC3339 format. Must be provided with end. Narrowing the range makes the lookup much cheaper.",
       "type": "string"
     },
     "trace_id": {
@@ -955,34 +973,42 @@ List label names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, C
     "matches": {
       "description": "Optionally, a list of label matchers to filter the results by",
       "items": {
-        "properties": {
-          "filters": {
-            "items": {
-              "properties": {
-                "name": {
-                  "description": "The name of the label to match against",
-                  "type": "string"
+        "oneOf": [
+          {
+            "description": "A Prometheus selector such as {job=\"api\"}",
+            "type": "string"
+          },
+          {
+            "properties": {
+              "filters": {
+                "items": {
+                  "properties": {
+                    "name": {
+                      "description": "The name of the label to match against",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "One of the '=' or '!=' or '=~' or '!~'",
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "The value to match against",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "value",
+                    "type"
+                  ],
+                  "type": "object"
                 },
-                "type": {
-                  "description": "One of the '=' or '!=' or '=~' or '!~'",
-                  "type": "string"
-                },
-                "value": {
-                  "description": "The value to match against",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "name",
-                "value",
-                "type"
-              ],
-              "type": "object"
+                "type": "array"
+              }
             },
-            "type": "array"
+            "type": "object"
           }
-        },
-        "type": "object"
+        ]
       },
       "type": "array"
     },
@@ -1037,34 +1063,42 @@ Gets the values for a specific label name in a PromQL-compatible datasource (Pro
     "matches": {
       "description": "Optionally, a list of selectors to filter the results by",
       "items": {
-        "properties": {
-          "filters": {
-            "items": {
-              "properties": {
-                "name": {
-                  "description": "The name of the label to match against",
-                  "type": "string"
+        "oneOf": [
+          {
+            "description": "A Prometheus selector such as {job=\"api\"}",
+            "type": "string"
+          },
+          {
+            "properties": {
+              "filters": {
+                "items": {
+                  "properties": {
+                    "name": {
+                      "description": "The name of the label to match against",
+                      "type": "string"
+                    },
+                    "type": {
+                      "description": "One of the '=' or '!=' or '=~' or '!~'",
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "The value to match against",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "value",
+                    "type"
+                  ],
+                  "type": "object"
                 },
-                "type": {
-                  "description": "One of the '=' or '!=' or '=~' or '!~'",
-                  "type": "string"
-                },
-                "value": {
-                  "description": "The value to match against",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "name",
-                "value",
-                "type"
-              ],
-              "type": "object"
+                "type": "array"
+              }
             },
-            "type": "array"
+            "type": "object"
           }
-        },
-        "type": "object"
+        ]
       },
       "type": "array"
     },
@@ -1299,7 +1333,7 @@ List values for a fully scoped attribute name (e.g. resource.service.name). Usef
 ```text
 Run a LogQL query on the org's Loki logs: log lines (newest first by default) or metric samples.
 
-Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app="foo"} |= "error"`; VictoriaLogs: `{app="foo"} "error"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~".*"`/`=~".+"`, or negative-only matchers), keep time ranges narrow; rejected queries return rewrite guidance.
+Executes a log query against a Loki or VictoriaLogs datasource and returns matching log entries (or metric samples on Loki). Defaults to the last hour, a limit of 10 entries, and 'backward' direction (newest first). The `logql` parameter takes LogQL on Loki and LogsQL on VictoriaLogs (e.g., Loki: `{app="foo"} |= "error"`; VictoriaLogs: `{app="foo"} "error"`). To count matching log lines precisely, use a `count_over_time()` metric query with queryType='instant'. For broad queries that match many lines, set `format` to 'compact' to group results by stream and avoid repeating label metadata on every line. Query cost is the bytes scanned, which the index statistics for the stream selector over the same time range estimate before a broad selector or long time range is run. If this server enables the Loki cost guardrail, expensive queries are rejected before execution: query cost is bytes SCANNED, determined only by the stream selector and time range — line filters (|=) and parsers (| json) reduce what is returned, not what is scanned. Use a stream selector with at least one selective positive label matcher (never `{}`, `=~".*"`/`=~".+"`, or negative-only matchers), keep time ranges narrow; rejected queries return rewrite guidance.
 ```
 
 ```json
@@ -1364,7 +1398,7 @@ Executes a log query against a Loki or VictoriaLogs datasource and returns match
 ```text
 Get the common log patterns, with counts, for a Loki stream selector over a time range.
 
-Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string and a total count of occurrences. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job="nginx"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources - use a `| stats` pipeline instead.
+Retrieves detected log patterns from a Loki datasource for a given stream selector and time range. Returns a list of patterns, each containing a pattern string, a total count of occurrences, and a detected `level` when available. Patterns help identify common log structures and anomalies. The `logql` parameter must be a stream selector (e.g., `{job="nginx"}`) and does not support line filters or aggregations. Defaults to the last hour if the time range is omitted. **Not supported on VictoriaLogs** datasources - use a `| stats` pipeline instead.
 ```
 
 ```json
@@ -1408,7 +1442,7 @@ Retrieves detected log patterns from a Loki datasource for a given stream select
 ```text
 Get index statistics for a Loki stream selector: streams, chunks, index entries, bytes; not log line counts.
 
-Retrieves index-level statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{"streams": 5, "chunks": 50, "entries": 10000, "bytes": 512000}`). **Important**: the `entries` count reflects storage-level index entries (chunk metadata), NOT the number of individual log lines matching the selector. Counting actual matching log lines requires a `count_over_time()` LogQL metric query. On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app="nginx", env="prod"}`) and does not support line filters, parsers, or aggregations. Defaults to the last hour if the time range is omitted.
+Retrieves index-level statistics about log streams matching a given selector within a Loki or VictoriaLogs datasource and time range. Returns an object containing the count of streams, chunks, entries, and total bytes (e.g., `{"streams": 5, "chunks": 50, "entries": 10000, "bytes": 512000}`). **Important**: the `entries` count reflects storage-level index entries (chunk metadata), NOT the number of individual log lines matching the selector. Counting actual matching log lines requires a `count_over_time()` LogQL metric query. On VictoriaLogs only `entries` is populated; the other fields remain zero. The `logql` parameter **must** be a simple label selector (e.g., `{app="nginx", env="prod"}`) and does not support line filters, parsers, or aggregations. The `bytes` field estimates how much data a log query over the same selector and time range would scan, which is useful to know before running a broad selector or long time range. Defaults to the last hour if the time range is omitted.
 ```
 
 ```json
@@ -1448,7 +1482,7 @@ Retrieves index-level statistics about log streams matching a given selector wit
 ```text
 Run a PromQL query, instant or range, on the org's Mimir metrics.
 
-Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Supports instant queries (single point) and range queries (time range). Time: RFC3339 or relative expressions like 'now', 'now-1h'.
+Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitoring, etc.) using a PromQL expression. Returns data without opening a chart. Supports instant and range queries. Time: RFC3339 or relative expressions like 'now', 'now-1h'.
 ```
 
 ```json
@@ -1564,7 +1598,7 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 ```text
 Compute metrics from traces with a TraceQL metrics query, instant or range (default).
 
-Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead.
+Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlike PromQL. Use type 'instant' for a single value or 'range' for a time series (default). Instant queries over large time ranges may timeout — keep the window under 15 minutes for instant, or use range instead. Returns each series with its labels and either its samples and exemplars (range) or a single value (instant).
 ```
 
 ```json
@@ -1613,7 +1647,7 @@ Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlik
 ```text
 Run one query (default the first) of each given Grafana dashboard panel, with variables and macros substituted.
 
-Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval), and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, or PostgreSQL). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.
+Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the "default" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.
 ```
 
 ```json
@@ -1674,14 +1708,18 @@ Executes one or more dashboard panel queries with optional time range and variab
 ## `search_dashboards`
 
 ```text
-Search Grafana dashboards by query, folder, tag or starred: title, UID, folder, tags and URL.
+Search Grafana dashboards by query, folder, folder path, tag or starred: title, UID, folder path, tags and URL.
 
-Search Grafana dashboards by query and/or folderUid, tag, and starred. Returns matching dashboards with title, UID, folder, tags, and URL.
+Search Grafana dashboards by query and/or folderUid, folderPath, tag, and starred. Returns matching dashboards with title, UID, folder, folder path, tags, and URL.
 ```
 
 ```json
 {
   "properties": {
+    "folderPath": {
+      "description": "Optional folder path like Ops/Production. Includes subfolders. Case-insensitive",
+      "type": "string"
+    },
     "folderUid": {
       "description": "Optional immediate folder UID (not nested)",
       "type": "string"
@@ -1701,7 +1739,7 @@ Search Grafana dashboards by query and/or folderUid, tag, and starred. Returns m
       "type": "integer"
     },
     "query": {
-      "description": "Optional query. Omit to filter by folderUid, tag, or starred",
+      "description": "Optional query. Omit to filter by folderUid, folderPath, tag, or starred",
       "type": "string"
     },
     "starred": {
@@ -1751,7 +1789,9 @@ Search for Grafana folders by a query string. Returns matching folders with deta
 ## `search_tempo_traces`
 
 ```text
-Search for traces using TraceQL queries
+Search Tempo traces with a TraceQL query: each trace's root service and span, start, duration and matched spans.
+
+Search for traces using TraceQL queries. Returns each matching trace with its root service, root span name, start time and duration, and the span sets the query matched. Each span lists its ID, start time, duration and the attributes the query returned, as an object mapping attribute names to values.
 ```
 
 ```json
@@ -1765,6 +1805,11 @@ Search for traces using TraceQL queries
       "description": "End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided, must be after start.",
       "type": "string"
     },
+    "limit": {
+      "default": 20,
+      "description": "Maximum number of traces to return",
+      "type": "integer"
+    },
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
       "type": "string"
@@ -1772,6 +1817,11 @@ Search for traces using TraceQL queries
     "query": {
       "description": "TraceQL query string",
       "type": "string"
+    },
+    "spss": {
+      "default": 3,
+      "description": "Maximum number of matching spans to return per span set",
+      "type": "integer"
     },
     "start": {
       "description": "Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided, must be before end.",
