@@ -229,8 +229,8 @@ github.com/getkin/kin-openapi v0.149.0/go.mod h1:1+BHDzstro+P5CKtPy1X4PfofnFgmRe
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/giantswarm/mcp-oauth v1.13.2 h1:qVxqzgsq+tEvZYzH9955vP8I2v9wQLPJ7eIr3Ktz82s=
 github.com/giantswarm/mcp-oauth v1.13.2/go.mod h1:02SNM8qMMRxunt7EmSA/jxRJ8742EFJ7/ygpEbxELJI=
-github.com/giantswarm/mcp-toolkit v0.5.2 h1:hymmDFTKJk4bMut/k4UMKUshQhw4zyjyqT9htno0RCE=
-github.com/giantswarm/mcp-toolkit v0.5.2/go.mod h1:m8dbpEeOg25kldNTnBh/al5ux4y5PYvbg2KhfHiUinc=
+github.com/giantswarm/mcp-toolkit v0.5.3 h1:wfRRF3P+33XE0kfqFdrfVR2NThSKffekFScRMculo6g=
+github.com/giantswarm/mcp-toolkit v0.5.3/go.mod h1:m8dbpEeOg25kldNTnBh/al5ux4y5PYvbg2KhfHiUinc=
 github.com/giantswarm/observability-operator v0.67.2 h1:6CuEjmDT5poy4B8IcRAnsohJHnB9j0SSD+EWOZLXEI4=
 github.com/giantswarm/observability-operator v0.67.2/go.mod h1:D+W0pwp/Ty9yyrKqHIRo8wkOfbhgf37whY/3Tdt4Wdk=
 github.com/go-gl/glfw v0.0.0-20190409004039-e6da0acd62b1/go.mod h1:vR7hzQXu2zJy9AVAgeJqvqgH9Q5CA+iKCZ2gyEVpxRU=
