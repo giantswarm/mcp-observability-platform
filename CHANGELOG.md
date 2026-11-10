@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The server advertises the Giant Swarm logo as its MCP icon (`serverInfo.icons`), so muster and the developer portal show it.
 - `diff_tempo_traces` compares two traces.
+- `OAUTH_ENABLE_CIMD` and the `oauth.enableCIMD` Helm value accept CIMD client registration.
 - `docs/tools.md` lists every tool as a model reads it (`make tools-doc`, kept current by a test). Tests hold the local tools to the description budget, every tool to the summary line, and each summary of an upstream tool to the upstream text it was written against: an mcp-grafana bump that changes that text fails until the summary is checked.
 
 ### Changed
