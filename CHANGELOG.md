@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Update github.com/giantswarm/mcp-oauth to v1.13.5 (giantswarm/mcp-observability-platform#283)
+
 ## [0.5.0] - 2026-11-09
 
 ### Added
