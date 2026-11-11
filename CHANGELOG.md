@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update github.com/giantswarm/mcp-oauth to v1.13.5 (giantswarm/mcp-observability-platform#283)
+- mcp-grafana updated to v2.3.0. `list_tempo_attribute_names` and `list_tempo_attribute_values` accept `start` and `end`. `run_panel_query` runs Elasticsearch panels. (giantswarm/mcp-observability-platform#234)
 
 ## [0.5.0] - 2026-11-09
 

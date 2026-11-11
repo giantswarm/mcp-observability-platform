@@ -371,7 +371,7 @@ Retrieves the complete dashboard, including panels, variables, and settings, for
 ```text
 Get the queries of a Grafana dashboard's panels, or of one panel, optionally with variables substituted.
 
-Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.
+Retrieve panel queries from a Grafana dashboard. Supports all datasource types (Prometheus, Loki, CloudWatch, SQL, etc.) and row-nested panels. Optionally filter to a specific panel by ID with `panelId`. Provide `variables` (an empty object uses saved selections) or `start`/`end` to populate `processedQuery` and `requiredVariables`. Referenced All selections, and variables saved without a value, return `warnings` requesting explicit values. Returns an array of objects with fields: title, query (raw expression), datasource (object with uid and type), and optionally processedQuery, refId, requiredVariables, and target. Targets built in a visual editor (CloudWatch metric search, InfluxDB query builder) have no string expression: those return an empty query plus `target`, the panel's raw query JSON. They can be executed as panel queries but not as standalone expressions.
 ```
 
 ```json
@@ -1276,12 +1276,20 @@ List available attribute names for TraceQL queries. Without a scope (resource, s
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
+    "end": {
+      "description": "End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided, must be after start.",
+      "type": "string"
+    },
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
       "type": "string"
     },
     "scope": {
       "description": "Scope to filter attributes by (span, resource, event, link, instrumentation). Strongly recommended — omitting scope returns all attributes across all scopes which can be very large (100K+ chars).",
+      "type": "string"
+    },
+    "start": {
+      "description": "Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided, must be before end.",
       "type": "string"
     }
   },
@@ -1307,6 +1315,10 @@ List values for a fully scoped attribute name (e.g. resource.service.name). Usef
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
       "type": "string"
     },
+    "end": {
+      "description": "End time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided, must be after start.",
+      "type": "string"
+    },
     "filter-query": {
       "description": "Filter query to apply to the attribute values. It can only have one spanset and only &&'ed conditions like { <cond> && <cond> && ... }. This is useful for filtering the values to a specific set of values.",
       "type": "string"
@@ -1317,6 +1329,10 @@ List values for a fully scoped attribute name (e.g. resource.service.name). Usef
     },
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
+      "type": "string"
+    },
+    "start": {
+      "description": "Start time for the search (RFC3339 format). If not provided will search the past 1 hour. If provided, must be before end.",
       "type": "string"
     }
   },
@@ -1373,7 +1389,7 @@ Executes a log query against a Loki or VictoriaLogs datasource and returns match
       "type": "string"
     },
     "queryType": {
-      "description": "Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value.",
+      "description": "Query type: 'range' (default) or 'instant'. Instant queries return a single value at one point in time. Range queries return values over a time window. Use 'instant' for metric queries when you want the current value. On VictoriaLogs, 'instant' returns the newest log lines from the hour before endRfc3339 (default now).",
       "type": "string"
     },
     "startRfc3339": {
@@ -1647,7 +1663,7 @@ Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlik
 ```text
 Run one query (default the first) of each given Grafana dashboard panel, with variables and macros substituted.
 
-Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the "default" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.
+Executes one or more dashboard panel queries with optional time range and variable overrides. Accepts an array of panel IDs to query in a single call. Fetches the dashboard, extracts queries from the specified panels, substitutes template variables and Grafana macros ($__range, $__rate_interval, $__interval, $__auto), resolves the "default" datasource reference, and routes to the appropriate datasource (Prometheus, Loki, ClickHouse, CloudWatch, InfluxDB, BigQuery, MSSQL, PostgreSQL, Elasticsearch, Neo4j, or Infinity with a backend parser). Returns results keyed by panel ID - partial failures are allowed (some panels can succeed while others fail). If a panel uses a template variable datasource you cannot access, provide datasourceUid and datasourceType to override.
 ```
 
 ```json
@@ -1658,7 +1674,7 @@ Executes one or more dashboard panel queries with optional time range and variab
       "type": "string"
     },
     "datasourceType": {
-      "description": "Fallback datasource type used only when the datasource cannot be read (prometheus, loki, grafana-clickhouse-datasource, cloudwatch, influxdb, grafana-bigquery-datasource, mssql, grafana-postgresql-datasource, postgres). When the datasource is readable its real type is used and this is ignored.",
+      "description": "Fallback datasource type used only when the datasource cannot be read (prometheus, loki, grafana-clickhouse-datasource, cloudwatch, influxdb, grafana-bigquery-datasource, mssql, grafana-postgresql-datasource, postgres, elasticsearch). When the datasource is readable its real type is used and this is ignored.",
       "type": "string"
     },
     "datasourceUid": {
