@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `generate_deeplink` with `shorten=true` returns the `/goto/<uid>` short URL, and an error carrying the full deeplink when shortening fails.
 - mcp-oauth updated to v1.13.2: forwarded Dex ID tokens whose audience is trusted are accepted again, and a refused JWT bearer is logged with its cause.
 - The local tools (`list_orgs`, `list_alerts`, `get_alert`, `list_silences`, `get_silence`) report `idempotentHint: true`: they write nothing, so a repeated call changes nothing.
+- Moved the README install section to the top. It walks through the Dex client, the Grafana credential, the chart install from the OCI registry, and connecting Claude Code.
 
 ## [0.4.0] - 2026-10-02
 
