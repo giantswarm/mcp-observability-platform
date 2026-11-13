@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/giantswarm/mcp-oauth v1.13.5
 	github.com/giantswarm/mcp-toolkit v0.5.3
-	github.com/giantswarm/observability-operator v0.67.2
+	github.com/giantswarm/observability-operator v0.89.1
 	github.com/go-logr/logr v1.4.4
 	github.com/grafana/mcp-grafana/v2 v2.3.0
 	github.com/mark3labs/mcp-go v1.5.0
@@ -60,7 +60,7 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.6 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.9 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/analysis v1.0.1 // indirect
@@ -101,7 +101,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/grafana/amixr-api-go-client v0.0.33 // indirect
-	github.com/grafana/grafana-openapi-client-go v0.0.0-20260330113218-ee77c4f6f90e // indirect
+	github.com/grafana/grafana-openapi-client-go v0.0.0-20261015192556-fcf0a80b71e9 // indirect
 	github.com/grafana/grafana-plugin-sdk-go v0.298.0 // indirect
 	github.com/grafana/incident-go v0.0.0-20260727130053-c21f107e4c42 // indirect
 	github.com/grafana/mcp-doc-server v1.0.0 // indirect
@@ -174,7 +174,7 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shopspring/decimal v1.6.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/twmb/franz-go v1.22.2 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.15.0 // indirect
 	github.com/twmb/franz-go/plugin/kslog v1.0.0 // indirect
@@ -213,14 +213,14 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.38.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.5.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e // indirect
@@ -233,11 +233,11 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.37.2 // indirect
-	k8s.io/apiextensions-apiserver v0.37.0 // indirect
+	k8s.io/apiextensions-apiserver v0.37.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260821135717-be32def86098 // indirect
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3 // indirect
-	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
+	sigs.k8s.io/json v0.0.0-20260909141634-11ed52e25bc5 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
