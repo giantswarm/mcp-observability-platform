@@ -2178,6 +2178,9 @@
                         }
                     }
                 },
+                "enableCIMD": {
+                    "type": "boolean"
+                },
                 "encryption": {
                     "type": "object",
                     "additionalProperties": false,

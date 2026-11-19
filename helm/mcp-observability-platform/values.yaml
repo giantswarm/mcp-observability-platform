@@ -168,6 +168,11 @@ oauth:
   # cluster-test deploys where MCP clients need to register themselves on
   # first connect (e.g. Claude Code, mcp-inspector).
   allowPublicClientRegistration: false
+  # Accept Client ID Metadata Documents (CIMD, MCP 2025-11-25): clients use
+  # an HTTPS URL as client_id and the server fetches their metadata from it.
+  # Claude Code registers this way, so allowPublicClientRegistration can stay
+  # false.
+  enableCIMD: false
   # Dex connection
   dex:
     issuerUrl: "https://dex.example.com"

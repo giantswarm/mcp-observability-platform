@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strconv"
 	"testing"
 
 	oauthserver "github.com/giantswarm/mcp-oauth/server"
@@ -93,6 +94,41 @@ func TestParseTrustedIssuers(t *testing.T) {
 			}
 			if !trustedIssuersEqual(got, tc.want) {
 				t.Fatalf("parseTrustedIssuers() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadOAuthConfig_EnableCIMD(t *testing.T) {
+	cases := []struct {
+		name, env string
+		want      bool
+		wantErr   bool
+	}{
+		{"unset defaults to false", "", false, false},
+		{"enabled", strconv.FormatBool(true), true, false},
+		{"disabled", strconv.FormatBool(false), false, false},
+		{"malformed is a hard error", "yes", false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("OAUTH_ISSUER", "https://mcp.example.com")
+			t.Setenv(envOAuthEnableCIMD, c.env)
+			cfg, err := loadOAuthConfig()
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("%s=%q: want error, got nil", envOAuthEnableCIMD, c.env)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%s=%q: unexpected error: %v", envOAuthEnableCIMD, c.env, err)
+			}
+			if cfg.EnableClientIDMetadataDocuments != c.want {
+				t.Errorf("EnableClientIDMetadataDocuments = %v, want %v", cfg.EnableClientIDMetadataDocuments, c.want)
+			}
+			if !cfg.AllowLocalhostRedirectURIs {
+				t.Error("AllowLocalhostRedirectURIs = false, want true")
 			}
 		})
 	}

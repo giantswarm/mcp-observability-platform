@@ -21,6 +21,7 @@ import (
 const (
 	envOAuthDexClientID    = "OAUTH_DEX_CLIENT_ID"
 	envOAuthDexIssuerURL   = "OAUTH_DEX_ISSUER_URL"
+	envOAuthEnableCIMD     = "OAUTH_ENABLE_CIMD"
 	envOAuthStorageBackend = "OAUTH_STORAGE_BACKEND"
 	envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
 )
@@ -74,6 +75,28 @@ func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
 	return issuers, nil
 }
 
+// loadOAuthConfig reads the mcp-oauth server config from OAUTH_* env vars:
+// upstream oauthconfig.FromEnv plus the fields upstream does not read.
+func loadOAuthConfig() (*oauthserver.Config, error) {
+	cfg, err := oauthconfig.FromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("oauth config: %w", err)
+	}
+	// MCP CLI clients (Claude Code, mcp-inspector) register a loopback
+	// redirect URI per RFC 8252. The binary always permits it; not an
+	// operator knob.
+	cfg.AllowLocalhostRedirectURIs = true
+
+	// Client ID Metadata Documents (MCP 2025-11-25): a client uses an HTTPS
+	// URL as its client_id and the server fetches the client metadata from
+	// it. Claude Code registers this way when public registration is closed.
+	cfg.EnableClientIDMetadataDocuments, err = envBool(envOAuthEnableCIMD, false)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // storeClose drains the storage backend on shutdown.
 func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
@@ -88,14 +111,10 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 		return nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
 	}
 
-	cfg, err := oauthconfig.FromEnv()
+	cfg, err := loadOAuthConfig()
 	if err != nil {
-		return nil, nil, fmt.Errorf("oauth config: %w", err)
+		return nil, nil, err
 	}
-	// MCP CLI clients (Claude Code, mcp-inspector) register a loopback
-	// redirect URI per RFC 8252. The binary always permits it; not an
-	// operator knob.
-	cfg.AllowLocalhostRedirectURIs = true
 
 	encryptor, err := oauthconfig.NewEncryptorFromEnv()
 	if err != nil {
