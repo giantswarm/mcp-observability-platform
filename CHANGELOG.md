@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Bump `github.com/giantswarm/mcp-oauth` to `v1.15.0-rc.3`. JWKS and Dex requests follow `HTTPS_PROXY` and `NO_PROXY`; `OAUTH_TRUSTED_ISSUERS` entries with `allowPrivateIPJWKS` log a deprecation warning at startup.
+- Bump `github.com/giantswarm/mcp-oauth` to `v1.15.0`. JWKS and Dex requests follow `HTTPS_PROXY` and `NO_PROXY`; `OAUTH_TRUSTED_ISSUERS` entries with `allowPrivateIPJWKS` log a deprecation warning at startup.
 
 ### Removed
 
