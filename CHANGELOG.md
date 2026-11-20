@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-20
+
 ### Changed
 
 - Bump `github.com/giantswarm/mcp-oauth` to `v1.16.0`. JWKS and Dex requests follow `HTTPS_PROXY` and `NO_PROXY`; `OAUTH_TRUSTED_ISSUERS` entries with `allowPrivateIPJWKS` log a deprecation warning at startup. A host in a trusted issuer's `allowPrivateIPJWKSHosts` may resolve to an RFC 1918 or RFC 4193 address as well as a public one, but not to a loopback or link-local address.
@@ -118,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.2...v0.3.0
