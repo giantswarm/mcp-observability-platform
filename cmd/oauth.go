@@ -88,7 +88,7 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 		return nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
 	}
 
-	cfg, err := oauthconfig.FromEnv()
+	cfg, err := oauthConfigFromEnv()
 	if err != nil {
 		return nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
@@ -143,4 +143,15 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 		return nil, nil, fmt.Errorf("oauth server: %w", err)
 	}
 	return handler.New(srv, logger), storeClose, nil
+}
+
+func oauthConfigFromEnv() (*oauth.ServerConfig, error) {
+	configuration, err := oauthconfig.FromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if os.Getenv("OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS") == "" {
+		configuration.EnableClientIDMetadataDocuments = true
+	}
+	return configuration, nil
 }
