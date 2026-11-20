@@ -3,7 +3,7 @@ module github.com/giantswarm/mcp-observability-platform
 go 1.26.10
 
 require (
-	github.com/giantswarm/mcp-oauth v1.15.0
+	github.com/giantswarm/mcp-oauth v1.16.0-rc.1
 	github.com/giantswarm/mcp-toolkit v0.5.3
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.4
@@ -12,6 +12,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/spf13/cobra v1.10.2
+	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
