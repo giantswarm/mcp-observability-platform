@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bump `github.com/giantswarm/mcp-oauth` to `v1.15.0`. JWKS and Dex requests follow `HTTPS_PROXY` and `NO_PROXY`; `OAUTH_TRUSTED_ISSUERS` entries with `allowPrivateIPJWKS` log a deprecation warning at startup. A host in a trusted issuer's `allowPrivateIPJWKSHosts` may now resolve to an RFC 1918 or RFC 4193 address as well as a public one, but no longer to a loopback or link-local address.
 - Update github.com/giantswarm/mcp-oauth to v1.13.5 (giantswarm/mcp-observability-platform#283)
 - mcp-grafana updated to v2.3.0. `list_tempo_attribute_names` and `list_tempo_attribute_values` accept `start` and `end`. `run_panel_query` runs Elasticsearch panels. (giantswarm/mcp-observability-platform#234)
 - Update sigs.k8s.io/controller-runtime to v0.25.3 (giantswarm/mcp-observability-platform#289)
