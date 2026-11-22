@@ -46,6 +46,30 @@ func attachTestIdentity(next http.Handler) http.Handler {
 	})
 }
 
+func TestNativeRequestBodyLimitIncludesChunkedRequests(t *testing.T) {
+	native, err := New(goodCfg())
+	require.NoError(t, err)
+	host := httptest.NewServer(attachTestIdentity(StreamableHTTPHandler(native)))
+	t.Cleanup(host.Close)
+	payload := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"padding":"` + strings.Repeat("x", int(mcp.DefaultMaxRequestBodyBytes)) + `"}}`
+	for _, chunked := range []bool{false, true} {
+		var reader io.Reader = strings.NewReader(payload)
+		if chunked {
+			reader = struct{ io.Reader }{reader}
+		}
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, host.URL, reader)
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json, text/event-stream")
+		request.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		request.Header.Set("X-Test-Subject", transportAlice)
+		response, err := host.Client().Do(request)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode)
+		require.NoError(t, response.Body.Close())
+	}
+}
+
 func TestNativeTransportsAndAudit(t *testing.T) {
 	for _, transport := range []string{"streamable", transportSSE} {
 		t.Run(transport, func(t *testing.T) {

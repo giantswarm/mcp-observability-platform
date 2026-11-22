@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Restrict default chart ingress to platform gateways and Alloy metrics collectors; require a ServiceMonitor tenant.
 - Use native official Go SDK tools, stateless streamable HTTP and caller-isolated SSE sessions. Preserve upstream schemas and native continuation data.
 - Bound complete JSON tool results and record validated issuer, subject, actor, tool and outcome without argument or profile values. Existing timeout and size-disable settings remain supported.
 - Require verified email for Grafana email lookup and isolate bounded role caches by issuer, subject and lookup identity.

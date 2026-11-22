@@ -19,14 +19,35 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: default ingress allows the http and metrics ports
+  - it: default ingress separates gateway HTTP from collector metrics
     asserts:
       - equal:
           path: spec.ingress[0].ports[0].port
           value: http
       - equal:
-          path: spec.ingress[0].ports[1].port
+          path: spec.ingress[1].ports[0].port
           value: metrics
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: agent-platform
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: muster
+      - equal:
+          path: spec.ingress[0].from[1].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: agentgateway
+      - equal:
+          path: spec.ingress[0].from[2].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: envoy-gateway-system
+      - equal:
+          path: spec.ingress[0].from[2].podSelector.matchLabels["gateway.envoyproxy.io/owning-gateway-name"]
+          value: giantswarm-default
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.ingress[1].from[0].podSelector.matchLabels["app.kubernetes.io/instance"]
+          value: alloy-metrics
 
   - it: ingress is toYaml'd verbatim — operators can lock down with from selectors
     set:

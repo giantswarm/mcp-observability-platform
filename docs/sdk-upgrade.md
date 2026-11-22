@@ -24,6 +24,17 @@ The response limit covers the full serialized result and returns an MCP error
 instead of truncating it. Audit entries include issuer, subject, actor, tool and
 outcome; they exclude profiles, arguments, raw errors and credentials.
 
+The official SDK bounds HTTP request bodies to 4 MiB by default and returns 413
+for oversized bodies, including chunked requests. Chart ingress separates HTTP
+from metrics: platform Muster/agentgateway and the default Envoy Gateway reach
+HTTP; kube-system Alloy metrics pods reach metrics. Customize the raw
+`networkPolicy.ingress` rules for another gateway or collector. Each peer combines
+its namespace and pod selectors. Explicit existing ingress overrides remain in
+effect and must be reviewed before cutover. Local test clusters can use
+`networkPolicy.enabled=false`. ServiceMonitors require the configured tenant,
+defaulting to `giantswarm`. NetworkPolicy filters TCP peers and ports; gateway
+routing and application authentication enforce HTTP access.
+
 SSE sessions belong to the validated caller profile that opened the stream.
 After an identity or verified email change, reconnect and initialize a new session.
 If Grafana lookup fails after an email change, authenticate to Grafana and verify
