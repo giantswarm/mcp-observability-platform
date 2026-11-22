@@ -9,12 +9,11 @@ package tools
 
 import (
 	mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-func registerAlertingTools(s *mcpsrv.MCPServer, b *gfBinder) {
+func registerAlertingTools(s Registrar, b *gfBinder) {
 	// alerting_rules_read uses snake_case "datasource_uid" — every other
 	// upstream tool uses camelCase "datasourceUid".
 	b.bindDatasourceFanoutTool(s, authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, mcpgrafanatools.AlertRulesRead)

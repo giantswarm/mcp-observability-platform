@@ -38,13 +38,22 @@ type cacheEntry struct {
 	roles     map[int64]Role
 }
 
+type roleCacheKey struct{ issuer, subject, identity string }
+
+func (c Caller) cacheKey() roleCacheKey {
+	return roleCacheKey{issuer: c.Issuer, subject: c.Subject, identity: c.Identity()}
+}
+
+const maxRoleCacheEntries = 4096
+
 // cacheLookup returns the cached entry for key if one exists and is still
 // fresh.
-func (a *authorizer) cacheLookup(key string) (cacheEntry, bool) {
-	a.cacheMu.RLock()
-	defer a.cacheMu.RUnlock()
+func (a *authorizer) cacheLookup(key roleCacheKey) (cacheEntry, bool) {
+	a.cacheMu.Lock()
+	defer a.cacheMu.Unlock()
 	e, ok := a.cache[key]
 	if !ok || !time.Now().Before(e.expiresAt) {
+		delete(a.cache, key)
 		return cacheEntry{}, false
 	}
 	return e, true
@@ -53,7 +62,7 @@ func (a *authorizer) cacheLookup(key string) (cacheEntry, bool) {
 // cacheStore writes an entry under key, picking the positive or negative
 // TTL based on status + emptiness. ttl<=0 disables caching for that
 // entry (used by tests that count upstream calls).
-func (a *authorizer) cacheStore(key string, status cacheStatus, roles map[int64]Role) cacheEntry {
+func (a *authorizer) cacheStore(key roleCacheKey, status cacheStatus, roles map[int64]Role) cacheEntry {
 	ttl := a.cacheTTL
 	if status == statusUnknownToGrafana || len(roles) == 0 {
 		ttl = a.negativeCacheTTL
@@ -67,6 +76,22 @@ func (a *authorizer) cacheStore(key string, status cacheStatus, roles map[int64]
 		return entry
 	}
 	a.cacheMu.Lock()
+	now := time.Now()
+	for candidate, entry := range a.cache {
+		if !now.Before(entry.expiresAt) {
+			delete(a.cache, candidate)
+		}
+	}
+	if len(a.cache) >= maxRoleCacheEntries {
+		var oldestKey roleCacheKey
+		var oldest time.Time
+		for candidate, entry := range a.cache {
+			if oldest.IsZero() || entry.expiresAt.Before(oldest) {
+				oldestKey, oldest = candidate, entry.expiresAt
+			}
+		}
+		delete(a.cache, oldestKey)
+	}
 	a.cache[key] = entry
 	a.cacheMu.Unlock()
 	return entry

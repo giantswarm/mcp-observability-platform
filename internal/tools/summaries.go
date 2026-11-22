@@ -3,8 +3,8 @@ package tools
 import (
 	"fmt"
 
-	"github.com/giantswarm/mcp-toolkit/tooldesc"
-	"github.com/mark3labs/mcp-go/mcp"
+	tooldesc "github.com/giantswarm/mcp-toolkit/tooldesc/gosdk"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // upstreamSummary leads a delegated tool whose upstream description opens
@@ -50,7 +50,7 @@ var upstreamSummaries = map[string]upstreamSummary{
 
 // withSummary leads t's upstream description with its upstreamSummaries
 // entry, if any.
-func withSummary(t mcp.Tool) mcp.Tool {
+func withSummary(t *mcp.Tool) *mcp.Tool {
 	us, ok := upstreamSummaries[t.Name]
 	if !ok {
 		return t
@@ -59,6 +59,7 @@ func withSummary(t mcp.Tool) mcp.Tool {
 	if err != nil {
 		panic(fmt.Sprintf("tools: tool %q: %v", t.Name, err))
 	}
-	t.Description = d
-	return t
+	copy := *t
+	copy.Description = d
+	return &copy
 }

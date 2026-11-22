@@ -16,9 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/giantswarm/mcp-toolkit/tooldesc"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	tooldesc "github.com/giantswarm/mcp-toolkit/tooldesc/gosdk"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -32,76 +31,93 @@ const (
 	silenceStateExpired = "expired"
 )
 
-func registerSilenceTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+func registerSilenceTools(s Registrar, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
 	registerSilenceListTool(s, disabled, az, gc)
 	registerSilenceDetailTool(s, disabled, az, gc)
 }
 
-func registerSilenceListTool(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+func registerSilenceListTool(s Registrar, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
 	maybeAddTool(s, disabled,
-		mcp.NewTool("list_silences",
-			readOnlyAnnotation(),
-			tooldesc.Describe("List the org's Alertmanager silences, soonest expiring first, paged; get_silence has one silence's full record.", ""),
-			orgArg(),
-			mcp.WithString("state", mcp.Description("'active' (default) | 'pending' | 'expired' | 'all'")),
-			mcp.WithString("matcher", mcp.Description("Alertmanager label matcher to filter silences server-side, e.g. 'alertname=~\"Kube.*\"'.")),
-			mcp.WithNumber("page", mcp.Description("0-based page index (default 0)")),
-			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
-			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, dsID, err := resolveDatasource(ctx, az, gc, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
+		&mcp.Tool{Name: "list_silences", Annotations: readOnlyAnnotation(), Description: tooldesc.Describe("List the org's Alertmanager silences, soonest expiring first, paged; get_silence has one silence's full record.", ""),
+			InputSchema: localInputSchema(map[string]any{
+				"state":          map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: "'active' (default) | 'pending' | 'expired' | 'all'"},
+				"matcher":        map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: "Alertmanager label matcher to filter silences server-side, e.g. 'alertname=~\"Kube.*\"'."},
+				pageArgument:     map[string]any{jsonSchemaTypeKey: jsonTypeNumber, jsonSchemaDescriptionKey: "0-based page index (default 0)"},
+				"pageSize":       map[string]any{jsonSchemaTypeKey: jsonTypeNumber, jsonSchemaDescriptionKey: "Page size (default 50, max 500)"},
+				datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: datasourceUIDHint},
+			}),
+		},
+		func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var arguments struct {
+				Org           string  `json:"org"`
+				DatasourceUID string  `json:"datasourceUid"`
+				State         string  `json:"state"`
+				Matcher       string  `json:"matcher"`
+				Page          float64 `json:"page"`
+				PageSize      float64 `json:"pageSize"`
+			}
+			if err := decodeArguments(request, &arguments); err != nil {
+				return failure("malformed arguments", err), nil
+			}
+			org, dsID, err := resolveDatasource(ctx, az, gc, arguments.Org, arguments.DatasourceUID, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("authz", err), nil
+				return failure("authz", err), nil
 			}
 
-			pageSize := req.GetInt("pageSize", 0)
+			pageSize := int(arguments.PageSize)
 			if pageSize <= 0 {
 				pageSize = 50
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 
-			body, err := fetchSilences(ctx, gc, org.OrgID, dsID, req.GetString("matcher", ""))
+			body, err := fetchSilences(ctx, gc, org.OrgID, dsID, arguments.Matcher)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
+				return failure("alertmanager proxy failed", err), nil
 			}
-			result, err := paginateSilences(body, req.GetString("state", ""), req.GetInt("page", 0), pageSize)
+			result, err := paginateSilences(body, arguments.State, int(arguments.Page), pageSize)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("parse silences", err), nil
+				return failure("parse silences", err), nil
 			}
-			return mcp.NewToolResultJSON(result)
+			return jsonResult(result)
 		},
 	)
 }
 
-func registerSilenceDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+func registerSilenceDetailTool(s Registrar, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
 	maybeAddTool(s, disabled,
-		mcp.NewTool("get_silence",
-			readOnlyAnnotation(),
-			tooldesc.Describe("Get one Alertmanager silence by id, e.g. from get_alert's silencedBy: matchers, times, author, comment, state.", ""),
-			orgArg(),
-			mcp.WithString("id", mcp.Required(), mcp.Description("Alertmanager silence id (UUID).")),
-			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			id, err := req.RequireString("id")
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("missing arg", err), nil
+		&mcp.Tool{Name: "get_silence", Annotations: readOnlyAnnotation(), Description: tooldesc.Describe("Get one Alertmanager silence by id, e.g. from get_alert's silencedBy: matchers, times, author, comment, state.", ""),
+			InputSchema: localInputSchema(map[string]any{
+				"id":             map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: "Alertmanager silence id (UUID)."},
+				datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: datasourceUIDHint},
+			}, "id"),
+		},
+		func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var arguments struct {
+				Org           string `json:"org"`
+				DatasourceUID string `json:"datasourceUid"`
+				ID            string `json:"id"`
 			}
-			org, dsID, err := resolveDatasource(ctx, az, gc, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
+			if err := decodeArguments(request, &arguments); err != nil {
+				return failure("malformed arguments", err), nil
+			}
+			if arguments.ID == "" {
+				return errorResult("missing arg: id is required"), nil
+			}
+			id := arguments.ID
+			org, dsID, err := resolveDatasource(ctx, az, gc, arguments.Org, arguments.DatasourceUID, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("authz", err), nil
+				return failure("authz", err), nil
 			}
 			path := "alertmanager/api/v2/silence/" + url.PathEscape(id)
 			body, err := gc.DatasourceProxy(ctx, grafanaOpts(ctx, org.OrgID), dsID, path, nil)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
+				return failure("alertmanager", err), nil
 			}
 			var silence amSilence
 			if err := json.Unmarshal(body, &silence); err != nil {
-				return mcp.NewToolResultErrorFromErr("parse silence", err), nil
+				return failure("parse silence", err), nil
 			}
-			return mcp.NewToolResultJSON(silence)
+			return jsonResult(silence)
 		},
 	)
 }

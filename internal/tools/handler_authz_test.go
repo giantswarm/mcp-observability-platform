@@ -15,8 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	mcpsrv "github.com/mark3labs/mcp-go/server"
-
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
@@ -55,6 +53,7 @@ func (s stubGrafanaForAuthz) UserOrgs(_ context.Context, id int64) ([]grafana.Us
 // derive the caller from CallerFromContext.
 func callerCtx(email string) context.Context {
 	return authz.WithCaller(context.Background(), authz.Caller{
+		Issuer:  "https://issuer.example",
 		Subject: "sub-" + email,
 		Email:   email,
 	})
@@ -66,7 +65,7 @@ func callerCtx(email string) context.Context {
 // call with org="acme" must therefore fire ErrNotAuthorised. The
 // downstream Grafana httptest.Server is wired to fail the test on any
 // request, proving authz fires before any tool-side proxy call.
-func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, func()) {
+func wireAuthzDenyTest(t *testing.T, callerEmail string) (*testRegistrar, func()) {
 	t.Helper()
 	// Authorizer client (LookupUser + UserOrgs).
 	azClient := stubGrafanaForAuthz{
@@ -99,7 +98,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		t.Fatalf("grafana.New: %v", err)
 	}
 
-	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
+	s := newTestRegistrar()
 	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
@@ -155,7 +154,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 		if name == "list_orgs" {
 			continue // tested separately
 		}
-		if !slices.Contains(st.Tool.InputSchema.Required, testOrgArg) {
+		if !slices.Contains(testSchema(t, st.Tool).Required, testOrgArg) {
 			continue
 		}
 		denyCount++

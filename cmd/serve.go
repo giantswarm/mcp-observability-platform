@@ -16,7 +16,7 @@ import (
 
 	"github.com/giantswarm/mcp-toolkit/tracing"
 	"github.com/go-logr/logr"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	mcpsrv "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -31,9 +31,7 @@ var serveCmd = &cobra.Command{
 	RunE:  runServe,
 }
 
-// Transport names accepted on MCP_TRANSPORT / --transport. mcp-go does not
-// export them as constants; values are the user-facing contract documented
-// in README.
+// Transport names accepted by MCP_TRANSPORT and --transport.
 const (
 	transportStdio          = "stdio"
 	transportSSE            = "sse"
@@ -147,7 +145,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL)
 
-	oauthHandler, storeClose, err := buildOAuthHandler(logger)
+	oauthHandler, storeClose, err := buildOAuthHandler(logger, flagTransport)
 	if err != nil {
 		return err
 	}
@@ -211,7 +209,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Warn("stdio transport bypasses OAuth — tool calls will hit authz errors unless the session provides a caller identity")
 		// stdio drives lifecycle from stdin EOF; SIGINT/SIGTERM is intentionally
 		// not propagated and shutdownCtx is unused on this path.
-		return mcpsrv.ServeStdio(mcp)
+		return mcp.Run(shutdownCtx, &mcpsrv.StdioTransport{})
 	}
 
 	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)

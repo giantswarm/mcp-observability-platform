@@ -7,9 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
-	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 )
 
 type config struct {
@@ -20,7 +17,7 @@ type config struct {
 	// ToolTimeout is the per-tool-call context deadline. Zero disables the
 	// middleware; a malformed TOOL_TIMEOUT env value fails startup.
 	ToolTimeout time.Duration
-	// MaxResponseBytes caps tool response TextContent size. Zero disables
+	// MaxResponseBytes caps the complete JSON tool result. Zero disables
 	// capping; a malformed TOOL_MAX_RESPONSE_BYTES env value fails startup.
 	MaxResponseBytes int
 
@@ -42,11 +39,11 @@ func loadConfig() (*config, error) {
 	if err != nil {
 		return nil, err
 	}
-	toolTimeout, err := envDuration("TOOL_TIMEOUT", timeout.DefaultTimeout)
+	toolTimeout, err := envDuration("TOOL_TIMEOUT", 30*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	maxResponseBytes, err := envInt("TOOL_MAX_RESPONSE_BYTES", responsecap.DefaultLimit)
+	maxResponseBytes, err := envInt("TOOL_MAX_RESPONSE_BYTES", 128*1024)
 	if err != nil {
 		return nil, err
 	}

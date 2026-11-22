@@ -3,8 +3,7 @@ package tools
 import (
 	"net/url"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -22,29 +21,20 @@ const amActive = "active"
 // readOnlyToolAnnotation is the annotation of every local tool: it writes
 // nothing, so it is also idempotent (a repeated call changes nothing more,
 // though live data may differ), and open-world.
-var readOnlyToolAnnotation = mcp.ToolAnnotation{
-	ReadOnlyHint:    mcp.ToBoolPtr(true),
-	OpenWorldHint:   mcp.ToBoolPtr(true),
-	DestructiveHint: mcp.ToBoolPtr(false),
-	IdempotentHint:  mcp.ToBoolPtr(true),
+func readOnlyAnnotation() *mcp.ToolAnnotations {
+	destructive, openWorld := false, true
+	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld, DestructiveHint: &destructive, IdempotentHint: true}
 }
 
-// readOnlyAnnotation is the mcp.NewTool option form of
-// readOnlyToolAnnotation.
-func readOnlyAnnotation() mcp.ToolOption {
-	return mcp.WithToolAnnotation(readOnlyToolAnnotation)
-}
-
-// orgArg is the canonical "org" argument for local tools. Delegated
-// tools build the same arg via withOrg in grafanabind.go.
-func orgArg() mcp.ToolOption {
-	return mcp.WithString("org", mcp.Required(), mcp.Description(orgArgDescription))
+// Registrar accepts native SDK tools and handlers.
+type Registrar interface {
+	AddTool(*mcp.Tool, mcp.ToolHandler)
 }
 
 // maybeAddTool wraps s.AddTool with a --disabled-tools check. Mirrors
 // mcp-grafana's maybeAddTools (cmd/mcp-grafana/main.go) but at
 // tool-name granularity. nil disabled = no filter.
-func maybeAddTool(s *mcpsrv.MCPServer, disabled map[string]bool, t mcp.Tool, h mcpsrv.ToolHandlerFunc) {
+func maybeAddTool(s Registrar, disabled map[string]bool, t *mcp.Tool, h mcp.ToolHandler) {
 	if disabled[t.Name] {
 		return
 	}
@@ -55,7 +45,7 @@ func maybeAddTool(s *mcpsrv.MCPServer, disabled map[string]bool, t mcp.Tool, h m
 // doc.go for the per-category breakdown. disabled (typically
 // sourced from --disabled-tools) is consulted at every s.AddTool site
 // via maybeAddTool; nil = no filter.
-func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
+func RegisterAll(s Registrar, az authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
 	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth, disabled)
 	if err != nil {
 		return err
@@ -64,7 +54,7 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	return nil
 }
 
-func registerAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
+func registerAll(s Registrar, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
 	registerOrgTools(s, disabled, az, b)
 	registerDashboardTools(s, b)
 	registerMetricsTools(s, b)

@@ -13,12 +13,13 @@ import (
 )
 
 const (
+	testIssuer     = "https://issuer.example"
 	testSubject    = "sub-1"
 	testAliceEmail = "alice@example.com"
 )
 
 func TestExtractCaller_ReturnsAttachedIdentity(t *testing.T) {
-	ui := &providers.UserInfo{ID: testSubject, Email: testAliceEmail, TokenSource: providers.TokenSourceOAuth}
+	ui := &providers.UserInfo{Issuer: testIssuer, ID: testSubject, Email: testAliceEmail, EmailVerified: true, TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
 	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
 
@@ -40,10 +41,12 @@ func TestExtractCaller_DelegatedTokenCarriesActor(t *testing.T) {
 		plannerSub = "system:serviceaccount:kagent:planner-agent"
 	)
 	ui := &providers.UserInfo{
+		Issuer:       testIssuer,
 		ID:           testAliceEmail,
 		Email:        testAliceEmail,
 		TokenSource:  providers.TokenSourceTrustedIssuer,
 		ActorSubject: agentSub,
+		ActorIssuer:  testIssuer,
 		ActorChain: []oidc.ActorClaim{
 			{Subject: agentSub},
 			{Subject: plannerSub},
@@ -65,7 +68,7 @@ func TestExtractCaller_DelegatedTokenCarriesActor(t *testing.T) {
 }
 
 func TestExtractCaller_DirectTokenHasNoActor(t *testing.T) {
-	ui := &providers.UserInfo{ID: testSubject, Email: testAliceEmail, TokenSource: providers.TokenSourceOAuth}
+	ui := &providers.UserInfo{Issuer: testIssuer, ID: testSubject, Email: testAliceEmail, EmailVerified: true, TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
 	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
 
@@ -86,7 +89,7 @@ func TestInjectCallerFromRequest_AttachesToContext(t *testing.T) {
 	// The HTTP→MCP bridge must copy mcp-oauth's UserInfo onto the MCP-level
 	// context so tool handlers can read the identity. Without it handlers
 	// see nothing and the resolver errors with ErrNoCallerIdentity.
-	ui := &providers.UserInfo{ID: testSubject, Email: testAliceEmail, TokenSource: providers.TokenSourceOAuth}
+	ui := &providers.UserInfo{Issuer: testIssuer, ID: testSubject, Email: testAliceEmail, EmailVerified: true, TokenSource: providers.TokenSourceOAuth}
 	req := httptest.NewRequest("GET", "/mcp", nil)
 	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
 
@@ -107,5 +110,25 @@ func TestInjectCallerFromRequest_NoIdentityPassesThrough(t *testing.T) {
 	ctx := InjectCallerFromRequest(context.Background(), req)
 	if authz.CallerFromContext(ctx).Authenticated() {
 		t.Errorf("InjectCallerFromRequest with no UserInfo must not attach a caller")
+	}
+}
+
+func TestExtractCallerRejectsIncompleteClaimsAndUnverifiedEmail(t *testing.T) {
+	for _, user := range []*providers.UserInfo{
+		{ID: testSubject},
+		{Issuer: testIssuer},
+		{Issuer: testIssuer, ID: testSubject, ActorSubject: "actor"},
+		{Issuer: testIssuer, ID: testSubject, ActorIssuer: testIssuer},
+	} {
+		request := httptest.NewRequest("POST", "/mcp", nil)
+		request = request.WithContext(handler.ContextWithUserInfo(t.Context(), user))
+		if caller := ExtractCaller(request); caller.Authenticated() {
+			t.Fatalf("incomplete identity accepted: %+v", caller)
+		}
+	}
+	request := httptest.NewRequest("POST", "/mcp", nil)
+	request = request.WithContext(handler.ContextWithUserInfo(t.Context(), &providers.UserInfo{Issuer: testIssuer, ID: testSubject, Email: testAliceEmail}))
+	if caller := ExtractCaller(request); !caller.Authenticated() || caller.Email != "" {
+		t.Fatalf("unverified email must not supply Grafana identity: %+v", caller)
 	}
 }

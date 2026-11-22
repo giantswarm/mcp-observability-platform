@@ -57,6 +57,7 @@ Read-only: does not create, update, or delete rules, and does not show notificat
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasource_uid": {
       "description": "Optional: UID of a Prometheus or Loki datasource to query for datasource-managed alert rules. If omitted, returns Grafana-managed rules.",
@@ -152,6 +153,7 @@ Compare two complete traces. Returns a compact summary and includes the full spa
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "base_end": {
       "description": "Optional end of the baseline trace search range in RFC3339 format. Must be provided with base_start.",
@@ -215,6 +217,7 @@ Generate deeplink URLs for Grafana resources. Supports dashboards (requires dash
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "dashboardUid": {
       "description": "Dashboard UID (for stored dashboards). Mutually exclusive with provisioningPreview for dashboard and panel types.",
@@ -343,6 +346,7 @@ Retrieves the complete dashboard, including panels, variables, and settings, for
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
@@ -376,6 +380,7 @@ Retrieve panel queries from a Grafana dashboard. Supports all datasource types (
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "end": {
       "description": "Query end time for macros (default now).",
@@ -423,6 +428,7 @@ Get specific parts of a dashboard using JSONPath expressions to minimize context
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "jsonPath": {
       "description": "JSONPath expression to extract specific data (e.g., '$.panels[0].title' for first panel title, '$.panels[*].title' for all panel titles, '$.templating.list' for variables, '$.annotations.list' for saved dashboard annotation queries/definitions)",
@@ -456,6 +462,7 @@ Get a compact summary of a dashboard including title, panel count, panel types, 
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
@@ -484,6 +491,7 @@ Retrieves detailed information about a specific datasource by UID or name. Retur
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "name": {
       "description": "The name of the datasource. Used if UID is not provided.",
@@ -515,6 +523,7 @@ Render a Grafana dashboard panel, full dashboard or Explore view as a PNG image.
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "dashboardUid": {
       "description": "The UID of a stored dashboard containing the panel. Required unless provisioningPreview is provided.",
@@ -639,6 +648,7 @@ Get example queries for a specific datasource type. Provides sample queries with
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceType": {
       "description": "The datasource type to get examples for (e.g. 'prometheus', 'loki', 'clickhouse', 'cloudwatch', 'influxdb')",
@@ -697,6 +707,7 @@ Retrieve a specific trace by ID. Returns its spans grouped by service and resour
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -741,6 +752,7 @@ Retrieve TraceQL reference documentation with examples, covering attribute filte
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
@@ -816,6 +828,7 @@ List all configured datasources in Grafana. Use this to discover available datas
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "limit": {
       "default": 50,
@@ -857,6 +870,7 @@ Lists all available label/field names (keys) found in logs within a specified Lo
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -896,6 +910,7 @@ Retrieves all unique values associated with a specific `labelName` within a Loki
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -940,8 +955,6 @@ tenantTypes says which tools serve an org: data for metrics, logs, traces and al
 
 ```json
 {
-  "properties": {},
-  "required": [],
   "type": "object"
 }
 ```
@@ -956,6 +969,7 @@ List label names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir, C
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1042,6 +1056,7 @@ Gets the values for a specific label name in a PromQL-compatible datasource (Pro
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1133,6 +1148,7 @@ List Prometheus metric metadata. Returns metadata about metrics currently scrape
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1177,6 +1193,7 @@ Lists metric names in a PromQL-compatible datasource (Prometheus, Thanos, Mimir,
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1271,6 +1288,7 @@ List available attribute names for TraceQL queries. Without a scope (resource, s
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1310,6 +1328,7 @@ List values for a fully scoped attribute name (e.g. resource.service.name). Usef
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1354,6 +1373,7 @@ Executes a log query against a Loki or VictoriaLogs datasource and returns match
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1419,6 +1439,7 @@ Retrieves detected log patterns from a Loki datasource for a given stream select
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1463,6 +1484,7 @@ Retrieves index-level statistics about log streams matching a given selector wit
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1503,6 +1525,7 @@ Query a PromQL-compatible datasource (Prometheus, Thanos, Mimir, Cloud Monitorin
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1558,6 +1581,7 @@ Time formats: 'now-1h', '2026-02-02T19:00:00Z', '1738519200000' (Unix ms)
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1619,6 +1643,7 @@ Compute trace-derived metrics using a TraceQL metrics query. The syntax is unlik
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",
@@ -1668,6 +1693,7 @@ Executes one or more dashboard panel queries with optional time range and variab
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "dashboardUid": {
       "description": "Dashboard UID",
@@ -1731,6 +1757,7 @@ Search Grafana dashboards by query and/or folderUid, folderPath, tag, and starre
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "folderPath": {
       "description": "Optional folder path like Ops/Production. Includes subfolders. Case-insensitive",
@@ -1785,6 +1812,7 @@ Search for Grafana folders by a query string. Returns matching folders with deta
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "org": {
       "description": "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs.",
@@ -1812,6 +1840,7 @@ Search for traces using TraceQL queries. Returns each matching trace with its ro
 
 ```json
 {
+  "additionalProperties": false,
   "properties": {
     "datasourceUid": {
       "description": "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). One tenant: gs-{kind}-{tenant}. See list_datasources.",

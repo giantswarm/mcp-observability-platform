@@ -9,7 +9,7 @@ import (
 
 	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-toolkit/httpx"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	mcpsrv "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
@@ -20,21 +20,10 @@ import (
 
 // buildMCPMux wraps the OAuth + MCP routes in otelhttp so inbound W3C
 // traceparents become server spans.
-func buildMCPMux(transport string, mcp *mcpsrv.MCPServer, oauthHandler *handler.Handler) http.Handler {
+func buildMCPMux(transport string, mcp *mcpsrv.Server, oauthHandler *handler.Handler) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/oauth/authorize", oauthHandler.ServeAuthorization)
-	mux.HandleFunc("/oauth/callback", oauthHandler.ServeCallback)
-	mux.HandleFunc("/oauth/token", oauthHandler.ServeToken)
-	mux.HandleFunc("/oauth/revoke", oauthHandler.ServeTokenRevocation)
-	mux.HandleFunc("/oauth/register", oauthHandler.ServeClientRegistration)
-
-	resourcePath := "/mcp"
-	if transport == transportSSE {
-		resourcePath = "/sse"
-	}
-	oauthHandler.RegisterProtectedResourceMetadataRoutes(mux, resourcePath)
-	oauthHandler.RegisterAuthorizationServerMetadataRoutes(mux)
+	oauthHandler.RegisterOAuthRoutes(mux, handler.OAuthRoutesOptions{IncludeMetadata: true})
 
 	switch transport {
 	case transportStreamableHTTP:

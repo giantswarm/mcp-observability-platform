@@ -3,15 +3,16 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"unicode/utf8"
 
-	"github.com/giantswarm/mcp-toolkit/tooldesc"
-	"github.com/giantswarm/mcp-toolkit/tooldesc/tooldesctest"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	tooldesc "github.com/giantswarm/mcp-toolkit/tooldesc/gosdk"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/require"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -22,7 +23,7 @@ const toolsDocHeader = "# The tools\n\nGenerated from the registered tools (`mak
 	"the binder adds the `org` argument and, on the datasource-bound tools, replaces the `datasourceUid` description."
 
 type docs struct {
-	server *mcpsrv.MCPServer
+	server *testRegistrar
 	binder *gfBinder
 }
 
@@ -36,13 +37,13 @@ var docsServer = sync.OnceValue(func() docs {
 	if err != nil {
 		panic(err)
 	}
-	s := mcpsrv.NewMCPServer("mcp-observability-platform", "docs", mcpsrv.WithToolCapabilities(true))
+	s := newTestRegistrar()
 	registerAll(s, az, gc, b, nil)
 	return docs{server: s, binder: b}
 })
 
-func registeredTools() map[string]mcp.Tool {
-	out := map[string]mcp.Tool{}
+func registeredTools() map[string]*mcp.Tool {
+	out := map[string]*mcp.Tool{}
 	for name, st := range docsServer().server.ListTools() {
 		out[name] = st.Tool
 	}
@@ -51,8 +52,12 @@ func registeredTools() map[string]mcp.Tool {
 
 // upstreamHash is a short hash of an upstream tool's description and input
 // schema, as upstreamSummaries pins them.
-func upstreamHash(t mcp.Tool) string {
-	sum := sha256.Sum256([]byte(t.Description + "\n" + string(t.RawInputSchema)))
+func upstreamHash(t *mcp.Tool) string {
+	schema, err := json.Marshal(t.InputSchema)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256([]byte(t.Description + "\n" + string(schema)))
 	return hex.EncodeToString(sum[:6])
 }
 
@@ -60,7 +65,19 @@ func upstreamHash(t mcp.Tool) string {
 // input schema as a model reads them — equal to the registered tools.
 // TOOLS_DOC_UPDATE=1 rewrites the file (`make tools-doc`).
 func TestToolsDocIsCurrent(t *testing.T) {
-	tooldesctest.AssertServerDoc(t, docsServer().server, toolsDocHeader, "../../docs/tools.md")
+	var tools []*mcp.Tool
+	for _, tool := range registeredTools() {
+		tools = append(tools, tool)
+	}
+	want, err := tooldesc.RenderDoc(tools, toolsDocHeader)
+	require.NoError(t, err)
+	const path = "../../docs/tools.md"
+	if os.Getenv("TOOLS_DOC_UPDATE") != "" {
+		require.NoError(t, os.WriteFile(path, []byte(want), 0o600))
+	}
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, want, string(got), "run make tools-doc")
 }
 
 // TestToolDescriptionBudgets holds the descriptions to the budget of
@@ -68,7 +85,7 @@ func TestToolsDocIsCurrent(t *testing.T) {
 // the tools this server implements itself. A delegated tool's text past
 // the summary is upstream's.
 func TestToolDescriptionBudgets(t *testing.T) {
-	var local, every []mcp.Tool
+	var local, every []*mcp.Tool
 	for name, tool := range registeredTools() {
 		every = append(every, tool)
 		if _, delegated := docsServer().binder.bound[name]; !delegated {
@@ -107,18 +124,16 @@ func TestUpstreamSummariesAreCurrent(t *testing.T) {
 	}
 }
 
-// TestReadOnlyToolsAreNotDestructive: a read-only tool says so in full, or
-// mcp-go's defaults report it destructive and not idempotent.
 func TestReadOnlyToolsAreNotDestructive(t *testing.T) {
 	for name, tool := range registeredTools() {
 		a := tool.Annotations
-		if a.ReadOnlyHint == nil || !*a.ReadOnlyHint {
+		if a == nil || !a.ReadOnlyHint {
 			continue
 		}
 		if a.DestructiveHint == nil || *a.DestructiveHint {
 			t.Errorf("%s is read-only but reported destructive", name)
 		}
-		if a.IdempotentHint == nil || !*a.IdempotentHint {
+		if !a.IdempotentHint {
 			t.Errorf("%s is read-only but not reported idempotent", name)
 		}
 	}

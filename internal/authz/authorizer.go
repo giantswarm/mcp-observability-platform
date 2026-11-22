@@ -48,7 +48,7 @@ type authorizer struct {
 	grafana grafana.Client
 
 	cacheMu          sync.RWMutex
-	cache            map[string]cacheEntry
+	cache            map[roleCacheKey]cacheEntry
 	cacheTTL         time.Duration
 	negativeCacheTTL time.Duration
 }
@@ -60,7 +60,7 @@ func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL
 	return &authorizer{
 		orgs:             orgs,
 		grafana:          gc,
-		cache:            make(map[string]cacheEntry),
+		cache:            make(map[roleCacheKey]cacheEntry),
 		cacheTTL:         cacheTTL,
 		negativeCacheTTL: negativeCacheTTL,
 	}
@@ -166,7 +166,7 @@ func (a *authorizer) resolveRoles(ctx context.Context, caller Caller) (map[int64
 	if !caller.Authenticated() {
 		return nil, ErrNoCallerIdentity
 	}
-	if hit, ok := a.cacheLookup(caller.Subject); ok {
+	if hit, ok := a.cacheLookup(caller.cacheKey()); ok {
 		if hit.status == statusUnknownToGrafana {
 			return nil, ErrCallerUnknownToGrafana
 		}
@@ -222,7 +222,7 @@ func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error
 		// User exists in our IdP but has never logged into Grafana yet —
 		// negative-cache so they hit a brief "log into Grafana first"
 		// window, not the full positive window.
-		return a.cacheStore(caller.Subject, statusUnknownToGrafana, nil), nil
+		return a.cacheStore(caller.cacheKey(), statusUnknownToGrafana, nil), nil
 	}
 	entries, err := a.grafana.UserOrgs(ctx, user.ID)
 	if err != nil {
@@ -236,7 +236,7 @@ func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error
 		}
 		roles[e.OrgID] = role
 	}
-	return a.cacheStore(caller.Subject, statusKnown, roles), nil
+	return a.cacheStore(caller.cacheKey(), statusKnown, roles), nil
 }
 
 // findOrganization locates an Organization by Name or DisplayName,

@@ -2,121 +2,26 @@ package middleware
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 )
 
-// Instrument emits an OTEL span, the tool_call counter (+ errors
-// counter on failure), a duration observation, and a slog audit record
-// per call. is_error follows mcp `IsError`, with a Go-error return
-// treated as is_error=true. nil logger disables only the audit line.
-// The handler error is propagated unchanged.
-func Instrument(logger *slog.Logger) server.ToolHandlerMiddleware {
-	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
-		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			name := req.Params.Name
-			ctx, span := tracer.Start(ctx, "tool."+name,
-				trace.WithAttributes(
-					attribute.String("tool.name", name),
-					attribute.String("caller", authz.CallerSubject(ctx)),
-					attribute.String("caller.token_source", authz.CallerTokenSource(ctx)),
-					attribute.String("caller.actor", authz.CallerActorSubject(ctx)),
-				),
-			)
-			defer span.End()
-			start := time.Now()
-
-			res, err := next(ctx, req)
-
-			isErr := err != nil || (res != nil && res.IsError)
-			duration := time.Since(start)
-
-			// Span status mirrors HTTP-server convention: Error only on
-			// Go-error returns; IsError results stay Unset (4xx-equivalent).
-			span.SetAttributes(
-				attribute.Bool("tool.is_error", isErr),
-				attribute.Int64("tool.duration_ms", duration.Milliseconds()),
-			)
-			if err != nil {
-				span.SetStatus(codes.Error, "tool returned error")
-			}
-
+// Instrument records the Prometheus tool counters and duration histogram.
+func Instrument() func(mcp.ToolHandler) mcp.ToolHandler {
+	return func(next mcp.ToolHandler) mcp.ToolHandler {
+		return func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			started := time.Now()
+			result, err := next(ctx, request)
+			name := request.Params.Name
 			observability.ToolCallTotal.WithLabelValues(name).Inc()
-			if isErr {
+			if err != nil || (result != nil && result.IsError) {
 				observability.ToolCallErrorsTotal.WithLabelValues(name).Inc()
 			}
-			observability.ToolCallDuration.WithLabelValues(name).Observe(duration.Seconds())
-
-			if logger != nil {
-				traceID, spanID := traceIDs(ctx)
-				attrs := []slog.Attr{
-					slog.Time("timestamp", start),
-					slog.String("caller", authz.CallerSubject(ctx)),
-					slog.String("caller_token_source", authz.CallerTokenSource(ctx)),
-					slog.String("caller_actor", authz.CallerActorSubject(ctx)),
-					slog.String("tool", name),
-					slog.String("org", argString(req, "org")),
-					slog.Any("args", req.GetArguments()),
-					slog.Bool("is_error", isErr),
-					slog.Int64("duration_ms", duration.Milliseconds()),
-					slog.String("error", auditErrorMessage(err, res)),
-					slog.String("trace_id", traceID),
-					slog.String("span_id", spanID),
-				}
-				if chain := authz.CallerActorChain(ctx); len(chain) > 0 {
-					attrs = append(attrs, slog.Any("caller_actor_chain", chain))
-				}
-				logger.LogAttrs(ctx, slog.LevelInfo, "tool_call", attrs...)
-			}
-
-			return res, err
+			observability.ToolCallDuration.WithLabelValues(name).Observe(time.Since(started).Seconds())
+			return result, err
 		}
 	}
-}
-
-// argString reads a string argument off the request without surfacing the
-// type-mismatch path; missing or non-string args return "". Used to lift
-// well-known args (currently "org") to top-level slog attrs so log
-// queries don't have to grep into the args blob.
-func argString(req mcp.CallToolRequest, key string) string {
-	if v, ok := req.GetArguments()[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-// auditErrorMessage prefers the Go error, falls back to the IsError
-// result's text, empty on success.
-func auditErrorMessage(err error, res *mcp.CallToolResult) string {
-	if err != nil {
-		return err.Error()
-	}
-	if res == nil || !res.IsError {
-		return ""
-	}
-	for _, c := range res.Content {
-		if t, ok := c.(mcp.TextContent); ok {
-			return t.Text
-		}
-	}
-	return "tool returned isError with no text content"
-}
-
-// traceIDs returns empty strings when no span is on ctx, so every
-// audit record carries both fields with a stable schema.
-func traceIDs(ctx context.Context) (string, string) {
-	sc := trace.SpanContextFromContext(ctx)
-	if !sc.IsValid() {
-		return "", ""
-	}
-	return sc.TraceID().String(), sc.SpanID().String()
 }
