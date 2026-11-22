@@ -30,7 +30,13 @@ If Grafana lookup fails after an email change, authenticate to Grafana and verif
 the account's organization membership before retrying. Do not disable OAuth,
 `RequireCaller` or organization authorization to restore access.
 
-Prepare the affected-user notice from this checklist and send it only through an
-authorized channel before deployment. Keep cutover blocked for unresolved caller
+Send the following notice only through an authorized channel before deployment.
+Keep cutover blocked for unresolved caller
 or connector mappings. Recovery may restore the prior deployment and its existing
 storage key while retaining authentication and organization checks.
+
+```text
+The observability MCP update uses the official SDK with stateless HTTP; older supported clients remain compatible.
+Grafana access requires a verified email and current organization membership. Reconnect SSE after an identity or verified email change.
+If access fails, verify Grafana membership and sign in again; authentication and organization authorization remain enforced during recovery.
+```
