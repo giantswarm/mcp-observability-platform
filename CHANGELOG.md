@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update github.com/giantswarm/mcp-oauth to v1.21.0 (giantswarm/mcp-observability-platform#303)
+- Default the chart to Grafana JWT mode (`grafana.authMode: jwt`).
+- Default the chart to open client registration (`oauth.allowPublicClientRegistration: true`).
 
 ## [0.6.0] - 2026-11-20
 

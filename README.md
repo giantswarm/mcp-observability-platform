@@ -288,16 +288,22 @@ provisioned by the observability-operator (tracked in the plan).
 
 ## Install
 
-Create the required secrets first. The `serviceAccountToken` key holds the
-**Grafana** server-admin service-account token (not a Kubernetes one — the
-chart creates the K8s ServiceAccount itself via `templates/serviceaccount.yaml`).
+Create the required secrets first. The chart defaults to
+`grafana.authMode: jwt`, which needs only the Dex client secret:
+
+```sh
+kubectl -n observability create secret generic mcp-observability-platform-oauth \
+  --from-literal=clientSecret=<dex-client-secret>
+```
+
+With `grafana.authMode: serviceAccountToken`, also create the Grafana
+secret. The `serviceAccountToken` key holds the **Grafana** server-admin
+service-account token (not a Kubernetes one — the chart creates the K8s
+ServiceAccount itself via `templates/serviceaccount.yaml`).
 
 ```sh
 kubectl -n observability create secret generic mcp-observability-platform-grafana \
   --from-literal=serviceAccountToken=<grafana-sa-token>
-
-kubectl -n observability create secret generic mcp-observability-platform-oauth \
-  --from-literal=clientSecret=<dex-client-secret>
 ```
 
 Then install the chart:

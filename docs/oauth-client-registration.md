@@ -14,6 +14,9 @@ Prefer pre-registration for known clients and CIMD for unfamiliar clients.
 DCR remains a compatibility fallback: its configuration, registration endpoint
 and conditional discovery advertisement continue to work. Enabling CIMD does
 not open unauthenticated DCR. Keep the existing registration access controls.
+The Helm chart opens unauthenticated DCR by default
+(`oauth.allowPublicClientRegistration: true`). Set it to `false` to require a
+registration access token.
 The [specification's deprecated registry](https://modelcontextprotocol.io/specification/2026-07-28/deprecated)
 allows removal in the first specification revision released on or after
 2027-07-28. This is not a scheduled mcp-oauth removal date.
