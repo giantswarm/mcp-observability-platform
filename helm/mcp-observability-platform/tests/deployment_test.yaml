@@ -113,7 +113,25 @@ tests:
           path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
           value: kubernetes.io/hostname
 
-  - it: serviceAccountToken mode (default) reads GRAFANA_SA_TOKEN from existingSecret
+  - it: defaults to jwt mode
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_AUTH_MODE
+            value: jwt
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_SA_TOKEN
+
+  - it: serviceAccountToken mode reads GRAFANA_SA_TOKEN from existingSecret
+    set:
+      grafana:
+        authMode: serviceAccountToken
     asserts:
       - template: templates/deployment.yaml
         contains:
@@ -201,3 +219,12 @@ tests:
           content:
             name: GRAFANA_JWT_HEADER
             value: X-Dex-Token
+
+  - it: defaults to public client registration
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
+            value: "true"
