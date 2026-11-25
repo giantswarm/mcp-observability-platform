@@ -100,6 +100,8 @@ forwards each caller's own Dex `id_token` to Grafana. Grafana enforces
 the caller's own org roles. A process compromise exposes only the tokens
 of active callers held in the OAuth token store, each limited to that
 user's Grafana access. Requires Grafana `[auth.jwt]` against Dex.
+Rotating the `mcp-observability-platform` Dex client secret stops a
+compromised pod's tokens. An MCP restart alone does not.
 
 **OAuth trust boundary.** Tokens are validated against `OAUTH_DEX_ISSUER_URL`
 (or an SSO forwarder when `OAUTH_TRUSTED_AUDIENCES` is configured). The

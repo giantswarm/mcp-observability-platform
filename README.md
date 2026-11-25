@@ -315,38 +315,77 @@ Callers:
 | SSO-forwarded Dex ID token (e.g. muster `forwardToken: true`) | yes | The forwarded token as is. Its `aud` is the audiences muster requested; Grafana's `expect_claims.aud` must list one of them. |
 | Trusted-issuer caller (`OAUTH_TRUSTED_ISSUERS`, e.g. muster-issued or Kubernetes SA JWTs) | no | None. The call fails with a clear error. |
 
-Grafana config (verified on Grafana 13.2.0; needs a version with
-`org_mapping` in `[auth.jwt]`):
+The MCP sends the caller token to a dedicated Grafana instance
+(`grafana-mcp`) that shares the database of the main Grafana. The main
+Grafana keeps its own `[auth.jwt]` section, for example for Teleport app
+access. Set `GRAFANA_URL` to the `grafana-mcp` service.
+
+Each person gets an MCP Grafana user, separate from their browser user.
+Its login is the Dex connector id and the email, with `@` replaced by
+`_at_`: `<connector_id>:<email with @ replaced by _at_>`, for example
+`giantswarm-github:theo_at_giantswarm.io`. Its display name comes from the
+`name` claim. `grafana-mcp` maps no email claim, so Grafana never links a
+caller token to an existing user by email. Users sign up on first call.
+
+`grafana-mcp` config:
 
 ```ini
+[auth]
+disable_login_form = true
+
+[auth.basic]
+enabled = false
+
 [auth.jwt]
 enabled = true
 header_name = X-JWT-Assertion
 jwk_set_url = https://dex.<domain>/keys
-expect_claims = {"iss": "https://dex.<domain>", "aud": "<MCP Dex client id>"}
-username_claim = email
-email_claim = email
+cache_ttl = 5m
+expect_claims = {"iss": "https://dex.<domain>", "aud": "mcp-observability-platform"}
+; login: <connector_id>:<email with @ replaced by _at_>
+username_attribute_path = join(':', [federated_claims.connector_id, replace(email, '@', '_at_')])
 auto_sign_up = true
 org_attribute_path = groups
-org_mapping = "<group>:<Org name>:<Role>" ...
 role_attribute_path = to_string('None')
 role_attribute_strict = true
+
+[unified_alerting]
+execute_alerts = false
 ```
+
+- The caller token must carry `federated_claims.connector_id` (Dex scope
+  `federated:id`) and `email`. A token without either fails
+  authentication.
+- `GF_AUTH_JWT_ORG_MAPPING` sets the org mapping. observability-operator
+  renders it from the `GrafanaOrganization` CRs into Secret
+  `grafana-mcp-org-mapping`, key `orgMapping`. Org roles come only from
+  this mapping, read from the `groups` claim.
+- A caller with no mapped group gets role None in the default org.
+- `[auth.basic] enabled = false` rejects the admin password of the shared
+  database on `grafana-mcp`.
+- `[unified_alerting] execute_alerts = false` leaves alert evaluation to
+  the main Grafana. The alerting API stays available to the alert tools.
+- `cache_ttl = 5m` bounds failures after a Dex signing-key rotation.
+  Grafana does not refetch keys on an unknown key id.
 
 Limitations:
 
-- Grafana supports a single `[auth.jwt]` section: one `header_name`, one
-  JWKS. If the instance already uses `[auth.jwt]` for another IdP (e.g.
-  Teleport app access), jwt mode needs that setup reworked first.
-- `org_mapping` is static ini. It does not pick up `generic_oauth` org
-  mappings managed at runtime through the SSO settings API.
+- `org_mapping` is static ini. Grafana reads it and resolves org names
+  once at start-up, so a mapping change needs a `grafana-mcp` restart.
 - `expect_claims.aud` accepts an array and passes when any entry matches.
   List the MCP Dex client id plus every `OAUTH_TRUSTED_AUDIENCES` client
   whose tokens reach the MCP. A token Grafana rejects fails with
   `grafana rejected the caller token`.
-- Grafana caches the Dex JWKS. After a Dex key reset (e.g. Dex with
-  memory storage restarted), calls fail with `no keys found` until the
-  cache expires.
+- With the in-memory store (`OAUTH_STORAGE_BACKEND=memory`, the default),
+  the MCP keeps tokens, client registrations and sign-ins in progress in
+  memory. An MCP restart signs every caller out, and MCP clients register
+  again.
+
+Incident response: the MCP holds every recent caller's Dex refresh token
+in memory. A compromised MCP pod can copy those tokens and the Dex client
+secret and act as those callers for up to 720 hours. Rotating the
+`mcp-observability-platform` Dex client secret stops it. An MCP restart
+alone does not.
 
 ## Install
 
