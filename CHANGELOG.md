@@ -7,18 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Update github.com/giantswarm/mcp-oauth to v1.21.0 (giantswarm/mcp-observability-platform#303)
+
+## [0.6.0] - 2026-11-20
+
+### Changed
+
+- Bump `github.com/giantswarm/mcp-oauth` to `v1.16.0`. JWKS and Dex requests follow `HTTPS_PROXY` and `NO_PROXY`; `OAUTH_TRUSTED_ISSUERS` entries with `allowPrivateIPJWKS` log a deprecation warning at startup. A host in a trusted issuer's `allowPrivateIPJWKSHosts` may resolve to an RFC 1918 or RFC 4193 address as well as a public one, but not to a loopback or link-local address.
+- CIMD client registration is enabled by default. `OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS=false` disables it; malformed values fail startup. DCR registration remains available under its existing access controls.
+- Update github.com/giantswarm/mcp-oauth to v1.13.5 (giantswarm/mcp-observability-platform#283)
+- mcp-grafana updated to v2.3.0. `list_tempo_attribute_names` and `list_tempo_attribute_values` accept `start` and `end`. `run_panel_query` runs Elasticsearch panels. (giantswarm/mcp-observability-platform#234)
+- Update sigs.k8s.io/controller-runtime to v0.25.3 (giantswarm/mcp-observability-platform#289)
+- Update actions/setup-go to v7.1.0 (giantswarm/mcp-observability-platform#290)
+- Update github.com/mark3labs/mcp-go to v1.6.0 (giantswarm/mcp-observability-platform#293)
+
+## [0.5.0] - 2026-11-09
+
 ### Added
 
+- The server advertises the Giant Swarm logo as its MCP icon (`serverInfo.icons`), so muster and the developer portal show it.
 - `diff_tempo_traces` compares two traces.
 - `docs/tools.md` lists every tool as a model reads it (`make tools-doc`, kept current by a test). Tests hold the local tools to the description budget, every tool to the summary line, and each summary of an upstream tool to the upstream text it was written against: an mcp-grafana bump that changes that text fails until the summary is checked.
 
 ### Changed
 
-- mcp-grafana updated to v2.0.0. mcp-grafana now exposes MCP Go SDK types; `gfBinder` converts them to `mark3labs/mcp-go`, which this server keeps using.
+- mcp-grafana updated to v2.2.0. mcp-grafana now exposes MCP Go SDK types; `gfBinder` converts them to `mark3labs/mcp-go`, which this server keeps using.
 - `alerting_manage_rules` is renamed to `alerting_rules_read`. Update `--disabled-tools` / `tools.disabled` entries that name it.
-- Tempo tools use mcp-grafana's native Tempo tools, which call Tempo's HTTP API through Grafana's datasource proxy. Tool names change: `traceql-search` → `search_tempo_traces`, `get-trace` → `get_tempo_trace`, `get-attribute-names` → `list_tempo_attribute_names`, `get-attribute-values` → `list_tempo_attribute_values`, `traceql-metrics-instant` / `traceql-metrics-range` → `query_tempo_metrics` (`type=instant|range`), `docs-traceql` → `get_tempo_traceql_docs`. The `tempo-app` MCP server (`query_frontend.mcp_server.enabled`) is no longer required, and Tempo tools register at startup without probing a Tempo datasource.
+- Tempo tools use mcp-grafana's native Tempo tools, which call Tempo through Grafana (`search_tempo_traces` through `/api/ds/query`). Tool names change: `traceql-search` → `search_tempo_traces`, `get-trace` → `get_tempo_trace`, `get-attribute-names` → `list_tempo_attribute_names`, `get-attribute-values` → `list_tempo_attribute_values`, `traceql-metrics-instant` / `traceql-metrics-range` → `query_tempo_metrics` (`type=instant|range`), `docs-traceql` → `get_tempo_traceql_docs`. The `tempo-app` MCP server (`query_frontend.mcp_server.enabled`) is no longer required, and Tempo tools register at startup without probing a Tempo datasource.
 - Every tool description starts with a summary line of at most 120 runes, all muster's `filter_tools` shows ([giantswarm#38592](https://github.com/giantswarm/giantswarm/issues/38592)): the local tools' descriptions are rewritten with mcp-toolkit's `tooldesc.Describe`, and the 26 delegated tools whose upstream first line is longer get a summary line of ours before upstream's text (`internal/tools/summaries.go`).
 - The `datasourceUid` description of the datasource-bound delegated tools and of the Alertmanager tools is one short hint instead of upstream's text plus a 290-rune hint.
+- `generate_deeplink` with `shorten=true` returns the `/goto/<uid>` short URL, and an error carrying the full deeplink when shortening fails.
+- mcp-oauth updated to v1.13.2: forwarded Dex ID tokens whose audience is trusted are accepted again, and a refused JWT bearer is logged with its cause.
 - The local tools (`list_orgs`, `list_alerts`, `get_alert`, `list_silences`, `get_silence`) report `idempotentHint: true`: they write nothing, so a repeated call changes nothing.
 
 ## [0.4.0] - 2026-10-02
@@ -103,7 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prometheus tool-call counter + error counter + duration histogram, OTEL tracing (no-op without `OTEL_EXPORTER_OTLP_ENDPOINT`), and `trace_id` / `span_id` on every audit line for log-trace correlation.
 - Helm chart with NetworkPolicy, HPA, VPA, PDB, ServiceMonitor, and example overlays for memory- and Valkey-backed OAuth storage.
 
-[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/giantswarm/mcp-observability-platform/compare/v0.2.1...v0.2.2

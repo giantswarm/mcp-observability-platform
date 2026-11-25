@@ -1,5 +1,10 @@
 # mcp-observability-platform
 
+OAuth client registration: CIMD is enabled by default. DCR is deprecated by MCP
+2026-07-28 and remains a compatibility fallback. See
+[registration, consent, egress and TLS configuration](docs/oauth-client-registration.md).
+
+
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/giantswarm/mcp-observability-platform/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/giantswarm/mcp-observability-platform/tree/main)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/giantswarm/mcp-observability-platform/badge)](https://securityscorecards.dev/viewer/?uri=github.com/giantswarm/mcp-observability-platform)
 
