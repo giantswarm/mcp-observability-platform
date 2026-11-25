@@ -74,9 +74,6 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolCapabilities(true),
 		brand.WithGiantSwarmIcon(),
 		mcpsrv.WithRecovery(),
-		// Empty Hooks so RegisterAll can attach its own via GetHooks
-		// (deferred Tempo discovery in JWT auth mode).
-		mcpsrv.WithHooks(&mcpsrv.Hooks{}),
 		mcpsrv.WithToolHandlerMiddleware(middleware.Instrument(cfg.Logger)),
 		mcpsrv.WithToolHandlerMiddleware(middleware.RequireCaller()),
 		mcpsrv.WithToolHandlerMiddleware(responsecap.New(responsecap.Options{
