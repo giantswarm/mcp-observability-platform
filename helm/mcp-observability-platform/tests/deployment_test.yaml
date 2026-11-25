@@ -219,3 +219,12 @@ tests:
           content:
             name: GRAFANA_JWT_HEADER
             value: X-Dex-Token
+
+  - it: defaults to public client registration
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
+            value: "true"

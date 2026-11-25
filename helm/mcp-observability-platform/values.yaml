@@ -163,11 +163,9 @@ oauth:
   issuer: "https://mcp-observability-platform.example.com"
   allowInsecureHTTP: false
   # Enable Dynamic Client Registration (RFC 7591) without a registration token.
-  # OFF by default: letting arbitrary callers self-register against a
-  # production MCP is a standing risk. Flip to true for local dev and
-  # cluster-test deploys where MCP clients need to register themselves on
-  # first connect (e.g. Claude Code, mcp-inspector).
-  allowPublicClientRegistration: false
+  # ON by default: MCP clients (e.g. Claude Code, mcp-inspector) register
+  # themselves on first connect. Set false to require a registration token.
+  allowPublicClientRegistration: true
   # Dex connection
   dex:
     issuerUrl: "https://dex.example.com"
