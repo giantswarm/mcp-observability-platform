@@ -67,7 +67,7 @@ func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
 			AllowedAudiences:        e.AllowedAudiences,
 			AllowedClaims:           e.AllowedClaims,
 			AcceptedTypHeaders:      e.AcceptedTypHeaders,
-			AllowPrivateIPJWKS:      e.AllowPrivateIPJWKS,
+			AllowPrivateIPJWKS:      e.AllowPrivateIPJWKS, //nolint:staticcheck // SA1019: a trusted issuer is a second issuer, not the provider's own host
 			AllowPrivateIPJWKSHosts: e.AllowPrivateIPJWKSHosts,
 		})
 	}
@@ -88,14 +88,10 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 		return nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
 	}
 
-	cfg, err := oauthconfig.FromEnv()
+	cfg, err := oauthConfigFromEnv()
 	if err != nil {
 		return nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
-	// MCP CLI clients (Claude Code, mcp-inspector) register a loopback
-	// redirect URI per RFC 8252. The binary always permits it; not an
-	// operator knob.
-	cfg.AllowLocalhostRedirectURIs = true
 
 	encryptor, err := oauthconfig.NewEncryptorFromEnv()
 	if err != nil {
@@ -147,4 +143,15 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 		return nil, nil, fmt.Errorf("oauth server: %w", err)
 	}
 	return handler.New(srv, logger), storeClose, nil
+}
+
+func oauthConfigFromEnv() (*oauth.ServerConfig, error) {
+	configuration, err := oauthconfig.FromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if os.Getenv("OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS") == "" {
+		configuration.EnableClientIDMetadataDocuments = true
+	}
+	return configuration, nil
 }

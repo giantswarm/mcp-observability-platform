@@ -251,9 +251,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	<-shutdownCtx.Done()
 	logger.Info("shutdown requested")
 	mcpCancel()
-	<-mcpDone
+	<-mcpDone //nolint:errcheck // runHTTP logs serve failures and cancels the shared shutdown context.
 	obsCancel()
-	<-obsDone
+	<-obsDone //nolint:errcheck // runHTTP logs serve failures and cancels the shared shutdown context.
 	return nil
 }
 
