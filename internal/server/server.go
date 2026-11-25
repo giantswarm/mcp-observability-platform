@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/giantswarm/mcp-toolkit/brand"
 	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
 	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
@@ -71,6 +72,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		// initialize handshake; required because we register tools but
 		// no resources/prompts.
 		mcpsrv.WithToolCapabilities(true),
+		brand.WithGiantSwarmIcon(),
 		mcpsrv.WithRecovery(),
 		// Empty Hooks so RegisterAll can attach its own via GetHooks
 		// (deferred Tempo discovery in JWT auth mode).

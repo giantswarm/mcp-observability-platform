@@ -8,6 +8,7 @@ package tools
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -359,11 +360,12 @@ func TestHandler_RegistersTempoTools(t *testing.T) {
 // TestHandler_SearchTempoTraces_PropagatesOrgID pins multi-org routing for
 // the native Tempo tools: the binder resolves the caller's org, injects the
 // org's Tempo datasource UID, and upstream's Tempo client sends the resolved
-// OrgID and the caller's audit handle to Grafana's datasource proxy.
+// OrgID and the caller's audit handle to Grafana's /api/ds/query, which it
+// uses for search on Grafana 12.3 and later.
 func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
-	const tempoSearchPath = "/api/datasources/proxy/uid/tempo-uid/api/search"
+	const tempoSearchPath = "/api/ds/query"
 	var sawSearch bool
-	var sawOrgID, sawUser string
+	var sawOrgID, sawUser, sawBody string
 	ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case dsListPath:
@@ -374,7 +376,9 @@ func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
 			sawSearch = true
 			sawOrgID = r.Header.Get("X-Grafana-Org-Id")
 			sawUser = r.Header.Get("X-Grafana-User")
-			_, _ = w.Write([]byte(`{"traces":[]}`))
+			body, _ := io.ReadAll(r.Body)
+			sawBody = string(body)
+			_, _ = w.Write([]byte(`{"results":{"A":{"frames":[{"schema":{"name":"Traces","fields":[{"name":"traceID","type":"string","typeInfo":{"frame":"string"}}]},"data":{"values":[[]]}}]}}}`))
 		default:
 			_, _ = w.Write([]byte(`{}`))
 		}
@@ -390,6 +394,9 @@ func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
 	}
 	if !sawSearch {
 		t.Fatalf("Tempo search not sent to %s", tempoSearchPath)
+	}
+	if !strings.Contains(sawBody, `"uid":"tempo-uid"`) {
+		t.Errorf("query body %s does not name the org's Tempo datasource tempo-uid", sawBody)
 	}
 	if sawOrgID != "1" {
 		t.Errorf("X-Grafana-Org-Id = %q, want %q (the resolved OrgID for caller's org)", sawOrgID, "1")
