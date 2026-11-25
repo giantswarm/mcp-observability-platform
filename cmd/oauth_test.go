@@ -106,7 +106,7 @@ func trustedIssuersEqual(a, b []oauthserver.TrustedIssuer) bool {
 		if a[i].Issuer != b[i].Issuer ||
 			a[i].JwksURL != b[i].JwksURL ||
 			a[i].SubjectClaim != b[i].SubjectClaim ||
-			a[i].AllowPrivateIPJWKS != b[i].AllowPrivateIPJWKS ||
+			a[i].AllowPrivateIPJWKS != b[i].AllowPrivateIPJWKS || //nolint:staticcheck // SA1019: the field is still parsed and passed through
 			!stringSlicesEqual(a[i].AllowedAudiences, b[i].AllowedAudiences) ||
 			!stringSlicesEqual(a[i].AllowPrivateIPJWKSHosts, b[i].AllowPrivateIPJWKSHosts) ||
 			!stringSlicesEqual(a[i].AcceptedTypHeaders, b[i].AcceptedTypHeaders) ||
