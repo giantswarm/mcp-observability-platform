@@ -218,6 +218,10 @@ grafana:
   # Admin/API URL used by the MCP to reach Grafana. Typically the in-cluster
   # service DNS name.
   url: "https://grafana.example.com"
+  # Browser-facing Grafana URL used for user-facing links (deeplinks, trace
+  # views). Empty keeps the appUrl that Grafana at url reports. API calls
+  # always use url.
+  publicUrl: ""
   # The Secret must contain one of:
   #   - serviceAccountToken  (Grafana server-admin SA token — preferred)
   #   - basicAuth            ("admin:password" — fallback when SAs can't be

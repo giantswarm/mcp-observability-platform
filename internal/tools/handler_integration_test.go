@@ -43,6 +43,13 @@ func newGrafanaJSONServer(handler http.HandlerFunc) *httptest.Server {
 // focus on the tool-handler side of the pipeline.
 func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 	t.Helper()
+	return wireHandlerTestWithPublicURL(t, ts, "")
+}
+
+// wireHandlerTestWithPublicURL is wireHandlerTest with a public Grafana
+// URL for user-facing links.
+func wireHandlerTestWithPublicURL(t *testing.T, ts *httptest.Server, publicURL string) *mcpsrv.MCPServer {
+	t.Helper()
 	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: testAPIKey})
 	if err != nil {
 		t.Fatalf("grafana.New: %v", err)
@@ -58,7 +65,7 @@ func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
 		}},
 	}}
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(s, az, gf, ts.URL, GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
+	if err := RegisterAll(s, az, gf, ts.URL, publicURL, GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s
@@ -403,5 +410,61 @@ func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
 	}
 	if sawUser != caller {
 		t.Errorf("X-Grafana-User = %q, want %q (the caller's audit handle)", sawUser, caller)
+	}
+}
+
+// TestHandler_GenerateDeeplink_UsesPublicURL: user-facing links use the
+// public Grafana URL when it is set, and Grafana's appUrl otherwise. API
+// calls keep going to the Grafana URL.
+func TestHandler_GenerateDeeplink_UsesPublicURL(t *testing.T) {
+	const (
+		appURL    = "http://grafana-mcp.monitoring.svc"
+		publicURL = "https://grafana.example.com"
+	)
+	tests := []struct {
+		name      string
+		publicURL string
+		want      string
+	}{
+		{"public URL set", publicURL, publicURL + "/d/dash-1"},
+		{"public URL unset keeps appUrl", "", appURL + "/d/dash-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sawSearch bool
+			ts := newGrafanaJSONServer(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/frontend/settings":
+					_, _ = io.WriteString(w, `{"appUrl":"`+appURL+`/","buildInfo":{"version":"13.3.0"}}`)
+				case "/api/search":
+					sawSearch = true
+					_, _ = io.WriteString(w, `[]`)
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			defer ts.Close()
+
+			s := wireHandlerTestWithPublicURL(t, ts, tt.publicURL)
+			res := callTool(t, s, "generate_deeplink", map[string]any{
+				testOrgArg:     testOrgName,
+				"resourceType": "dashboard",
+				"dashboardUid": "dash-1",
+			})
+			if res.IsError {
+				t.Fatalf("generate_deeplink IsError: %s", resultText(res))
+			}
+			if got := resultText(res); !strings.HasPrefix(got, tt.want) {
+				t.Errorf("deeplink = %q, want prefix %q", got, tt.want)
+			}
+
+			res = callTool(t, s, "search_dashboards", map[string]any{testOrgArg: testOrgName})
+			if res.IsError {
+				t.Fatalf("search_dashboards IsError: %s", resultText(res))
+			}
+			if !sawSearch {
+				t.Errorf("search_dashboards did not reach the Grafana URL")
+			}
+		})
 	}
 }

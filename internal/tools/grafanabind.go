@@ -57,8 +57,11 @@ type gfBinder struct {
 	authorizer authz.Authorizer
 	grafana    grafana.Client
 	url        string
-	auth       GrafanaAuth
-	disabled   map[string]bool // --disabled-tools lookup; nil = no filter
+	// publicURL, when set, overrides the appUrl that mcp-grafana reads
+	// from /api/frontend/settings as the base of user-facing links.
+	publicURL string
+	auth      GrafanaAuth
+	disabled  map[string]bool // --disabled-tools lookup; nil = no filter
 
 	upstreamOnce sync.Once
 	upstream     *mcpgrafana.GrafanaClient
@@ -102,6 +105,9 @@ func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 	b.upstreamOnce.Do(func() {
 		cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.auth.APIKey, BasicAuth: b.auth.BasicAuth}
 		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.auth.APIKey, b.auth.BasicAuth)
+		if b.publicURL != "" {
+			b.upstream.PublicURL = b.publicURL
+		}
 	})
 	return b.upstream
 }

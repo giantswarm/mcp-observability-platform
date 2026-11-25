@@ -225,6 +225,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | Env var                                     | Required       | Purpose                                                  |
 | ------------------------------------------- | -------------- | -------------------------------------------------------- |
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
+| `GRAFANA_PUBLIC_URL`                        | no             | Browser-facing Grafana URL for user-facing links (`generate_deeplink`, trace views, short URLs). Empty = the `appUrl` that Grafana at `GRAFANA_URL` reports. API calls always use `GRAFANA_URL`. Helm: `grafana.publicUrl`. |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
 | `GRAFANA_AUTH_MODE`                         | no             | `serviceAccountToken`, `basicAuth`, or `jwt`. Empty = inferred from which of `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` is set. `jwt` forwards each caller's Dex `id_token` to Grafana and needs no Grafana secret (see [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity)). |
@@ -305,7 +306,8 @@ In this mode:
 - The authorizer reads the caller's orgs via `GET /api/user/orgs` with the
   caller's token.
 - `MCP_TRANSPORT=stdio` is rejected. Stdio has no caller token.
-- Deeplinks may use the internal `GRAFANA_URL`. The
+- Set `GRAFANA_PUBLIC_URL` to the public URL of the main Grafana. Without
+  it, links use the `appUrl` of `grafana-mcp`. The
   `/api/frontend/settings` probe runs without credentials.
 
 Callers:

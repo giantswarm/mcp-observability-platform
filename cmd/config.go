@@ -24,7 +24,11 @@ const (
 const defaultGrafanaJWTHeader = "X-JWT-Assertion"
 
 type config struct {
-	GrafanaURL       string
+	GrafanaURL string
+	// GrafanaPublicURL is the browser-facing Grafana URL that user-facing
+	// links use. Empty keeps the appUrl Grafana reports. Env:
+	// GRAFANA_PUBLIC_URL.
+	GrafanaPublicURL string
 	GrafanaSAToken   string
 	GrafanaBasicAuth string
 
@@ -71,6 +75,7 @@ func loadConfig() (*config, error) {
 	}
 	c := &config{
 		GrafanaURL:       os.Getenv("GRAFANA_URL"),
+		GrafanaPublicURL: os.Getenv("GRAFANA_PUBLIC_URL"),
 		GrafanaSAToken:   os.Getenv("GRAFANA_SA_TOKEN"),
 		GrafanaBasicAuth: os.Getenv("GRAFANA_BASIC_AUTH"),
 		ToolTimeout:      toolTimeout,
