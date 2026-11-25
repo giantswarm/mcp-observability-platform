@@ -233,7 +233,7 @@ grafana:
   #   - jwt                  forwards each caller's Dex id_token in jwtHeader.
   #                          Grafana must enable [auth.jwt] against Dex. No
   #                          secret. See the README "Grafana JWT mode" section.
-  authMode: "serviceAccountToken"
+  authMode: "jwt"
   # Header carrying the caller's Dex id_token. Used when authMode is "jwt".
   # Must match header_name in Grafana's [auth.jwt] section.
   jwtHeader: "X-JWT-Assertion"
