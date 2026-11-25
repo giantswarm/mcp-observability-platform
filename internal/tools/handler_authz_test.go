@@ -94,13 +94,13 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 		t.Errorf("downstream Grafana should not be called when authz denies; got %s %s", r.Method, r.URL.Path)
 		http.Error(w, "test failure", http.StatusInternalServerError)
 	}))
-	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: "test-token"})
+	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: testAPIKey})
 	if err != nil {
 		t.Fatalf("grafana.New: %v", err)
 	}
 
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(s, az, gf, ts.URL, "test-token", nil, nil); err != nil {
+	if err := RegisterAll(s, az, gf, ts.URL, GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s, ts.Close
