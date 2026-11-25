@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/giantswarm/mcp-oauth/providers/oidc"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
 const (
@@ -107,5 +109,33 @@ func TestInjectCallerFromRequest_NoIdentityPassesThrough(t *testing.T) {
 	ctx := InjectCallerFromRequest(context.Background(), req)
 	if authz.CallerFromContext(ctx).Authenticated() {
 		t.Errorf("InjectCallerFromRequest with no UserInfo must not attach a caller")
+	}
+}
+
+func TestInjectCaller_AttachesResolvedToken(t *testing.T) {
+	ui := &providers.UserInfo{ID: testSubject, Email: testAliceEmail, TokenSource: providers.TokenSourceOAuth}
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
+
+	ctx := InjectCaller(func(context.Context, *http.Request) string { return "id-token" })(context.Background(), req)
+	if got := grafana.UserTokenFromContext(ctx); got != "id-token" {
+		t.Errorf("user token = %q, want id-token", got)
+	}
+	if c := authz.CallerFromContext(ctx); c.Subject != testSubject {
+		t.Errorf("Subject = %q, want %s", c.Subject, testSubject)
+	}
+}
+
+func TestInjectCaller_NilResolverAttachesNoToken(t *testing.T) {
+	ui := &providers.UserInfo{ID: testSubject, Email: testAliceEmail, TokenSource: providers.TokenSourceOAuth}
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	req = req.WithContext(handler.ContextWithUserInfo(req.Context(), ui))
+
+	ctx := InjectCaller(nil)(context.Background(), req)
+	if got := grafana.UserTokenFromContext(ctx); got != "" {
+		t.Errorf("user token = %q, want none without a resolver", got)
+	}
+	if c := authz.CallerFromContext(ctx); c.Subject != testSubject {
+		t.Errorf("Subject = %q, want %s", c.Subject, testSubject)
 	}
 }

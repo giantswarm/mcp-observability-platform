@@ -12,10 +12,29 @@ import (
 	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 )
 
+// Grafana auth modes accepted on GRAFANA_AUTH_MODE (case-insensitive).
+const (
+	grafanaAuthModeSAToken   = "serviceAccountToken"
+	grafanaAuthModeBasicAuth = "basicAuth"
+	grafanaAuthModeJWT       = "jwt"
+)
+
+// defaultGrafanaJWTHeader is the GRAFANA_JWT_HEADER default. It must
+// match Grafana's [auth.jwt] header_name.
+const defaultGrafanaJWTHeader = "X-JWT-Assertion"
+
 type config struct {
 	GrafanaURL       string
 	GrafanaSAToken   string
 	GrafanaBasicAuth string
+
+	// GrafanaAuthMode is the resolved GRAFANA_AUTH_MODE, never empty
+	// after loadConfig. Unset GRAFANA_AUTH_MODE infers serviceAccountToken
+	// or basicAuth from which credential is set.
+	GrafanaAuthMode string
+	// GrafanaJWTHeader is the header carrying the caller's Dex ID token
+	// to Grafana. Set only in jwt mode. Env: GRAFANA_JWT_HEADER.
+	GrafanaJWTHeader string
 
 	// ToolTimeout is the per-tool-call context deadline. Zero disables the
 	// middleware; a malformed TOOL_TIMEOUT env value fails startup.
@@ -63,11 +82,44 @@ func loadConfig() (*config, error) {
 	if c.GrafanaURL == "" {
 		missing = append(missing, "GRAFANA_URL")
 	}
-	if c.GrafanaSAToken == "" && c.GrafanaBasicAuth == "" {
-		missing = append(missing, "GRAFANA_SA_TOKEN or GRAFANA_BASIC_AUTH")
-	}
-	if c.GrafanaSAToken != "" && c.GrafanaBasicAuth != "" {
-		return nil, fmt.Errorf("GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH are mutually exclusive — set one and unset the other")
+	switch mode := os.Getenv("GRAFANA_AUTH_MODE"); strings.ToLower(mode) {
+	case "":
+		if c.GrafanaSAToken == "" && c.GrafanaBasicAuth == "" {
+			missing = append(missing, "GRAFANA_SA_TOKEN or GRAFANA_BASIC_AUTH")
+		}
+		if c.GrafanaSAToken != "" && c.GrafanaBasicAuth != "" {
+			return nil, fmt.Errorf("GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH are mutually exclusive — set one and unset the other")
+		}
+		c.GrafanaAuthMode = grafanaAuthModeSAToken
+		if c.GrafanaBasicAuth != "" {
+			c.GrafanaAuthMode = grafanaAuthModeBasicAuth
+		}
+	case strings.ToLower(grafanaAuthModeSAToken):
+		if c.GrafanaBasicAuth != "" {
+			return nil, fmt.Errorf("GRAFANA_AUTH_MODE=%s: unset GRAFANA_BASIC_AUTH", grafanaAuthModeSAToken)
+		}
+		if c.GrafanaSAToken == "" {
+			missing = append(missing, "GRAFANA_SA_TOKEN")
+		}
+		c.GrafanaAuthMode = grafanaAuthModeSAToken
+	case strings.ToLower(grafanaAuthModeBasicAuth):
+		if c.GrafanaSAToken != "" {
+			return nil, fmt.Errorf("GRAFANA_AUTH_MODE=%s: unset GRAFANA_SA_TOKEN", grafanaAuthModeBasicAuth)
+		}
+		if c.GrafanaBasicAuth == "" {
+			missing = append(missing, "GRAFANA_BASIC_AUTH")
+		}
+		c.GrafanaAuthMode = grafanaAuthModeBasicAuth
+	case strings.ToLower(grafanaAuthModeJWT):
+		// Each caller's own token authenticates; a shared credential
+		// would be ignored, so refuse it rather than leave it unused.
+		if c.GrafanaSAToken != "" || c.GrafanaBasicAuth != "" {
+			return nil, fmt.Errorf("GRAFANA_AUTH_MODE=%s: unset GRAFANA_SA_TOKEN and GRAFANA_BASIC_AUTH", grafanaAuthModeJWT)
+		}
+		c.GrafanaAuthMode = grafanaAuthModeJWT
+		c.GrafanaJWTHeader = envOr("GRAFANA_JWT_HEADER", defaultGrafanaJWTHeader)
+	default:
+		return nil, fmt.Errorf("GRAFANA_AUTH_MODE=%q: want %q, %q or %q", mode, grafanaAuthModeSAToken, grafanaAuthModeBasicAuth, grafanaAuthModeJWT)
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
