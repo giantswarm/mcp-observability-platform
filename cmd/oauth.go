@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	oauth "github.com/giantswarm/mcp-oauth"
@@ -26,6 +27,7 @@ import (
 const (
 	envOAuthDexClientID    = "OAUTH_DEX_CLIENT_ID"
 	envOAuthDexIssuerURL   = "OAUTH_DEX_ISSUER_URL"
+	envOAuthDexScopes      = "OAUTH_DEX_SCOPES"
 	envOAuthStorageBackend = "OAUTH_STORAGE_BACKEND"
 	envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
 )
@@ -113,11 +115,37 @@ func idTokenResolver(store storage.TokenStore) middleware.TokenResolver {
 	}
 }
 
+// dexScopes are the scopes the MCP requests from Dex when OAUTH_DEX_SCOPES
+// is unset: mcp-oauth's Dex defaults plus federated:id, which adds the
+// caller's connector id (federated_claims.connector_id) to the Dex
+// id_token. Grafana in jwt mode builds the caller's login from it.
+var dexScopes = []string{"openid", "profile", "email", "groups", "offline_access", "federated:id"}
+
+// dexProviderFromEnv returns the Dex provider of oauthconfig.DexFromEnv
+// with its scopes set to dexScopes. Every other setting comes from
+// DexFromEnv. A non-empty OAUTH_DEX_SCOPES keeps the scopes DexFromEnv read
+// from it.
+func dexProviderFromEnv() (providers.Provider, error) {
+	provider, err := oauthconfig.DexFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if os.Getenv(envOAuthDexScopes) != "" {
+		return provider, nil
+	}
+	dexProvider, ok := provider.(*dex.Provider)
+	if !ok {
+		return nil, fmt.Errorf("dex provider: unexpected type %T", provider)
+	}
+	dexProvider.Scopes = slices.Clone(dexScopes)
+	return dexProvider, nil
+}
+
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // The returned token store backs idTokenResolver. storeClose drains the
 // storage backend on shutdown.
 func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, storage.TokenStore, func(), error) {
-	provider, err := oauthconfig.DexFromEnv()
+	provider, err := dexProviderFromEnv()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("dex provider: %w", err)
 	}

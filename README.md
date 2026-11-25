@@ -232,6 +232,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
 | `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
 | `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
+| `OAUTH_DEX_SCOPES`                          | no             | CSV of scopes requested from Dex; must contain `openid`. Default `openid,profile,email,groups,offline_access,federated:id`. `federated:id` adds the connector id that [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity) needs. |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
@@ -354,8 +355,8 @@ execute_alerts = false
 ```
 
 - The caller token must carry `federated_claims.connector_id` (Dex scope
-  `federated:id`) and `email`. A token without either fails
-  authentication.
+  `federated:id`, which the MCP requests by default) and `email`. A token
+  without either fails authentication.
 - `GF_AUTH_JWT_ORG_MAPPING` sets the org mapping. observability-operator
   renders it from the `GrafanaOrganization` CRs into Secret
   `grafana-mcp-org-mapping`, key `orgMapping`. Org roles come only from
