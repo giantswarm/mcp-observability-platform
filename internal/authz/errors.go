@@ -25,6 +25,17 @@ var (
 	// log in once and retry."
 	ErrCallerUnknownToGrafana = errors.New("caller has no Grafana account yet — log into Grafana once to register")
 
+	// ErrCallerTokenNotForwardable means Grafana authenticates each caller
+	// with their own token (GRAFANA_AUTH_MODE=jwt), but this caller has
+	// no Dex token the MCP can forward (e.g. a trusted-issuer bearer).
+	ErrCallerTokenNotForwardable = errors.New("caller token cannot be forwarded to Grafana — authenticate through this MCP's OAuth flow or with a Dex ID token")
+
+	// ErrGrafanaRejectedToken means Grafana answered 401 to the caller's
+	// forwarded token (GRAFANA_AUTH_MODE=jwt): wrong iss/aud in
+	// [auth.jwt] expect_claims, JWKS mismatch, expired token, or no
+	// org mapping under role_attribute_strict.
+	ErrGrafanaRejectedToken = errors.New("grafana rejected the caller token")
+
 	// ErrAmbiguousOrgRef means orgRef matches more than one registered
 	// Organization by DisplayName. Returned instead of silently picking
 	// one — collisions need an operator fix, not a coin flip.
