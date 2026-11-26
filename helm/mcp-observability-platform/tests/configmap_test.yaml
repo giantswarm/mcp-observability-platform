@@ -24,6 +24,12 @@ tests:
       - equal:
           path: data.OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS
           value: "true"
+      - equal:
+          path: data.OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS
+          value: "true"
+      - equal:
+          path: data.OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE
+          value: "true"
 
   - it: joins trusted audiences + schemes as CSV
     set:

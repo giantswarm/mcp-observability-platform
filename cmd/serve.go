@@ -161,7 +161,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authzOpts...)
 
-	oauthHandler, tokenStore, storeClose, err := buildOAuthHandler(logger)
+	oauthHandler, tokenStore, storeClose, err := buildOAuthHandler(logger, jwtMode)
 	if err != nil {
 		return err
 	}

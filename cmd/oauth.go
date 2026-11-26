@@ -32,6 +32,13 @@ const (
 	envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
 )
 
+// Upstream env vars of mcp-oauth's client controls. oauthConfigFromEnv
+// turns both controls on when they are unset or empty.
+const (
+	envOAuthOmitIDToken                  = "OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE" //nolint:gosec // G101: an env var name, not a credential
+	envOAuthRestrictRegistrationLoopback = "OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS"
+)
+
 // trustedIssuerConfig is the JSON shape of a single OAUTH_TRUSTED_ISSUERS
 // entry. It mirrors the subset of mcp-oauth's TrustedIssuer a resource server
 // needs. subjectClaim remaps the caller subject to another claim's value at
@@ -143,8 +150,8 @@ func dexProviderFromEnv() (providers.Provider, error) {
 
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // The returned token store backs idTokenResolver. storeClose drains the
-// storage backend on shutdown.
-func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, storage.TokenStore, func(), error) {
+// storage backend on shutdown. jwtMode is true for GRAFANA_AUTH_MODE=jwt.
+func buildOAuthHandler(logger *slog.Logger, jwtMode bool) (*handler.Handler, storage.TokenStore, func(), error) {
 	provider, err := dexProviderFromEnv()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("dex provider: %w", err)
@@ -156,7 +163,7 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, storage.TokenStor
 		return nil, nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
 	}
 
-	cfg, err := oauthConfigFromEnv()
+	cfg, err := oauthConfigFromEnv(jwtMode)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
@@ -188,8 +195,15 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, storage.TokenStor
 	if cfg.AllowInsecureHTTP {
 		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
 	}
+	if !cfg.OmitIDTokenInTokenResponse {
+		logger.Warn(envOAuthOmitIDToken + "=false — token responses carry the Dex id_token to MCP clients; intended for local dev only")
+	}
 	if cfg.AllowPublicClientRegistration {
-		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
+		if cfg.RestrictRegistrationToLoopbackRedirectURIs {
+			logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open to unauthenticated callers for loopback redirect URIs only")
+		} else {
+			logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true and " + envOAuthRestrictRegistrationLoopback + "=false — /oauth/register is open for any redirect URI; restrict in production")
+		}
 	}
 
 	// Trusted external issuers (muster) whose Bearer JWTs are accepted at
@@ -213,13 +227,28 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, storage.TokenStor
 	return handler.New(srv, logger), srv.TokenStore(), storeClose, nil
 }
 
-func oauthConfigFromEnv() (*oauth.ServerConfig, error) {
+// oauthConfigFromEnv returns the mcp-oauth config of oauthconfig.FromEnv
+// with the MCP's own defaults for unset or empty env vars: Client ID
+// Metadata Documents on, token responses without the Dex id_token, and
+// client registration limited to loopback redirect URIs. In jwt mode
+// (jwtMode true) it refuses OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE=false:
+// the Dex id_token is the caller's Grafana credential.
+func oauthConfigFromEnv(jwtMode bool) (*oauth.ServerConfig, error) {
 	configuration, err := oauthconfig.FromEnv()
 	if err != nil {
 		return nil, err
 	}
 	if os.Getenv("OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS") == "" {
 		configuration.EnableClientIDMetadataDocuments = true
+	}
+	if os.Getenv(envOAuthOmitIDToken) == "" {
+		configuration.OmitIDTokenInTokenResponse = true
+	}
+	if os.Getenv(envOAuthRestrictRegistrationLoopback) == "" {
+		configuration.RestrictRegistrationToLoopbackRedirectURIs = true
+	}
+	if jwtMode && !configuration.OmitIDTokenInTokenResponse {
+		return nil, fmt.Errorf("%s=false is not allowed with GRAFANA_AUTH_MODE=%s: the Dex id_token is the caller's Grafana credential", envOAuthOmitIDToken, grafanaAuthModeJWT)
 	}
 	return configuration, nil
 }

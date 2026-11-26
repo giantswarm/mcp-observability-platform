@@ -30,9 +30,18 @@ data:
   OAUTH_TRUSTED_ISSUERS: {{ $oa.trustedIssuers | default (list) | toJson | quote }}
   # CSV of custom URI schemes accepted during public client registration
   # (e.g. "cursor,vscode"). Loopback HTTPS is always accepted. mcp-oauth
-  # validates each scheme per RFC 3986.
+  # validates each scheme per RFC 3986. Client registration refuses these
+  # schemes while OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS is
+  # true.
   OAUTH_TRUSTED_REDIRECT_SCHEMES: {{ $oa.trustedRedirectSchemes | default (list) | join "," | quote }}
   # MCP CLI clients (Claude Code, mcp-inspector, IDE plugins) register
   # loopback redirect URIs per RFC 8252. Always-on for this MCP because
   # the streamable-http transport is the canonical CLI integration path.
   OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS: "true"
+  # Client registration (/oauth/register) accepts only loopback redirect
+  # URIs. Client ID Metadata Documents are not affected. Override with an
+  # extraEnvVars entry for local development only.
+  OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS: "true"
+  # Token responses carry only the MCP's own tokens, never the Dex
+  # id_token. The MCP refuses to start with "false" in Grafana JWT mode.
+  OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE: "true"

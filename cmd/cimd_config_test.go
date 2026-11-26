@@ -25,7 +25,7 @@ func TestCIMDEnvironmentDefaults(t *testing.T) {
 			if testCase.unset {
 				require.NoError(t, os.Unsetenv("OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS"))
 			}
-			configuration, err := oauthConfigFromEnv()
+			configuration, err := oauthConfigFromEnv(false)
 			if testCase.invalid {
 				require.ErrorContains(t, err, "OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS")
 				require.Nil(t, configuration)

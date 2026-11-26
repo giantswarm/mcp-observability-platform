@@ -165,6 +165,7 @@ oauth:
   # Enable Dynamic Client Registration (RFC 7591) without a registration token.
   # ON by default: MCP clients (e.g. Claude Code, mcp-inspector) register
   # themselves on first connect. Set false to require a registration token.
+  # Registration accepts only loopback redirect URIs.
   allowPublicClientRegistration: true
   # Dex connection
   dex:
@@ -212,6 +213,8 @@ oauth:
   # registration fully. Each scheme is validated against RFC 3986 by
   # mcp-oauth. Web schemes (http/https) and dangerous schemes
   # (javascript/data/file/ftp) are blocked regardless of this list.
+  # Registration refuses these schemes while it is limited to loopback
+  # redirect URIs (the chart default).
   trustedRedirectSchemes: []
 
 grafana:

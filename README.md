@@ -238,11 +238,13 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
 | `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` to unauthenticated callers (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that self-register at runtime. |
+| `OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS` | no | `false` to let `/oauth/register` accept non-loopback redirect URIs (default `true`). With `true`, registration accepts only `http` and `https` redirect URIs on `localhost`, `127.0.0.0/8` or `[::1]` and refuses any other with `invalid_redirect_uri`. Client ID Metadata Documents are not affected. Local development only. |
+| `OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE`     | no             | `false` to return the Dex `id_token` to MCP clients in token responses (default `true`). With `true`, MCP clients receive only the MCP's own tokens. `false` is a startup error in `jwt` mode. Local development only. |
 | `OAUTH_TRUST_PROXY`                         | no             | `true` to take the caller's IP from `X-Forwarded-For` (one trusted proxy hop) for per-IP limits such as the cap of 10 client registrations per IP. Set it behind an ingress or gateway, through the chart's `extraEnvVars`. Without it, every caller behind the ingress shares the ingress IP. |
 | `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
 | `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
 | `OAUTH_TRUSTED_ISSUERS`                     | no             | JSON array of external issuers (the muster broker) whose Bearer JWTs are accepted at `/mcp` alongside Dex, for on-behalf-of traffic. Each entry: `issuer`, `jwksURL` (required), optional `subjectClaim`, `allowedAudiences`, `allowedClaims`, `acceptedTypHeaders` (default `["at+jwt"]`; use `[""]` for K8s SA tokens), `allowPrivateIPJWKS`, `allowPrivateIPJWKSHosts`. Unlike trusted audiences these are full issuers verified via their own JWKS. |
-| `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
+| `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. Registration refuses these schemes while `OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS` is `true`. |
 | `OAUTH_STORAGE_BACKEND`                     | no             | `memory` (default) or `valkey` (read by `oauthconfig.StorageFromEnvWithPrefix("OAUTH_")`) |
 | `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
@@ -307,6 +309,8 @@ In this mode:
 - The authorizer reads the caller's orgs via `GET /api/user/orgs` with the
   caller's token.
 - `MCP_TRANSPORT=stdio` is rejected. Stdio has no caller token.
+- Token responses never carry the Dex `id_token`. The MCP keeps it
+  server-side. `OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE=false` is rejected.
 - Set `GRAFANA_PUBLIC_URL` to the public URL of the main Grafana. Without
   it, links use the `appUrl` of `grafana-mcp`. The
   `/api/frontend/settings` probe runs without credentials.

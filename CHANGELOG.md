@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default the chart to open client registration (`oauth.allowPublicClientRegistration: true`).
 - Request the Dex `federated:id` scope at sign-in.
 
+### Security
+
+- Return only the MCP's own tokens to MCP clients, without the Dex `id_token`.
+- Refuse client registrations with a non-loopback redirect URI.
+
 ## [0.6.0] - 2026-11-20
 
 ### Changed
