@@ -252,6 +252,15 @@ rbac:
   create: true
 
 # Extra env vars & envFrom (Secret/ConfigMap refs) for user-defined overrides.
+#
+# OAUTH_TRUST_PROXY has an accepted limitation. With "true", mcp-oauth takes
+# the caller IP from the second-to-last X-Forwarded-For entry. Envoy Gateway
+# appends the real client IP as the last entry, so a caller that sends its
+# own X-Forwarded-For chooses its rate-limit key and bypasses the per-IP cap
+# of 10 client registrations. With "false", all callers share the gateway IP
+# and one cap. The risk is accepted. A configurable trusted proxy count in
+# mcp-oauth (0 for this gateway) or client IP detection in the gateway would
+# close it.
 extraEnvVars: []
 extraEnvFrom: []
 
