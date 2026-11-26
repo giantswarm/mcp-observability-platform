@@ -228,3 +228,24 @@ tests:
           content:
             name: OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
             value: "true"
+
+  - it: grafana.publicUrl sets GRAFANA_PUBLIC_URL
+    set:
+      grafana:
+        publicUrl: https://grafana.example.com
+    asserts:
+      - template: templates/deployment.yaml
+        contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GRAFANA_PUBLIC_URL
+            value: https://grafana.example.com
+
+  - it: empty grafana.publicUrl sets no GRAFANA_PUBLIC_URL
+    asserts:
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          any: true
+          content:
+            name: GRAFANA_PUBLIC_URL

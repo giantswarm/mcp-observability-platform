@@ -124,6 +124,10 @@ spec:
             # or jwt (forwards the caller's Dex id_token; no secret).
             - name: GRAFANA_URL
               value: {{ .Values.grafana.url | quote }}
+            {{- with .Values.grafana.publicUrl }}
+            - name: GRAFANA_PUBLIC_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- if eq .Values.grafana.authMode "jwt" }}
             - name: GRAFANA_AUTH_MODE
               value: "jwt"

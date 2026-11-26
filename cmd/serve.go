@@ -211,6 +211,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		Authorizer:       authorizer,
 		Grafana:          grafanaClient,
 		GrafanaURL:       cfg.GrafanaURL,
+		GrafanaPublicURL: cfg.GrafanaPublicURL,
 		GrafanaAPIKey:    apiKey,
 		GrafanaBasicAuth: basicAuth,
 		GrafanaJWTHeader: cfg.GrafanaJWTHeader,

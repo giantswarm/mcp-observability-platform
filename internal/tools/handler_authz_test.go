@@ -100,7 +100,7 @@ func wireAuthzDenyTest(t *testing.T, callerEmail string) (*mcpsrv.MCPServer, fun
 	}
 
 	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
-	if err := RegisterAll(s, az, gf, ts.URL, GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
+	if err := RegisterAll(s, az, gf, ts.URL, "", GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	return s, ts.Close

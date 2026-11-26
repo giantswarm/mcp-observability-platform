@@ -28,7 +28,10 @@ type Config struct {
 	// client per call. APIKey, BasicAuth and JWTHeader are mutually
 	// exclusive; exactly one must be set. JWTHeader selects JWT auth
 	// mode: the caller's own token is forwarded in that header.
-	GrafanaURL       string
+	GrafanaURL string
+	// GrafanaPublicURL is the browser-facing Grafana URL for user-facing
+	// links. Empty keeps the appUrl Grafana reports.
+	GrafanaPublicURL string
 	GrafanaAPIKey    string
 	GrafanaBasicAuth *url.Userinfo
 	GrafanaJWTHeader string
@@ -85,7 +88,7 @@ func New(cfg Config) (*mcpsrv.MCPServer, error) {
 		mcpsrv.WithToolHandlerMiddleware(timeout.New(cfg.ToolTimeout)),
 	)
 
-	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, tools.GrafanaAuth{
+	if err := tools.RegisterAll(mcp, cfg.Authorizer, cfg.Grafana, cfg.GrafanaURL, cfg.GrafanaPublicURL, tools.GrafanaAuth{
 		APIKey:    cfg.GrafanaAPIKey,
 		BasicAuth: cfg.GrafanaBasicAuth,
 		JWTHeader: cfg.GrafanaJWTHeader,

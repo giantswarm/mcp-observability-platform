@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Grafana JWT mode (`GRAFANA_AUTH_MODE=jwt`), which runs each Grafana call as the calling Dex user.
 - Add `GRAFANA_JWT_HEADER` (Helm `grafana.jwtHeader`) to name the header that carries the caller's Dex token to Grafana.
 - Add the `GRAFANA_AUTH_MODE` values `serviceAccountToken` and `basicAuth` to select a shared Grafana credential explicitly.
+- Add `GRAFANA_PUBLIC_URL` (Helm `grafana.publicUrl`) to set the Grafana URL of user-facing links.
 
 ### Changed
 

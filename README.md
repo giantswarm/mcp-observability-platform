@@ -225,6 +225,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | Env var                                     | Required       | Purpose                                                  |
 | ------------------------------------------- | -------------- | -------------------------------------------------------- |
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
+| `GRAFANA_PUBLIC_URL`                        | no             | Browser-facing Grafana URL for user-facing links (`generate_deeplink`, trace views, short URLs). Empty = the `appUrl` that Grafana at `GRAFANA_URL` reports. API calls always use `GRAFANA_URL`. Helm: `grafana.publicUrl`. |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
 | `GRAFANA_AUTH_MODE`                         | no             | `serviceAccountToken`, `basicAuth`, or `jwt`. Empty = inferred from which of `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` is set. `jwt` forwards each caller's Dex `id_token` to Grafana and needs no Grafana secret (see [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity)). |
@@ -237,6 +238,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
 | `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` to unauthenticated callers (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that self-register at runtime. |
+| `OAUTH_TRUST_PROXY`                         | no             | `true` to take the caller's IP from `X-Forwarded-For` (one trusted proxy hop) for per-IP limits such as the cap of 10 client registrations per IP. Set it behind an ingress or gateway, through the chart's `extraEnvVars`. Without it, every caller behind the ingress shares the ingress IP. Accepted limitation: Envoy Gateway appends the real client IP, so with `true` a caller that sends its own `X-Forwarded-For` chooses its rate-limit key and bypasses the cap. A configurable trusted proxy count in mcp-oauth or client IP detection in the gateway would close it. |
 | `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
 | `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
 | `OAUTH_TRUSTED_ISSUERS`                     | no             | JSON array of external issuers (the muster broker) whose Bearer JWTs are accepted at `/mcp` alongside Dex, for on-behalf-of traffic. Each entry: `issuer`, `jwksURL` (required), optional `subjectClaim`, `allowedAudiences`, `allowedClaims`, `acceptedTypHeaders` (default `["at+jwt"]`; use `[""]` for K8s SA tokens), `allowPrivateIPJWKS`, `allowPrivateIPJWKSHosts`. Unlike trusted audiences these are full issuers verified via their own JWKS. |
@@ -305,7 +307,8 @@ In this mode:
 - The authorizer reads the caller's orgs via `GET /api/user/orgs` with the
   caller's token.
 - `MCP_TRANSPORT=stdio` is rejected. Stdio has no caller token.
-- Deeplinks may use the internal `GRAFANA_URL`. The
+- Set `GRAFANA_PUBLIC_URL` to the public URL of the main Grafana. Without
+  it, links use the `appUrl` of `grafana-mcp`. The
   `/api/frontend/settings` probe runs without credentials.
 
 Callers:
