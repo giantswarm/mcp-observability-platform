@@ -148,6 +148,18 @@ func dexProviderFromEnv() (providers.Provider, error) {
 	return dexProvider, nil
 }
 
+// requiredUpstreamScopes returns the scopes of the Dex provider: dexScopes,
+// or OAUTH_DEX_SCOPES when set. mcp-oauth requests them from Dex even when
+// an MCP client sends its own scope, so federated:id reaches every Dex
+// sign-in.
+func requiredUpstreamScopes(provider providers.Provider) []string {
+	dexProvider, ok := provider.(*dex.Provider)
+	if !ok {
+		return nil
+	}
+	return slices.Clone(dexProvider.Scopes)
+}
+
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // The returned token store backs idTokenResolver. storeClose drains the
 // storage backend on shutdown. jwtMode is true for GRAFANA_AUTH_MODE=jwt.
@@ -167,6 +179,7 @@ func buildOAuthHandler(logger *slog.Logger, jwtMode bool) (*handler.Handler, sto
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
+	cfg.RequiredUpstreamScopes = requiredUpstreamScopes(provider)
 
 	encryptor, err := oauthconfig.NewEncryptorFromEnv()
 	if err != nil {

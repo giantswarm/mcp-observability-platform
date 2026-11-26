@@ -233,7 +233,7 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
 | `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
 | `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
-| `OAUTH_DEX_SCOPES`                          | no             | CSV of scopes requested from Dex; must contain `openid`. Default `openid,profile,email,groups,offline_access,federated:id`. `federated:id` adds the connector id that [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity) needs. |
+| `OAUTH_DEX_SCOPES`                          | no             | CSV of scopes requested from Dex; must contain `openid`. Default `openid,profile,email,groups,offline_access,federated:id`. `federated:id` adds the connector id that [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity) needs. The MCP requests every listed scope from Dex, also when an MCP client sends its own `scope`. |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |

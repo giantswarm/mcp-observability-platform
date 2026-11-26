@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default the chart to Grafana JWT mode (`grafana.authMode: jwt`).
 - Default the chart to open client registration (`oauth.allowPublicClientRegistration: true`).
 - Request the Dex `federated:id` scope at sign-in.
+- Request the `OAUTH_DEX_SCOPES` scopes from Dex for MCP clients that send their own scope.
 
 ### Security
 
