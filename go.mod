@@ -3,7 +3,7 @@ module github.com/giantswarm/mcp-observability-platform
 go 1.26.10
 
 require (
-	github.com/giantswarm/mcp-oauth v1.23.0-rc.3.0.20261125235203-734d74037012
+	github.com/giantswarm/mcp-oauth v1.23.0-rc.3.0.20261126013131-ec597626afe5
 	github.com/giantswarm/mcp-toolkit v0.7.0
 	github.com/giantswarm/observability-operator v0.67.2
 	github.com/go-logr/logr v1.4.4
