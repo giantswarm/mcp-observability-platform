@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/giantswarm/mcp-oauth/handler"
+	"github.com/giantswarm/mcp-oauth/providers"
+
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
@@ -49,13 +52,13 @@ func (s stubGrafanaForAuthz) UserOrgs(_ context.Context, id int64) ([]grafana.Us
 	return s.userOrgs[id], nil
 }
 
-// callerCtx attaches a caller identity to ctx so the real Authorizer can
-// derive the caller from CallerFromContext.
-func callerCtx(email string) context.Context {
-	return authz.WithCaller(context.Background(), authz.Caller{
-		Issuer:  "https://issuer.example",
-		Subject: "sub-" + email,
-		Email:   email,
+// callerCtx supplies a validated user to the authorizer.
+func callerCtx(t *testing.T, email string) context.Context {
+	return handler.ContextWithUserInfo(t.Context(), &providers.UserInfo{
+		Issuer:        "https://issuer.example",
+		ID:            "sub-" + email,
+		Email:         email,
+		EmailVerified: true,
 	})
 }
 
@@ -120,7 +123,7 @@ func TestHandler_Authz_DeniesUnauthorisedCallerAcrossTools(t *testing.T) {
 	const caller = "alice@example.com"
 	s, closeTS := wireAuthzDenyTest(t, caller)
 	defer closeTS()
-	ctx := callerCtx(caller)
+	ctx := callerCtx(t, caller)
 
 	tools := s.ListTools()
 	// A handful of tools take args beyond `org` that the binder or local
@@ -185,7 +188,7 @@ func TestHandler_Authz_ListOrgsReturnsEmptyForUnauthorisedCaller(t *testing.T) {
 	const caller = "alice@example.com"
 	s, closeTS := wireAuthzDenyTest(t, caller)
 	defer closeTS()
-	ctx := callerCtx(caller)
+	ctx := callerCtx(t, caller)
 
 	res := callToolWithCtx(t, ctx, s, "list_orgs", nil)
 	if res.IsError {
@@ -210,7 +213,7 @@ func TestHandler_Authz_RejectsMissingOrgArgument(t *testing.T) {
 	const caller = "alice@example.com"
 	s, closeTS := wireAuthzDenyTest(t, caller)
 	defer closeTS()
-	ctx := callerCtx(caller)
+	ctx := callerCtx(t, caller)
 
 	res := callToolWithCtx(t, ctx, s, "list_datasources", map[string]any{})
 	if !res.IsError {

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use mcp-oauth v1.24.0 shared configuration and cleanup, toolkit v0.12.0 policies and the validated upstream user context. Audit identity fields are nested under `user`.
+- Accept delegated actors without an issuer. Preserve stable issuer and subject keys independently of verified email lookup.
+- Configure resource-only OAuth mode and advertised authorization servers through chart values. Retain legacy issuer JSON keys for an overlap release.
+- **Breaking**: Trusted issuers require HTTPS JWKS URLs and explicit audiences. See [upgrade instructions](docs/sdk-upgrade.md).
 - Update github.com/giantswarm/mcp-oauth to v1.21.0 (giantswarm/mcp-observability-platform#303)
 - **Breaking**: Restrict default chart ingress to platform gateways and Alloy metrics collectors; require a ServiceMonitor tenant. See [upgrade instructions](docs/sdk-upgrade.md).
 - Use native official Go SDK tools, stateless streamable HTTP and caller-isolated SSE sessions. Preserve upstream schemas and native continuation data.

@@ -118,6 +118,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 	logger := slog.New(handler)
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
+	oauthSettings, err := loadOAuthSettings(logger, flagTransport)
+	if err != nil {
+		return fmt.Errorf("OAuth configuration: %w", err)
+	}
+
 	orgLister, cacheAlive, err := buildOrgCache(shutdownCtx, logger)
 	if err != nil {
 		return err
@@ -145,11 +150,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
 		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL)
 
-	oauthHandler, storeClose, err := buildOAuthHandler(logger, flagTransport)
+	oauthHandler, cleanupOAuth, err := buildOAuthHandler(oauthSettings)
 	if err != nil {
 		return err
 	}
-	defer storeClose()
+	defer shutdownWithTimeout(cleanupOAuth)
 
 	// Best-effort OTEL tracing. No-op when OTEL_EXPORTER_OTLP_ENDPOINT is
 	// unset. The cluster log pipeline ships stderr to Loki; we don't run

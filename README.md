@@ -219,16 +219,19 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
-| `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
-| `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
+| `OAUTH_DEX_ISSUER_URL`                      | when Dex is enabled | Dex issuer, loaded by the shared OAuth settings loader. |
+| `OAUTH_DEX_CLIENT_ID`                       | when Dex is enabled | Dex OAuth client. |
+| `OAUTH_DEX_CLIENT_SECRET`                   | when Dex is enabled | Dex OAuth client secret. `*_FILE` variant supported. |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
 | `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` to unauthenticated callers (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that self-register at runtime. |
-| `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
+| `OAUTH_ENCRYPTION_KEY`                      | for Valkey     | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
 | `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
-| `OAUTH_TRUSTED_ISSUERS`                     | no             | JSON array of external issuers (the muster broker) whose Bearer JWTs are accepted at `/mcp` alongside Dex, for on-behalf-of traffic. Each entry: `issuer`, `jwksURL` (required), optional `subjectClaim`, `allowedAudiences`, `allowedClaims`, `acceptedTypHeaders` (default `["at+jwt"]`; use `[""]` for K8s SA tokens), `allowPrivateIPJWKS`, `allowPrivateIPJWKSHosts`. Unlike trusted audiences these are full issuers verified via their own JWKS. |
+| `OAUTH_TRUSTED_ISSUERS`                     | no             | Shared issuer configuration: `issuer`, HTTPS `jwksURI` and explicit `audiences`, with optional `subjectClaim`, `allowedClaims`, `acceptedTypHeaders`, `caFile` and `allowPrivateIPJWKSHosts`. See the [upgrade guide](docs/sdk-upgrade.md) for compatibility keys and validation. |
+| `OAUTH_AUTHORIZATION_SERVERS`               | no             | CSV of trusted issuer identifiers advertised to clients; chart value `oauth.authorizationServers`. |
+| `OAUTH_RESOURCE`                            | no             | Canonical protected-resource URL; chart value `oauth.resource`. |
+| `OAUTH_ENABLE_AUTHORIZATION_SERVER`          | no             | Defaults to `true`. Set `false` for resource-server-only operation without Dex credentials; chart value `oauth.enableAuthorizationServer`. |
 | `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
 | `OAUTH_STORAGE_BACKEND`                     | no             | `memory` (default) or `valkey` (read by `oauthconfig.StorageFromEnvWithPrefix("OAUTH_")`) |
 | `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |

@@ -2163,6 +2163,9 @@
                 "allowPublicClientRegistration": {
                     "type": "boolean"
                 },
+                "authorizationServers": {
+                    "type": "array"
+                },
                 "dex": {
                     "type": "object",
                     "additionalProperties": false,
@@ -2178,6 +2181,9 @@
                         }
                     }
                 },
+                "enableAuthorizationServer": {
+                    "type": "boolean"
+                },
                 "encryption": {
                     "type": "object",
                     "additionalProperties": false,
@@ -2188,6 +2194,9 @@
                     }
                 },
                 "issuer": {
+                    "type": "string"
+                },
+                "resource": {
                     "type": "string"
                 },
                 "storage": {

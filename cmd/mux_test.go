@@ -21,9 +21,9 @@ import (
 func TestMCPMuxAuthenticationAndResourceMetadata(t *testing.T) {
 	for _, transport := range []string{transportStreamableHTTP, transportSSE} {
 		t.Run(transport, func(t *testing.T) {
-			resourcePath := "/mcp"
+			resourcePath := mcpPath
 			if transport == transportSSE {
-				resourcePath = "/sse"
+				resourcePath = ssePath
 			}
 			store := memory.New()
 			logger := slog.New(slog.DiscardHandler)

@@ -30,8 +30,8 @@ security boundaries are, and where to add a new tool.
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
-              │ middleware.InjectCallerFromRequest                             │
-              │   lifts UserInfo → MCP handler context as authz.Caller         │
+              │ Official SDK propagates the validated UserInfo context         │
+              │   authorization and audit use the same upstream user           │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
@@ -74,10 +74,10 @@ security boundaries are, and where to add a new tool.
 
 | Package | Responsibility |
 |---|---|
-| `cmd/` | Cobra CLI + composition root. `runServe` wires the dex provider, OAuth server, K8s informer cache, MCP server, and the two HTTP listeners (MCP on `MCP_ADDR`, observability on `METRICS_ADDR`) in deterministic phase order. OAuth/Dex/storage/encryption env loading is delegated to `mcp-oauth/oauthconfig.*FromEnv`; this package owns Grafana credentials, the K8s informer adapter, the readiness probes, and the orchestration. |
+| `cmd/` | CLI and composition root. OAuth configuration and lifecycle use `oauthconfig.SettingsFromEnv` and `Setup`, with application defaults and compatibility for old issuer keys applied before background workers start. This package owns Grafana credentials, the Kubernetes informer adapter, pod-local readiness and the MCP and observability listeners. |
 | `internal/server/` | Native SDK server construction, shared toolkit policy, and streamable HTTP / SSE transport composition. Streamable HTTP is stateless. SSE uses a native session registry per validated caller profile. |
-| `internal/server/middleware/` | Validated caller extraction, authentication gate and the existing Prometheus tool counters and histogram. |
-| `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
+| `internal/server/middleware/` | Authentication gate and the existing Prometheus tool counters and histogram. Authentication reads mcp-oauth's validated `providers.UserInfo` directly. |
+| `internal/authz/` | Grafana lookup identity, role and organization access, and a bounded role cache keyed by issuer, stable subject and verified lookup identity. `OrgLister` is implemented by the Kubernetes informer adapter in `cmd/orglister.go`. |
 | `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `ListDatasources`, `LookupDatasourceByUID`, `DatasourceProxy`) plus `Datasource` and `DatasourceType` (`MatchesType` / `FilterDatasourcesByType`). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. `ListDatasources` is cached per-OrgID (30s TTL); `LookupDatasourceByUID` inherits transparently. |
 | `internal/tools/` | Native local handlers and delegation to `grafana/mcp-grafana`. `gfBinder` checks organization access, selects the datasource and passes the native request directly to the upstream handler. It copies arguments without changing JSON number precision, continuation state, transport context or native results. `maybeAddTool` applies `--disabled-tools`. |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
@@ -106,7 +106,8 @@ bodies at 16 MiB so a misbehaving datasource can't OOM the pod.
 
 **Tool-call attribution.** Shared toolkit policy records
 `mcp.server.operation.duration` and a `tool_call` audit entry containing
-validated issuer, subject, actor identity, tool and outcome. Profile fields,
+validated issuer, subject and supplied actor fields under `user`, plus tool and
+outcome. Profile fields,
 argument values, raw errors and credentials are excluded. HTTP tracing and
 SDK trace propagation retain request correlation. Existing Prometheus tool
 counters and duration histograms remain available.

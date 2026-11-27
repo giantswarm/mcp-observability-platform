@@ -25,15 +25,18 @@ const transportIssuer = "https://issuer.example"
 const transportSSE = "sse"
 const transportAlice = "alice"
 const transportAliceEmail = "alice@example.test"
+const auditSubjectField = "subject"
 
 type identityTransport struct {
-	base    http.RoundTripper
-	subject string
+	base         http.RoundTripper
+	subject      string
+	actorSubject string
 }
 
 func (r identityTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	copy := request.Clone(request.Context())
 	copy.Header.Set("X-Test-Subject", r.subject)
+	copy.Header.Set("X-Test-Actor", r.actorSubject)
 	return r.base.RoundTrip(copy)
 }
 func attachTestIdentity(next http.Handler) http.Handler {
@@ -41,6 +44,7 @@ func attachTestIdentity(next http.Handler) http.Handler {
 		subject := request.Header.Get("X-Test-Subject")
 		if subject != "" {
 			user := &providers.UserInfo{Issuer: transportIssuer, ID: subject, Email: "private@example.test", EmailVerified: true}
+			user.ActorSubject = request.Header.Get("X-Test-Actor")
 			request = request.WithContext(handler.ContextWithUserInfo(request.Context(), user))
 		}
 		next.ServeHTTP(writer, request)
@@ -72,8 +76,8 @@ func TestNativeRequestBodyLimitIncludesChunkedRequests(t *testing.T) {
 }
 
 func TestNativeTransportsAndAudit(t *testing.T) {
-	for _, transport := range []string{"streamable", transportSSE} {
-		t.Run(transport, func(t *testing.T) {
+	for _, test := range []struct{ transport, actor string }{{"streamable", ""}, {transportSSE, ""}, {"streamable", "agent-without-issuer"}, {transportSSE, "agent-without-issuer"}} {
+		t.Run(test.transport+"/"+test.actor, func(t *testing.T) {
 			var audit bytes.Buffer
 			configuration := goodCfg()
 			configuration.Logger = slog.New(slog.NewJSONHandler(&audit, nil))
@@ -81,14 +85,14 @@ func TestNativeTransportsAndAudit(t *testing.T) {
 			native, err := New(configuration)
 			require.NoError(t, err)
 			endpoint := StreamableHTTPHandler(native)
-			if transport == transportSSE {
+			if test.transport == transportSSE {
 				endpoint = SSEHandler(native)
 			}
 			host := httptest.NewServer(attachTestIdentity(endpoint))
 			defer host.Close()
-			httpClient := &http.Client{Transport: identityTransport{base: host.Client().Transport, subject: transportAlice}}
+			httpClient := &http.Client{Transport: identityTransport{base: host.Client().Transport, subject: transportAlice, actorSubject: test.actor}}
 			var wire mcp.Transport = &mcp.StreamableClientTransport{Endpoint: host.URL, HTTPClient: httpClient, DisableStandaloneSSE: true}
-			if transport == transportSSE {
+			if test.transport == transportSSE {
 				wire = &mcp.SSEClientTransport{Endpoint: host.URL, HTTPClient: httpClient}
 			}
 			client := mcp.NewClient(&mcp.Implementation{Name: "native-client", Version: "test"}, nil)
@@ -104,8 +108,15 @@ func TestNativeTransportsAndAudit(t *testing.T) {
 			var record map[string]any
 			require.NoError(t, json.Unmarshal(audit.Bytes(), &record))
 			require.Equal(t, "list_orgs", record["tool"])
-			require.Equal(t, transportIssuer, record["issuer"])
-			require.Equal(t, transportAlice, record["subject"])
+			user, ok := record["user"].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, transportIssuer, user["issuer"])
+			require.Equal(t, transportAlice, user[auditSubjectField])
+			if test.actor != "" {
+				require.Equal(t, map[string]any{auditSubjectField: test.actor}, user["actor"])
+			} else {
+				require.NotContains(t, user, "actor")
+			}
 			require.NotContains(t, audit.String(), "private@example.test")
 		})
 	}

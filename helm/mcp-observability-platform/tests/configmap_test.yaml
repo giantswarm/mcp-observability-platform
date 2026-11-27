@@ -22,8 +22,31 @@ tests:
           path: data.OAUTH_TRUSTED_REDIRECT_SCHEMES
           value: ""
       - equal:
-          path: data.OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS
+          path: data.OAUTH_ENABLE_AUTHORIZATION_SERVER
           value: "true"
+      - equal:
+          path: data.OAUTH_AUTHORIZATION_SERVERS
+          value: ""
+      - notExists:
+          path: data.OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS
+
+  - it: advertises external authorization servers in resource-only mode
+    set:
+      oauth.enableAuthorizationServer: false
+      oauth.resource: https://mcp.example/mcp
+      oauth.authorizationServers:
+        - https://dex.example
+        - https://broker.example
+    asserts:
+      - equal:
+          path: data.OAUTH_ENABLE_AUTHORIZATION_SERVER
+          value: "false"
+      - equal:
+          path: data.OAUTH_RESOURCE
+          value: https://mcp.example/mcp
+      - equal:
+          path: data.OAUTH_AUTHORIZATION_SERVERS
+          value: https://dex.example,https://broker.example
 
   - it: joins trusted audiences + schemes as CSV
     set:

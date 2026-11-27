@@ -12,10 +12,7 @@ var (
 	// (neither by Name nor by DisplayName).
 	ErrOrgNotFound = errors.New("org not found")
 
-	// ErrNoCallerIdentity means the authorizer was called without an OIDC
-	// subject on Caller. Email-only identities are rejected: email is
-	// caller-mutable in some IdPs, subject is the stable security
-	// identifier and is the only key the resolver-cache trusts.
+	// ErrNoCallerIdentity means the validated user has no issuer or subject.
 	ErrNoCallerIdentity = errors.New("no caller identity")
 
 	// ErrCallerUnknownToGrafana means the caller authenticated with our IdP

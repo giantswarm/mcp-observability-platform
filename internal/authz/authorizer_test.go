@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/giantswarm/mcp-oauth/handler"
+	"github.com/giantswarm/mcp-oauth/providers"
+
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
@@ -21,14 +24,15 @@ const (
 	testRoleViewer = "Viewer"
 )
 
-func ctxWithCaller(c Caller) context.Context {
+func ctxWithCaller(t *testing.T, c providers.UserInfo) context.Context {
 	if c.Issuer == "" {
 		c.Issuer = testIssuer
 	}
-	if c.Subject == "" && c.Email != "" {
-		c.Subject = "sub-" + c.Email
+	if c.ID == "" && c.Email != "" {
+		c.ID = "sub-" + c.Email
 	}
-	return WithCaller(context.Background(), c)
+	c.EmailVerified = true
+	return handler.ContextWithUserInfo(t.Context(), &c)
 }
 
 // newOrg builds an Organization fixture. tenantTypes populates the
@@ -113,7 +117,7 @@ func TestAuthorizer_Resolve_MapsGrafanaRoleStrings(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha, beta), g)
 
-	got, err := r.ListOrgs(ctxWithCaller(Caller{Email: "u@example.com"}))
+	got, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: "u@example.com"}))
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -139,7 +143,7 @@ func TestAuthorizer_Resolve_DropsRoleNoneAndUnknownOrgs(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	got, _ := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
+	got, _ := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail}))
 	if len(got) != 0 {
 		t.Errorf("expected empty access, got %v", got)
 	}
@@ -153,7 +157,7 @@ func TestAuthorizer_Resolve_UserNeverLoggedIn(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{} /* empty */}
 	r := mustNewAuthorizer(t, registry(), g)
 
-	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
+	_, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("want ErrCallerUnknownToGrafana, got %v", err)
 	}
@@ -167,9 +171,9 @@ func TestAuthorizer_Resolve_Cache(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: testEmail}))
+	_, _ = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail}))
+	_, _ = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail}))
+	_, _ = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail}))
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
 		t.Errorf("expected 1 lookup + 1 userOrgs call, got %d/%d", g.calls.lookup, g.calls.userOrgs)
 	}
@@ -183,7 +187,7 @@ func TestAuthorizer_Require_InsufficientRole(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleAdmin)
+	_, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "alpha", RoleAdmin)
 	if err == nil {
 		t.Fatalf("expected insufficient-role error, got nil")
 	}
@@ -197,7 +201,7 @@ func TestAuthorizer_Require_NotAuthorised(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "alpha", RoleViewer)
 	if err == nil {
 		t.Fatalf("expected not-authorised error, got nil")
 	}
@@ -211,7 +215,7 @@ func TestAuthorizer_Require_LookupByDisplayNameCaseInsensitive(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	org, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "ALPHA TEAM", RoleAdmin)
+	org, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "ALPHA TEAM", RoleAdmin)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
@@ -312,8 +316,8 @@ func TestAuthorizer_EmailChangeRefetchesRoles(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@old.com", Subject: testSubject}))
-	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: testSubject}))
+	_, _ = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: "u@old.com", ID: testSubject}))
+	_, _ = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: "u@new.com", ID: testSubject}))
 	if g.calls.lookup != 2 {
 		t.Errorf("LookupUser calls = %d, want 2", g.calls.lookup)
 	}
@@ -330,13 +334,13 @@ func TestAuthorizer_ReturnedTenantTypesAreCloned(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	oa1, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail, Subject: "s"}), "alpha", RoleViewer)
+	oa1, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail, ID: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("Require: %v", err)
 	}
 	oa1.Tenants[0].Types = append(oa1.Tenants[0].Types, TenantTypeAlerting)
 
-	oa2, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail, Subject: "s"}), "alpha", RoleViewer)
+	oa2, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail, ID: "s"}), "alpha", RoleViewer)
 	if err != nil {
 		t.Fatalf("second Require: %v", err)
 	}
@@ -357,7 +361,7 @@ func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
 	// alpha exists but the caller isn't a member → ErrNotAuthorised.
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "alpha", RoleViewer)
 	if err == nil {
 		t.Fatal("expected error for known-org-but-no-access, got nil")
 	}
@@ -366,7 +370,7 @@ func TestAuthorizer_Require_OrgNotFoundVsNotAuthorised(t *testing.T) {
 	}
 
 	// nonexistent has no descriptor → ErrOrgNotFound.
-	_, err = r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "nonexistent", RoleViewer)
+	_, err = r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "nonexistent", RoleViewer)
 	if !errors.Is(err, ErrOrgNotFound) {
 		t.Errorf("err = %v, want wraps ErrOrgNotFound", err)
 	}
@@ -389,21 +393,6 @@ func TestAuthorizer_Role_AtLeast(t *testing.T) {
 		if got := c.have.AtLeast(c.need); got != c.want {
 			t.Errorf("(%v).AtLeast(%v) = %v, want %v", c.have, c.need, got, c.want)
 		}
-	}
-}
-
-func TestCaller_IdentityAndAuthenticated(t *testing.T) {
-	if (Caller{}).Authenticated() {
-		t.Error("zero Caller should not be Authenticated")
-	}
-	if !(Caller{Issuer: testIssuer, Subject: "x"}).Authenticated() {
-		t.Error("complete identity should be authenticated")
-	}
-	if got := (Caller{Email: "e", Subject: "s"}).Identity(); got != "e" {
-		t.Errorf("Identity email-preferred = %q, want e", got)
-	}
-	if got := (Caller{Subject: "s"}).Identity(); got != "s" {
-		t.Errorf("Identity subject-fallback = %q, want s", got)
 	}
 }
 
@@ -441,11 +430,11 @@ func TestAuthorizer_ConcurrentCallers_NoCrossTalk(t *testing.T) {
 				// Spread load across callers with two large primes so each
 				// worker visits the full set but in a different order.
 				i := (worker*1315423911 + round*2654435761) % callers
-				caller := Caller{
-					Email:   fmt.Sprintf("u%d@e.com", i),
-					Subject: fmt.Sprintf("sub-%d", i),
+				caller := providers.UserInfo{
+					Email: fmt.Sprintf("u%d@e.com", i),
+					ID:    fmt.Sprintf("sub-%d", i),
 				}
-				access, err := r.ListOrgs(ctxWithCaller(caller))
+				access, err := r.ListOrgs(ctxWithCaller(t, caller))
 				if err != nil {
 					errs <- fmt.Errorf("worker %d round %d: Resolve(%s): %w", worker, round, caller.Email, err)
 					return
@@ -500,11 +489,11 @@ func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 	r := mustNewAuthorizerWithTTL(t, registry(alpha), g, 20*time.Millisecond, 5*time.Millisecond)
 
 	// First call → upstream lookup.
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#1: %v", err)
 	}
 	// Second call within TTL → no upstream.
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#2: %v", err)
 	}
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
@@ -513,7 +502,7 @@ func TestAuthorizer_PositiveCacheTTL_Expires(t *testing.T) {
 
 	// Sleep past TTL → next call should re-fetch.
 	time.Sleep(60 * time.Millisecond)
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#3: %v", err)
 	}
 	if g.calls.lookup != 2 || g.calls.userOrgs != 2 {
@@ -535,11 +524,11 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
 	// First call → 404 → nil user → cached negative + sentinel.
-	_, err := r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
+	_, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("ListOrgs#1: want ErrCallerUnknownToGrafana, got %v", err)
 	}
-	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
+	_, err = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("ListOrgs#2: want ErrCallerUnknownToGrafana, got %v", err)
 	}
@@ -549,7 +538,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NewUser(t *testing.T) {
 
 	// Negative TTL is shorter — sleep past it but not past the positive.
 	time.Sleep(60 * time.Millisecond)
-	_, err = r.ListOrgs(ctxWithCaller(Caller{Email: testNewEmail}))
+	_, err = r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testNewEmail}))
 	if !errors.Is(err, ErrCallerUnknownToGrafana) {
 		t.Fatalf("ListOrgs#3: want ErrCallerUnknownToGrafana, got %v", err)
 	}
@@ -568,7 +557,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NoRoles(t *testing.T) {
 	}
 	r := mustNewAuthorizerWithTTL(t, registry(), g, 100*time.Millisecond, 20*time.Millisecond)
 
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#1: %v", err)
 	}
 	if g.calls.lookup != 1 || g.calls.userOrgs != 1 {
@@ -576,7 +565,7 @@ func TestAuthorizer_NegativeCacheTTL_Expires_NoRoles(t *testing.T) {
 	}
 
 	time.Sleep(60 * time.Millisecond)
-	if _, err := r.ListOrgs(ctxWithCaller(Caller{Email: testEmail})); err != nil {
+	if _, err := r.ListOrgs(ctxWithCaller(t, providers.UserInfo{Email: testEmail})); err != nil {
 		t.Fatalf("ListOrgs#2: %v", err)
 	}
 	if g.calls.lookup != 2 {
@@ -600,7 +589,7 @@ func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 	// Long TTL so any leaked cached state would survive the delete.
 	r := mustNewAuthorizerWithTTL(t, reg, g, time.Hour, time.Hour)
 
-	ctx := ctxWithCaller(Caller{Email: testEmail})
+	ctx := ctxWithCaller(t, providers.UserInfo{Email: testEmail})
 	// Warm the per-caller cache with a positive entry.
 	if _, err := r.RequireOrg(ctx, "alpha", RoleViewer); err != nil {
 		t.Fatalf("RequireOrg#1: %v", err)
@@ -625,24 +614,9 @@ func TestAuthorizer_RegistryDeleteIsImmediate(t *testing.T) {
 func TestRequireOrg_RejectsRoleNone(t *testing.T) {
 	g := &fakeGrafana{users: map[string]int64{testEmail: 1}}
 	r := mustNewAuthorizer(t, registry(), g)
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "alpha", RoleNone)
+	_, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "alpha", RoleNone)
 	if !errors.Is(err, ErrInvalidMinRole) {
 		t.Errorf("err = %v, want wraps ErrInvalidMinRole", err)
-	}
-}
-
-func TestCallerAuthenticated_RequiresSubject(t *testing.T) {
-	if (Caller{Email: testEmail}).Authenticated() {
-		t.Error("Caller with email and no Subject must NOT be Authenticated (subject required)")
-	}
-	if (Caller{}).Authenticated() {
-		t.Error("zero Caller must NOT be Authenticated")
-	}
-	if (Caller{Subject: testSubject}).Authenticated() {
-		t.Error("caller without issuer must be unauthenticated")
-	}
-	if !(Caller{Issuer: testIssuer, Email: testEmail, Subject: testSubject}).Authenticated() {
-		t.Error("Caller with both Subject and Email must be Authenticated")
 	}
 }
 
@@ -661,7 +635,7 @@ func TestRequireOrg_AmbiguousDisplayName(t *testing.T) {
 		}},
 	}
 	r := mustNewAuthorizer(t, registry(a, b), g)
-	_, err := r.RequireOrg(ctxWithCaller(Caller{Email: testEmail}), "Prod", RoleViewer)
+	_, err := r.RequireOrg(ctxWithCaller(t, providers.UserInfo{Email: testEmail}), "Prod", RoleViewer)
 	if !errors.Is(err, ErrAmbiguousOrgRef) {
 		t.Errorf("err = %v, want wraps ErrAmbiguousOrgRef", err)
 	}

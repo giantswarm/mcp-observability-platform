@@ -21,7 +21,7 @@
 //   - authorizer.go — Authorizer + RequireOrg / ListOrgs.
 //   - cache.go      — TTL'd per-caller role cache + clone discipline.
 //   - role.go       — Role enum.
-//   - caller.go     — Caller + OrgLister port + context helpers.
+//   - user.go       — OrgLister and the verified Grafana lookup identity.
 //   - types.go      — Organization + Tenant + TenantType domain types
 //     plus HasTenantType. Tool-handler consumers import these, never the CRD.
 //   - errors.go     — Sentinel errors.

@@ -6,10 +6,9 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-toolkit/httpx"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/giantswarm/mcp-observability-platform/internal/server/middleware"
 )
 
 type sseScope struct {
@@ -32,8 +31,8 @@ func SSEHandler(server *mcp.Server) http.Handler {
 }
 
 func (s *scopedSSE) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	caller := middleware.ExtractCaller(request)
-	if !caller.Authenticated() || caller.Issuer == "" {
+	user, _ := handler.UserInfoFromContext(request.Context())
+	if user == nil || user.Issuer == "" || user.ID == "" {
 		http.Error(writer, "authentication required", http.StatusUnauthorized)
 		return
 	}
@@ -42,7 +41,7 @@ func (s *scopedSSE) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 		http.Error(writer, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	encoded, _ := json.Marshal(caller)
+	encoded, _ := json.Marshal(user)
 	key := sha256.Sum256(encoded)
 	s.mu.Lock()
 	scope := s.scopes[key]
@@ -68,6 +67,5 @@ func (s *scopedSSE) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 			}
 		}()
 	}
-	ctx := middleware.InjectCallerFromRequest(request.Context(), request)
-	scope.handler.ServeHTTP(writer, request.WithContext(ctx))
+	scope.handler.ServeHTTP(writer, request)
 }
