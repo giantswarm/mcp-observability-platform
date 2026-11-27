@@ -7,25 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- Add Grafana JWT mode (`GRAFANA_AUTH_MODE=jwt`), which runs each Grafana call as the calling Dex user.
-- Add `GRAFANA_JWT_HEADER` (Helm `grafana.jwtHeader`) to name the header that carries the caller's Dex token to Grafana.
-- Add the `GRAFANA_AUTH_MODE` values `serviceAccountToken` and `basicAuth` to select a shared Grafana credential explicitly.
-- Add `GRAFANA_PUBLIC_URL` (Helm `grafana.publicUrl`) to set the Grafana URL of user-facing links.
-
 ### Changed
 
+- Support caller-authenticated Grafana JWT requests and browser-facing Grafana URLs with native SDK transports.
+- Keep provider ID tokens out of MCP token responses and restrict dynamic registration to loopback redirects by default. Request configured Dex scopes for every authorization flow.
+- Default chart Grafana authentication to JWT and public client registration to enabled.
+
+- Use mcp-oauth v1.24.0 shared configuration and cleanup, toolkit v0.12.0 policies and the validated upstream user context. Audit identity fields are nested under `user`.
+- Accept delegated actors without an issuer. Preserve stable issuer and subject keys independently of verified email lookup.
+- Configure resource-only OAuth mode and advertised authorization servers through chart values. Retain legacy issuer JSON keys for an overlap release.
+- **Breaking**: Trusted issuers require HTTPS JWKS URLs and explicit audiences. See [upgrade instructions](docs/sdk-upgrade.md).
 - Update github.com/giantswarm/mcp-oauth to v1.21.0 (giantswarm/mcp-observability-platform#303)
-- Default the chart to Grafana JWT mode (`grafana.authMode: jwt`).
-- Default the chart to open client registration (`oauth.allowPublicClientRegistration: true`).
-- Request the Dex `federated:id` scope at sign-in.
-- Request the `OAUTH_DEX_SCOPES` scopes from Dex for MCP clients that send their own scope.
+- **Breaking**: Restrict default chart ingress to platform gateways and Alloy metrics collectors; require a ServiceMonitor tenant. See [upgrade instructions](docs/sdk-upgrade.md).
+- Use native official Go SDK tools, stateless streamable HTTP and caller-isolated SSE sessions. Preserve upstream schemas and native continuation data.
+- **Breaking**: Bound complete JSON tool results and record validated issuer, subject, actor, tool and outcome without argument or profile values. Existing timeout and size-disable settings remain supported. See [upgrade instructions](docs/sdk-upgrade.md).
+- **Breaking**: Require verified email for Grafana email lookup and isolate bounded role caches by issuer, subject and lookup identity. See [upgrade instructions](docs/sdk-upgrade.md).
+- **Breaking**: Require encryption for persistent Valkey OAuth storage, including local HTTP development. Register optional OAuth routes according to the shared configuration. See [upgrade instructions](docs/sdk-upgrade.md).
 
-### Security
+### Removed
 
-- Return only the MCP's own tokens to MCP clients, without the Dex `id_token`.
-- Refuse client registrations with a non-loopback redirect URI.
+- The mcp-go dependency and cross-SDK JSON bridge.
 
 ## [0.6.0] - 2026-11-20
 

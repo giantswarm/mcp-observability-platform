@@ -3,6 +3,7 @@ package grafana
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -116,8 +117,9 @@ type client struct {
 
 // dsCacheKey is the key half of client.dsCache.
 type dsCacheKey struct {
-	orgID  int64
-	caller string
+	orgID      int64
+	caller     string
+	credential [sha256.Size]byte
 }
 
 // dsCacheEntry is the value half of client.dsCache. dss is shared
@@ -370,7 +372,12 @@ func (c *client) LookupDatasourceByUID(ctx context.Context, opts RequestOpts, ui
 func (c *client) ListDatasources(ctx context.Context, opts RequestOpts) ([]Datasource, error) {
 	key := dsCacheKey{orgID: opts.OrgID}
 	if c.jwtHeader != "" {
+		providerToken := UserTokenFromContext(ctx)
+		if providerToken == "" {
+			return nil, ErrNoUserToken
+		}
 		key.caller = opts.Caller
+		key.credential = sha256.Sum256([]byte(providerToken))
 	}
 	if v, ok := c.dsCache.Load(key); ok {
 		if entry := v.(dsCacheEntry); c.now().Before(entry.deadline) {

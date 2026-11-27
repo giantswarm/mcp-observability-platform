@@ -21,9 +21,7 @@ import (
 	"github.com/giantswarm/mcp-oauth/providers/mock"
 	"github.com/giantswarm/mcp-oauth/storage"
 	"github.com/giantswarm/mcp-oauth/storage/memory"
-	mcpclient "github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
@@ -33,10 +31,12 @@ import (
 )
 
 const (
-	clientControlsJWTHeader   = "X-JWT-Assertion"
-	clientControlsDexIDToken  = "dex-id-token-of-the-caller" //nolint:gosec // test value
-	clientControlsRedirectURI = "http://127.0.0.1:43210/callback"
-	clientControlsUserID      = "client-controls-user"
+	clientControlsName         = "client-controls-test"
+	clientControlsIDTokenField = "id_token"
+	clientControlsJWTHeader    = "X-JWT-Assertion"
+	clientControlsDexIDToken   = "dex-id-token-of-the-caller" //nolint:gosec // test value
+	clientControlsRedirectURI  = "http://127.0.0.1:43210/callback"
+	clientControlsUserID       = "client-controls-user"
 )
 
 // fakeGrafana records the requests the MCP sends to Grafana and answers
@@ -48,7 +48,7 @@ type fakeGrafana struct {
 
 func (f *fakeGrafana) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	f.requests = append(f.requests, r.Clone(context.Background()))
+	f.requests = append(f.requests, r.Clone(context.WithoutCancel(r.Context())))
 	f.mu.Unlock()
 	if r.URL.Path != "/api/user/orgs" {
 		http.NotFound(w, r)
@@ -70,24 +70,24 @@ func (clientControlsOrgLister) List(context.Context) ([]authz.Organization, erro
 	return []authz.Organization{{Name: "acme", DisplayName: "Acme", OrgID: 1}}, nil
 }
 
-// clientControlsEnv wires the MCP's HTTP surface the way runServe does in
-// GRAFANA_AUTH_MODE=jwt: the mcp-oauth handler built from the MCP's
-// OAuth config, a mock Dex provider, idTokenResolver and a fake Grafana.
 type clientControlsEnv struct {
-	mcp     *httptest.Server
-	grafana *fakeGrafana
-	store   *memory.Store
+	mcp       *httptest.Server
+	grafana   *fakeGrafana
+	store     *memory.Store
+	transport string
 }
 
-func newClientControlsEnv(t *testing.T) *clientControlsEnv {
+func newClientControlsEnv(t *testing.T, transport string) *clientControlsEnv {
 	t.Helper()
+	setOAuthTestEnvironment(t)
+	t.Setenv("GRAFANA_AUTH_MODE", grafanaAuthModeJWT)
 	t.Setenv("OAUTH_ISSUER", "https://mcp.example.com")
 	t.Setenv("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION", "true")
 	t.Setenv(envOAuthOmitIDToken, "")
 	t.Setenv(envOAuthRestrictRegistrationLoopback, "")
 
-	cfg, err := oauthConfigFromEnv(true)
-	require.NoError(t, err)
+	settings := testOAuthSettings(t, transport)
+	cfg := settings.Server
 	// The test redirect URIs must not depend on DNS.
 	cfg.DisableDNSValidation = true
 
@@ -114,10 +114,10 @@ func newClientControlsEnv(t *testing.T) *clientControlsEnv {
 	})
 	require.NoError(t, err)
 
-	mux := buildMCPMux(transportStreamableHTTP, mcpServer, oauthHandler, idTokenResolver(srv.TokenStore()))
+	mux := buildMCPMux(transport, mcpServer, oauthHandler, true)
 	mcpHTTP := httptest.NewServer(mux)
 	t.Cleanup(mcpHTTP.Close)
-	return &clientControlsEnv{mcp: mcpHTTP, grafana: fake, store: store}
+	return &clientControlsEnv{mcp: mcpHTTP, grafana: fake, store: store, transport: transport}
 }
 
 // register posts a public client registration with redirectURI and
@@ -125,7 +125,7 @@ func newClientControlsEnv(t *testing.T) *clientControlsEnv {
 func (e *clientControlsEnv) register(t *testing.T, redirectURI string) (int, map[string]any) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"client_name":                "client-controls-test",
+		"client_name":                clientControlsName,
 		"redirect_uris":              []string{redirectURI},
 		"token_endpoint_auth_method": "none",
 		"grant_types":                []string{"authorization_code", "refresh_token"},
@@ -146,7 +146,7 @@ func (e *clientControlsEnv) register(t *testing.T, redirectURI string) (int, map
 // response.
 func (e *clientControlsEnv) signIn(t *testing.T, dexToken *oauth2.Token) map[string]any {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	status, registration := e.register(t, clientControlsRedirectURI)
 	require.Equal(t, http.StatusCreated, status, "registration: %v", registration)
 	clientID, _ := registration["client_id"].(string)
@@ -186,22 +186,29 @@ func (e *clientControlsEnv) signIn(t *testing.T, dexToken *oauth2.Token) map[str
 
 // listOrgs calls the list_orgs tool at /mcp with accessToken as the
 // bearer.
+type bearerTransport struct {
+	bearer    string
+	transport http.RoundTripper
+}
+
+func (transport bearerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request = request.Clone(request.Context())
+	request.Header.Set("Authorization", "Bearer "+transport.bearer)
+	return transport.transport.RoundTrip(request)
+}
+
 func (e *clientControlsEnv) listOrgs(t *testing.T, accessToken string) *mcp.CallToolResult {
 	t.Helper()
-	ctx := context.Background()
-	client, err := mcpclient.NewStreamableHttpClient(e.mcp.URL+"/mcp",
-		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + accessToken}))
+	client := mcp.NewClient(&mcp.Implementation{Name: clientControlsName, Version: clientControlsName}, nil)
+	httpClient := &http.Client{Transport: bearerTransport{bearer: accessToken, transport: http.DefaultTransport}}
+	var transport mcp.Transport = &mcp.StreamableClientTransport{Endpoint: e.mcp.URL + "/mcp", HTTPClient: httpClient}
+	if e.transport == transportSSE {
+		transport = &mcp.SSEClientTransport{Endpoint: e.mcp.URL + "/sse", HTTPClient: httpClient}
+	}
+	session, err := client.Connect(t.Context(), transport, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-	require.NoError(t, client.Start(ctx))
-	initialize := mcp.InitializeRequest{}
-	initialize.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initialize.Params.ClientInfo = mcp.Implementation{Name: "client-controls-test", Version: "0"}
-	_, err = client.Initialize(ctx, initialize)
-	require.NoError(t, err)
-	call := mcp.CallToolRequest{}
-	call.Params.Name = "list_orgs"
-	result, err := client.CallTool(ctx, call)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
+	result, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "list_orgs", Arguments: map[string]any{}})
 	require.NoError(t, err)
 	return result
 }
@@ -223,10 +230,10 @@ func dexTokenWith(extra map[string]any) *oauth2.Token {
 // the issued token still forwards the Dex id_token to Grafana in the JWT
 // header, with no Authorization header.
 func TestClientControls_TokenResponseOmitsIDTokenAndGrafanaGetsIt(t *testing.T) {
-	env := newClientControlsEnv(t)
-	tokenResponse := env.signIn(t, dexTokenWith(map[string]any{"id_token": clientControlsDexIDToken}))
+	env := newClientControlsEnv(t, transportStreamableHTTP)
+	tokenResponse := env.signIn(t, dexTokenWith(map[string]any{clientControlsIDTokenField: clientControlsDexIDToken}))
 
-	require.NotContains(t, tokenResponse, "id_token")
+	require.NotContains(t, tokenResponse, clientControlsIDTokenField)
 	accessToken, _ := tokenResponse["access_token"].(string)
 	require.NotEmpty(t, accessToken)
 
@@ -245,18 +252,19 @@ func TestClientControls_TokenResponseOmitsIDTokenAndGrafanaGetsIt(t *testing.T) 
 // that a caller whose stored provider token has no Dex id_token is refused
 // without any Grafana call.
 func TestClientControls_CallerWithoutDexTokenIsRefusedBeforeGrafana(t *testing.T) {
-	env := newClientControlsEnv(t)
+	env := newClientControlsEnv(t, transportStreamableHTTP)
 	tokenResponse := env.signIn(t, dexTokenWith(nil))
 	accessToken, _ := tokenResponse["access_token"].(string)
 	require.NotEmpty(t, accessToken)
 
-	result := env.listOrgs(t, accessToken)
-	require.True(t, result.IsError, "list_orgs must fail without a Dex token")
-	require.Len(t, result.Content, 1)
-	text, ok := result.Content[0].(mcp.TextContent)
-	require.True(t, ok, "content: %+v", result.Content[0])
-	require.Contains(t, text.Text, "cannot be forwarded to Grafana")
-	require.Empty(t, env.grafana.recorded(), "no Grafana call without a Dex token")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, env.mcp.URL+"/mcp", strings.NewReader("{}"))
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	response, err := env.mcp.Client().Do(request)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
+	require.Empty(t, env.grafana.recorded())
 }
 
 // TestClientControls_RegistrationAcceptsOnlyLoopbackRedirectURIs checks
@@ -274,11 +282,62 @@ func TestClientControls_RegistrationAcceptsOnlyLoopbackRedirectURIs(t *testing.T
 		{name: "custom scheme", redirectURI: "cursor://anysphere.cursor-retrieval/oauth/callback", wantStatus: http.StatusBadRequest},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			env := newClientControlsEnv(t)
+			env := newClientControlsEnv(t, transportStreamableHTTP)
 			status, body := env.register(t, testCase.redirectURI)
 			require.Equal(t, testCase.wantStatus, status, "body: %v", body)
 			if testCase.wantStatus == http.StatusBadRequest {
 				require.Equal(t, "invalid_redirect_uri", body["error"])
+			}
+		})
+	}
+}
+
+func TestClientControls_SSEForwardsProviderToken(t *testing.T) {
+	environment := newClientControlsEnv(t, transportSSE)
+	tokenResponse := environment.signIn(t, dexTokenWith(map[string]any{clientControlsIDTokenField: clientControlsDexIDToken}))
+	require.NotContains(t, tokenResponse, clientControlsIDTokenField)
+	accessToken, ok := tokenResponse["access_token"].(string)
+	require.True(t, ok)
+	result := environment.listOrgs(t, accessToken)
+	require.False(t, result.IsError)
+	requests := environment.grafana.recorded()
+	require.NotEmpty(t, requests)
+	for _, request := range requests {
+		require.Equal(t, clientControlsDexIDToken, request.Header.Get(clientControlsJWTHeader))
+		require.Empty(t, request.Header.Get("Authorization"))
+	}
+}
+
+func TestClientControls_LegacyStatelessInitializeAndOrigin(t *testing.T) {
+	environment := newClientControlsEnv(t, transportStreamableHTTP)
+	tokenResponse := environment.signIn(t, dexTokenWith(map[string]any{clientControlsIDTokenField: clientControlsDexIDToken}))
+	accessToken, ok := tokenResponse["access_token"].(string)
+	require.True(t, ok)
+	for _, protocol := range []string{"2024-11-05", "2025-03-26"} {
+		t.Run(protocol, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": protocol, "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": clientControlsName, "version": clientControlsName}}})
+			require.NoError(t, err)
+			for _, origin := range []string{"", "https://untrusted.example"} {
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, environment.mcp.URL+"/mcp", bytes.NewReader(body))
+				require.NoError(t, err)
+				request.Header.Set("Authorization", "Bearer "+accessToken)
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Accept", "application/json, text/event-stream")
+				if origin != "" {
+					request.Header.Set("Origin", origin)
+				}
+				response, err := environment.mcp.Client().Do(request)
+				require.NoError(t, err)
+				responseBody, err := io.ReadAll(response.Body)
+				require.NoError(t, err)
+				require.NoError(t, response.Body.Close())
+				if origin != "" {
+					require.Equal(t, http.StatusForbidden, response.StatusCode)
+					continue
+				}
+				require.Equal(t, http.StatusOK, response.StatusCode, string(responseBody))
+				require.Empty(t, response.Header.Get("Mcp-Session-Id"))
+				require.Contains(t, string(responseBody), protocol)
 			}
 		})
 	}

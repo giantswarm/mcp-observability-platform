@@ -12,8 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"log/slog"
+
 	"github.com/giantswarm/mcp-oauth/oauthconfig"
 	"github.com/giantswarm/mcp-oauth/providers"
+	"github.com/giantswarm/mcp-oauth/providers/dex"
 )
 
 // fakeDex serves the OIDC discovery document that dex.NewProvider fetches,
@@ -67,7 +70,11 @@ func authorizationQuery(t *testing.T, p providers.Provider) url.Values {
 func TestDexProviderFromEnvRequestsFederatedID(t *testing.T) {
 	fakeDex(t)
 
-	got, err := dexProviderFromEnv()
+	settings, err := loadOAuthSettings(slog.New(slog.DiscardHandler), transportStreamableHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := dex.NewProvider(settings.Dex)
 	if err != nil {
 		t.Fatalf("dexProviderFromEnv: %v", err)
 	}
@@ -100,7 +107,11 @@ func TestDexProviderFromEnvKeepsOAuthDexScopes(t *testing.T) {
 	fakeDex(t)
 	t.Setenv(envOAuthDexScopes, "openid,email")
 
-	got, err := dexProviderFromEnv()
+	settings, err := loadOAuthSettings(slog.New(slog.DiscardHandler), transportStreamableHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := dex.NewProvider(settings.Dex)
 	if err != nil {
 		t.Fatalf("dexProviderFromEnv: %v", err)
 	}

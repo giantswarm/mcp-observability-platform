@@ -9,13 +9,12 @@ package tools
 import (
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-func registerTempoTools(s *mcpsrv.MCPServer, b *gfBinder) {
+func registerTempoTools(s Registrar, b *gfBinder) {
 	for _, t := range []mcpgrafana.Tool{
 		mcpgrafanatools.SearchTempoTracesTool,
 		mcpgrafanatools.QueryTempoMetricsTool,

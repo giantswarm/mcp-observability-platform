@@ -15,8 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/authz/authztest"
@@ -41,14 +40,12 @@ func newGrafanaJSONServer(handler http.HandlerFunc) *httptest.Server {
 // Uses authztest.Fake to bypass Grafana user/org lookup (covered by authz
 // tests) and hand every caller a fully-populated Organization — so tests
 // focus on the tool-handler side of the pipeline.
-func wireHandlerTest(t *testing.T, ts *httptest.Server) *mcpsrv.MCPServer {
+func wireHandlerTest(t *testing.T, ts *httptest.Server) *testRegistrar {
 	t.Helper()
 	return wireHandlerTestWithPublicURL(t, ts, "")
 }
 
-// wireHandlerTestWithPublicURL is wireHandlerTest with a public Grafana
-// URL for user-facing links.
-func wireHandlerTestWithPublicURL(t *testing.T, ts *httptest.Server, publicURL string) *mcpsrv.MCPServer {
+func wireHandlerTestWithPublicURL(t *testing.T, ts *httptest.Server, publicURL string) *testRegistrar {
 	t.Helper()
 	gf, err := grafana.New(grafana.Config{URL: ts.URL, Token: testAPIKey})
 	if err != nil {
@@ -64,7 +61,7 @@ func wireHandlerTestWithPublicURL(t *testing.T, ts *httptest.Server, publicURL s
 			Types: []authz.TenantType{authz.TenantTypeData, authz.TenantTypeAlerting},
 		}},
 	}}
-	s := mcpsrv.NewMCPServer("test", "0", mcpsrv.WithToolCapabilities(false))
+	s := newTestRegistrar()
 	if err := RegisterAll(s, az, gf, ts.URL, publicURL, GrafanaAuth{APIKey: testAPIKey}, nil); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
@@ -75,14 +72,13 @@ func wireHandlerTestWithPublicURL(t *testing.T, ts *httptest.Server, publicURL s
 // given args. Fails the test if the tool is not registered or the handler
 // returns a Go error (distinct from a structured IsError result, which the
 // caller is expected to assert on themselves).
-func callTool(t *testing.T, s *mcpsrv.MCPServer, name string, args map[string]any) *mcp.CallToolResult {
+func callTool(t *testing.T, s *testRegistrar, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	tool := s.GetTool(name)
 	if tool == nil {
 		t.Fatalf("tool %q not registered", name)
 	}
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: args}}
-	res, err := tool.Handler(context.Background(), req)
+	res, err := tool.Handler(t.Context(), testRequest(name, args))
 	if err != nil {
 		t.Fatalf("tool %q handler returned Go error: %v", name, err)
 	}
@@ -97,7 +93,7 @@ func callTool(t *testing.T, s *mcpsrv.MCPServer, name string, args map[string]an
 func resultText(res *mcp.CallToolResult) string {
 	var b strings.Builder
 	for _, c := range res.Content {
-		if tc, ok := c.(mcp.TextContent); ok {
+		if tc, ok := c.(*mcp.TextContent); ok {
 			b.WriteString(tc.Text)
 		}
 	}
@@ -109,14 +105,13 @@ func resultText(res *mcp.CallToolResult) string {
 // integration test must put a UserInfo on the context so the real
 // Authorizer can derive the caller (the framework-level RequireCaller
 // middleware otherwise blocks the call before the handler runs).
-func callToolWithCtx(t *testing.T, ctx context.Context, s *mcpsrv.MCPServer, name string, args map[string]any) *mcp.CallToolResult {
+func callToolWithCtx(t *testing.T, ctx context.Context, s *testRegistrar, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	tool := s.GetTool(name)
 	if tool == nil {
 		t.Fatalf("tool %q not registered", name)
 	}
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: args}}
-	res, err := tool.Handler(ctx, req)
+	res, err := tool.Handler(ctx, testRequest(name, args))
 	if err != nil {
 		t.Fatalf("tool %q handler returned Go error: %v", name, err)
 	}
@@ -350,7 +345,7 @@ func TestHandler_RegistersTempoTools(t *testing.T) {
 			t.Errorf("tool %q not registered", name)
 			continue
 		}
-		schema := st.Tool.InputSchema
+		schema := testSchema(t, st.Tool)
 		if !slices.Contains(schema.Required, testOrgArg) {
 			t.Errorf("tool %q: org not required (required=%v)", name, schema.Required)
 		}
@@ -393,7 +388,7 @@ func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
 	defer ts.Close()
 
 	const caller = "alice@example.com"
-	res := callToolWithCtx(t, callerCtx(caller), wireHandlerTest(t, ts), "search_tempo_traces", map[string]any{
+	res := callToolWithCtx(t, callerCtx(t, caller), wireHandlerTest(t, ts), "search_tempo_traces", map[string]any{
 		testOrgArg: testOrgName, "query": "{}",
 	})
 	if res.IsError {
@@ -413,9 +408,6 @@ func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
 	}
 }
 
-// TestHandler_GenerateDeeplink_UsesPublicURL: user-facing links use the
-// public Grafana URL when it is set, and Grafana's appUrl otherwise. API
-// calls keep going to the Grafana URL.
 func TestHandler_GenerateDeeplink_UsesPublicURL(t *testing.T) {
 	const (
 		appURL    = "http://grafana-mcp.monitoring.svc"

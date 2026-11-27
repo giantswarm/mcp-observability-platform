@@ -12,12 +12,17 @@ data:
   # Per-tool handler deadline. Bounded so a pathological query can't hold the
   # MCP goroutine open until the downstream HTTP client times out.
   TOOL_TIMEOUT: {{ $rt.toolTimeout | default "30s" | quote }}
-  # Cap on tool response body size. 0 disables the cap. See response_cap.go.
+  # Complete serialized tool-result limit. Zero disables the cap.
   # `toString | default` (rather than `default 131072`) so an explicit 0 isn't
   # silently overridden back to the default — Go templates treat 0 as falsy.
   TOOL_MAX_RESPONSE_BYTES: {{ $rt.maxResponseBytes | toString | default "131072" | quote }}
 
   # --- OAuth trust config (SSO token forwarding + CLI client schemes) ---
+  OAUTH_ENABLE_AUTHORIZATION_SERVER: {{ $oa.enableAuthorizationServer | toString | quote }}
+  OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE: "true"
+  OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS: "true"
+  OAUTH_RESOURCE: {{ $oa.resource | default "" | quote }}
+  OAUTH_AUTHORIZATION_SERVERS: {{ $oa.authorizationServers | default (list) | join "," | quote }}
   # CSV of OAuth client IDs whose tokens are accepted as if minted for this
   # server's own client ID. Tokens still must be signed by the configured
   # Dex issuer. Same semantic as mcp-kubernetes / muster. Empty = accept
@@ -25,23 +30,10 @@ data:
   OAUTH_TRUSTED_AUDIENCES: {{ $oa.trustedAudiences | default (list) | join "," | quote }}
   # JSON array of external issuers (the muster broker) whose Bearer JWTs are
   # accepted at /mcp alongside Dex, for on-behalf-of traffic. Each entry needs
-  # at least issuer + jwksURL. Empty list = only Dex-issued (and trusted-
+  # issuer, HTTPS jwksURI and explicit audiences. Empty list = only Dex-issued (and trusted-
   # audience) tokens are accepted. acceptedTypHeaders defaults to ["at+jwt"].
   OAUTH_TRUSTED_ISSUERS: {{ $oa.trustedIssuers | default (list) | toJson | quote }}
   # CSV of custom URI schemes accepted during public client registration
   # (e.g. "cursor,vscode"). Loopback HTTPS is always accepted. mcp-oauth
-  # validates each scheme per RFC 3986. Client registration refuses these
-  # schemes while OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS is
-  # true.
+  # validates each scheme per RFC 3986.
   OAUTH_TRUSTED_REDIRECT_SCHEMES: {{ $oa.trustedRedirectSchemes | default (list) | join "," | quote }}
-  # MCP CLI clients (Claude Code, mcp-inspector, IDE plugins) register
-  # loopback redirect URIs per RFC 8252. Always-on for this MCP because
-  # the streamable-http transport is the canonical CLI integration path.
-  OAUTH_ALLOW_LOCALHOST_REDIRECT_URIS: "true"
-  # Client registration (/oauth/register) accepts only loopback redirect
-  # URIs. Client ID Metadata Documents are not affected. Override with an
-  # extraEnvVars entry for local development only.
-  OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS: "true"
-  # Token responses carry only the MCP's own tokens, never the Dex
-  # id_token. The MCP refuses to start with "false" in Grafana JWT mode.
-  OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE: "true"

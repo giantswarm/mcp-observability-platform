@@ -3,8 +3,7 @@ package tools
 import (
 	"net/url"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -22,40 +21,26 @@ const amActive = "active"
 // readOnlyToolAnnotation is the annotation of every local tool: it writes
 // nothing, so it is also idempotent (a repeated call changes nothing more,
 // though live data may differ), and open-world.
-var readOnlyToolAnnotation = mcp.ToolAnnotation{
-	ReadOnlyHint:    mcp.ToBoolPtr(true),
-	OpenWorldHint:   mcp.ToBoolPtr(true),
-	DestructiveHint: mcp.ToBoolPtr(false),
-	IdempotentHint:  mcp.ToBoolPtr(true),
+func readOnlyAnnotation() *mcp.ToolAnnotations {
+	destructive, openWorld := false, true
+	return &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld, DestructiveHint: &destructive, IdempotentHint: true}
 }
 
-// readOnlyAnnotation is the mcp.NewTool option form of
-// readOnlyToolAnnotation.
-func readOnlyAnnotation() mcp.ToolOption {
-	return mcp.WithToolAnnotation(readOnlyToolAnnotation)
-}
-
-// orgArg is the canonical "org" argument for local tools. Delegated
-// tools build the same arg via withOrg in grafanabind.go.
-func orgArg() mcp.ToolOption {
-	return mcp.WithString("org", mcp.Required(), mcp.Description(orgArgDescription))
+// Registrar accepts native SDK tools and handlers.
+type Registrar interface {
+	AddTool(*mcp.Tool, mcp.ToolHandler)
 }
 
 // maybeAddTool wraps s.AddTool with a --disabled-tools check. Mirrors
 // mcp-grafana's maybeAddTools (cmd/mcp-grafana/main.go) but at
 // tool-name granularity. nil disabled = no filter.
-func maybeAddTool(s *mcpsrv.MCPServer, disabled map[string]bool, t mcp.Tool, h mcpsrv.ToolHandlerFunc) {
+func maybeAddTool(s Registrar, disabled map[string]bool, t *mcp.Tool, h mcp.ToolHandler) {
 	if disabled[t.Name] {
 		return
 	}
 	s.AddTool(t, h)
 }
 
-// GrafanaAuth is how the upstream mcpgrafana client authenticates to
-// Grafana. Exactly one field is set (enforced at config load and at
-// grafana.New). JWTHeader selects JWT auth mode: no shared credential,
-// the caller's own token (grafana.UserTokenFromContext) rides in that
-// header on every call.
 type GrafanaAuth struct {
 	APIKey    string
 	BasicAuth *url.Userinfo
@@ -65,9 +50,8 @@ type GrafanaAuth struct {
 // RegisterAll wires every category of tool into the MCP server. See
 // doc.go for the per-category breakdown. disabled (typically
 // sourced from --disabled-tools) is consulted at every s.AddTool site
-// via maybeAddTool; nil = no filter. grafanaPublicURL, when set, is the
-// base of every user-facing link; API calls keep using grafanaURL.
-func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, grafanaURL, grafanaPublicURL string, auth GrafanaAuth, disabled map[string]bool) error {
+// via maybeAddTool; nil = no filter.
+func RegisterAll(s Registrar, az authz.Authorizer, gc grafana.Client, grafanaURL, grafanaPublicURL string, auth GrafanaAuth, disabled map[string]bool) error {
 	b, err := newGFBinder(az, gc, grafanaURL, auth, disabled)
 	if err != nil {
 		return err
@@ -77,7 +61,7 @@ func RegisterAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, gr
 	return nil
 }
 
-func registerAll(s *mcpsrv.MCPServer, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
+func registerAll(s Registrar, az authz.Authorizer, gc grafana.Client, b *gfBinder, disabled map[string]bool) {
 	registerOrgTools(s, disabled, az, b)
 	registerDashboardTools(s, b)
 	registerMetricsTools(s, b)

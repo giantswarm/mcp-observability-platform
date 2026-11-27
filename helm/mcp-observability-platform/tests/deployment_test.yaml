@@ -6,6 +6,16 @@ templates:
   # the Deployment explicitly with the per-assert `template:` field.
   - templates/configmap.yaml
 tests:
+  - it: resource-only mode does not require Dex credentials
+    set:
+      oauth.enableAuthorizationServer: false
+    asserts:
+      - template: templates/deployment.yaml
+        notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OAUTH_DEX_CLIENT_SECRET
+          any: true
   - it: envFrom references the runtime ConfigMap
     asserts:
       - template: templates/deployment.yaml

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"log/slog"
 	"os"
 	"strconv"
 	"testing"
@@ -28,14 +29,20 @@ func TestClientControlsEnvironmentDefaults(t *testing.T) {
 		{name: "invalid restrict", restrict: invalid, wantErr: envOAuthRestrictRegistrationLoopback},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Setenv("OAUTH_ISSUER", "https://mcp.example")
+			setOAuthTestEnvironment(t)
+			if testCase.jwtMode {
+				t.Setenv("GRAFANA_AUTH_MODE", grafanaAuthModeJWT)
+			} else {
+				t.Setenv("GRAFANA_AUTH_MODE", "")
+			}
 			t.Setenv(envOAuthOmitIDToken, testCase.omit)
 			t.Setenv(envOAuthRestrictRegistrationLoopback, testCase.restrict)
 			if testCase.unset {
 				require.NoError(t, os.Unsetenv(envOAuthOmitIDToken))
 				require.NoError(t, os.Unsetenv(envOAuthRestrictRegistrationLoopback))
 			}
-			configuration, err := oauthConfigFromEnv(testCase.jwtMode)
+			settings, err := loadOAuthSettings(slog.New(slog.DiscardHandler), transportStreamableHTTP)
+			configuration := settings.Server
 			if testCase.wantErr != "" {
 				require.ErrorContains(t, err, testCase.wantErr)
 				require.Nil(t, configuration)

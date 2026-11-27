@@ -2,96 +2,42 @@ package middleware
 
 import (
 	"context"
-	"strings"
 	"testing"
 
+	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/providers"
-	"github.com/mark3labs/mcp-go/mcp"
-
-	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/require"
 )
 
-func callRequireCaller(t *testing.T, ctx context.Context, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) (*mcp.CallToolResult, error) {
-	t.Helper()
-	wrapped := RequireCaller()(handler)
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "test_tool"
-	return wrapped(ctx, req)
-}
+const testIssuer = "https://issuer.example"
+const testSubject = "sub-1"
 
-func ctxWithCaller(ui *providers.UserInfo) context.Context {
-	if ui == nil {
-		return context.Background()
-	}
-	return authz.WithCaller(context.Background(), authz.Caller{
-		Subject:     ui.ID,
-		Email:       ui.Email,
-		TokenSource: string(ui.TokenSource),
-	})
-}
-
-func TestRequireCaller_RejectsEmptyContext(t *testing.T) {
-	var handlerRan bool
-	res, err := callRequireCaller(t, context.Background(), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		handlerRan = true
-		return mcp.NewToolResultText("should not run"), nil
-	})
-	if err != nil {
-		t.Fatalf("middleware must convert missing-caller into IsError result, not propagate err; got %v", err)
-	}
-	if res == nil || !res.IsError {
-		t.Fatalf("expected IsError=true result; got %+v", res)
-	}
-	text := res.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(text, "authentication required") {
-		t.Errorf("rejection text missing expected phrase: %q", text)
-	}
-	if handlerRan {
-		t.Errorf("handler must not run when caller is missing")
-	}
-}
-
-func TestRequireCaller_RejectsCallerWithEmptyFields(t *testing.T) {
-	// A token validated against the IdP but with no identifying claims
-	// must NOT count as authenticated.
-	ctx := ctxWithCaller(&providers.UserInfo{})
-	res, err := callRequireCaller(t, ctx, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("should not run"), nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if res == nil || !res.IsError {
-		t.Fatalf("empty-fields UserInfo must be rejected; got %+v", res)
-	}
-}
-
-func TestRequireCaller_PassesThroughAuthenticatedCaller(t *testing.T) {
-	ctx := ctxWithCaller(&providers.UserInfo{ID: testSubject, Email: testAliceEmail})
-	res, err := callRequireCaller(t, ctx, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if got := authz.CallerFromContext(ctx).Subject; got != testSubject {
-			t.Errorf("handler saw Subject=%q, want %s", got, testSubject)
+func TestRequireCaller(t *testing.T) {
+	for _, user := range []*providers.UserInfo{nil, {}, {Issuer: testIssuer}, {ID: testSubject}, {Issuer: testIssuer, ID: testSubject}, {Issuer: testIssuer, ID: testSubject, ActorSubject: "agent"}} {
+		called := false
+		ctx := t.Context()
+		if user != nil {
+			ctx = handler.ContextWithUserInfo(ctx, user)
 		}
-		return mcp.NewToolResultText("ok"), nil
-	})
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
-	if res.IsError {
-		t.Errorf("authenticated caller marked IsError")
-	}
-	if res.Content[0].(mcp.TextContent).Text != "ok" {
-		t.Errorf("content mutated")
+		result, err := RequireCaller()(func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			called = true
+			got, ok := handler.UserInfoFromContext(ctx)
+			require.True(t, ok)
+			require.Same(t, user, got)
+			return &mcp.CallToolResult{}, nil
+		})(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "test_tool"}})
+		require.NoError(t, err)
+		authenticated := user != nil && user.Issuer != "" && user.ID != ""
+		require.Equal(t, authenticated, called)
+		require.Equal(t, !authenticated, result.IsError)
 	}
 }
 
-func TestRequireCaller_HandlerErrorPassesThrough(t *testing.T) {
-	ctx := ctxWithCaller(&providers.UserInfo{ID: testSubject})
-	wantErr := context.DeadlineExceeded
-	_, err := callRequireCaller(t, ctx, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return nil, wantErr
-	})
-	if err != wantErr {
-		t.Errorf("handler error masked; got %v, want %v", err, wantErr)
-	}
+func TestRequireCallerPreservesHandlerError(t *testing.T) {
+	ctx := handler.ContextWithUserInfo(t.Context(), &providers.UserInfo{Issuer: testIssuer, ID: testSubject})
+	_, err := RequireCaller()(func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, context.DeadlineExceeded
+	})(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Name: "test_tool"}})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

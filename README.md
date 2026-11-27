@@ -151,20 +151,12 @@ rather than the server-admin SA.
 
 ### Response-size discipline
 
-Tool responses that would exceed `TOOL_MAX_RESPONSE_BYTES` (default 128 KiB)
-return a structured error payload:
+See the [native SDK upgrade and recovery checklist](docs/sdk-upgrade.md) before deployment.
 
-```json
-{
-  "error": "response_too_large",
-  "bytes": 245760,
-  "limit": 131072,
-  "message": "response is 245760 bytes, exceeds 131072 byte limit",
-  "hint": "narrow the query: add label matchers, aggregate with sum/rate/topk, or shorten the time range"
-}
-```
-
-LLM clients can react programmatically instead of silently truncating.
+The complete JSON tool result, including structured content, images and metadata,
+is bounded by `TOOL_MAX_RESPONSE_BYTES` (default 128 KiB). Oversized results return
+an MCP `isError` result identifying the limit. Narrow the query, add label matchers,
+aggregate or shorten the time range before retrying. Zero disables the limit.
 
 For endpoints where pagination is natural (logs, label-values, rule lists,
 tag values, dashboards-by-folder, alerts) tools expose `page`/`pageSize` or
@@ -225,26 +217,22 @@ Env-var driven. Flags override env. See `cmd/serve.go`.
 | Env var                                     | Required       | Purpose                                                  |
 | ------------------------------------------- | -------------- | -------------------------------------------------------- |
 | `GRAFANA_URL`                               | yes            | Grafana base URL (in-cluster)                            |
-| `GRAFANA_PUBLIC_URL`                        | no             | Browser-facing Grafana URL for user-facing links (`generate_deeplink`, trace views, short URLs). Empty = the `appUrl` that Grafana at `GRAFANA_URL` reports. API calls always use `GRAFANA_URL`. Helm: `grafana.publicUrl`. |
 | `GRAFANA_SA_TOKEN`                          | one-of         | Grafana **server-admin** SA token (see below). Production path. |
 | `GRAFANA_BASIC_AUTH`                        | one-of         | `user:password` for the built-in admin — dev/bootstrap only when SA promotion is unavailable. Setting both `GRAFANA_SA_TOKEN` and this var is a startup error. |
-| `GRAFANA_AUTH_MODE`                         | no             | `serviceAccountToken`, `basicAuth`, or `jwt`. Empty = inferred from which of `GRAFANA_SA_TOKEN` / `GRAFANA_BASIC_AUTH` is set. `jwt` forwards each caller's Dex `id_token` to Grafana and needs no Grafana secret (see [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity)). |
-| `GRAFANA_JWT_HEADER`                        | no             | Header carrying the caller's Dex `id_token` in `jwt` mode (default `X-JWT-Assertion`). Must match `header_name` in Grafana's `[auth.jwt]`. |
-| `OAUTH_DEX_ISSUER_URL`                      | yes            | Dex issuer (read by `oauthconfig.DexFromEnv`).           |
-| `OAUTH_DEX_CLIENT_ID`                       | yes            | Dex OAuth client                                         |
-| `OAUTH_DEX_CLIENT_SECRET`                   | yes            | Dex OAuth client secret. `*_FILE` variant supported.     |
-| `OAUTH_DEX_SCOPES`                          | no             | CSV of scopes requested from Dex; must contain `openid`. Default `openid,profile,email,groups,offline_access,federated:id`. `federated:id` adds the connector id that [Grafana JWT mode](#grafana-jwt-mode-forward-caller-identity) needs. The MCP requests every listed scope from Dex, also when an MCP client sends its own `scope`. |
+| `OAUTH_DEX_ISSUER_URL`                      | when Dex is enabled | Dex issuer, loaded by the shared OAuth settings loader. |
+| `OAUTH_DEX_CLIENT_ID`                       | when Dex is enabled | Dex OAuth client. |
+| `OAUTH_DEX_CLIENT_SECRET`                   | when Dex is enabled | Dex OAuth client secret. `*_FILE` variant supported. |
 | `OAUTH_DEX_REDIRECT_URL`                    | no             | Provider callback URL. Defaults to `$OAUTH_ISSUER/oauth/callback`; only set if you need a non-canonical path. |
 | `OAUTH_ISSUER`                              | yes            | Public issuer URL of this MCP                            |
 | `OAUTH_ALLOW_INSECURE_HTTP`                 | no             | `true` to allow plain-HTTP OAuth flows (local dev only). Loopback issuers (`http://localhost`, `http://127.0.0.1`, `http://[::1]`) are accepted without this flag per RFC 8252. |
 | `OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION`    | no             | `true` to open `/oauth/register` to unauthenticated callers (default `false`). Required for MCP CLI clients (Claude Code, mcp-inspector) that self-register at runtime. |
-| `OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS` | no | `false` to let `/oauth/register` accept non-loopback redirect URIs (default `true`). With `true`, registration accepts only `http` and `https` redirect URIs on `localhost`, `127.0.0.0/8` or `[::1]` and refuses any other with `invalid_redirect_uri`. Client ID Metadata Documents are not affected. Local development only. |
-| `OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE`     | no             | `false` to return the Dex `id_token` to MCP clients in token responses (default `true`). With `true`, MCP clients receive only the MCP's own tokens. `false` is a startup error in `jwt` mode. Local development only. |
-| `OAUTH_TRUST_PROXY`                         | no             | `true` to take the caller's IP from `X-Forwarded-For` (one trusted proxy hop) for per-IP limits such as the cap of 10 client registrations per IP. Set it behind an ingress or gateway, through the chart's `extraEnvVars`. Without it, every caller behind the ingress shares the ingress IP. Accepted limitation: Envoy Gateway appends the real client IP, so with `true` a caller that sends its own `X-Forwarded-For` chooses its rate-limit key and bypasses the cap. A configurable trusted proxy count in mcp-oauth or client IP detection in the gateway would close it. |
-| `OAUTH_ENCRYPTION_KEY`                      | no             | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
+| `OAUTH_ENCRYPTION_KEY`                      | for Valkey     | AES-256 key for token-at-rest encryption; 44-char base64 (`openssl rand -base64 32`) or 64-char hex (`openssl rand -hex 32`). `*_FILE` variant supported. |
 | `OAUTH_TRUSTED_AUDIENCES`                   | no             | CSV of OAuth client IDs whose tokens are accepted as if minted for this server — enables SSO token forwarding from muster or sibling MCPs. Tokens must still be signed by `OAUTH_DEX_ISSUER_URL`. Empty = own-tokens-only. |
-| `OAUTH_TRUSTED_ISSUERS`                     | no             | JSON array of external issuers (the muster broker) whose Bearer JWTs are accepted at `/mcp` alongside Dex, for on-behalf-of traffic. Each entry: `issuer`, `jwksURL` (required), optional `subjectClaim`, `allowedAudiences`, `allowedClaims`, `acceptedTypHeaders` (default `["at+jwt"]`; use `[""]` for K8s SA tokens), `allowPrivateIPJWKS`, `allowPrivateIPJWKSHosts`. Unlike trusted audiences these are full issuers verified via their own JWKS. |
-| `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. Registration refuses these schemes while `OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS` is `true`. |
+| `OAUTH_TRUSTED_ISSUERS`                     | no             | Shared issuer configuration: `issuer`, HTTPS `jwksURI` and explicit `audiences`, with optional `subjectClaim`, `allowedClaims`, `acceptedTypHeaders`, `caFile` and `allowPrivateIPJWKSHosts`. See the [upgrade guide](docs/sdk-upgrade.md) for compatibility keys and validation. |
+| `OAUTH_AUTHORIZATION_SERVERS`               | no             | CSV of trusted issuer identifiers advertised to clients; chart value `oauth.authorizationServers`. |
+| `OAUTH_RESOURCE`                            | no             | Canonical protected-resource URL; chart value `oauth.resource`. |
+| `OAUTH_ENABLE_AUTHORIZATION_SERVER`          | no             | Defaults to `true`. Set `false` for resource-server-only operation without Dex credentials; chart value `oauth.enableAuthorizationServer`. |
+| `OAUTH_TRUSTED_REDIRECT_SCHEMES`            | no             | CSV of custom URI schemes accepted during public client registration (e.g. `cursor,vscode`). Loopback HTTPS is always allowed; `javascript`/`data`/`file`/`ftp` are rejected regardless. |
 | `OAUTH_STORAGE_BACKEND`                     | no             | `memory` (default) or `valkey` (read by `oauthconfig.StorageFromEnvWithPrefix("OAUTH_")`) |
 | `OAUTH_VALKEY_ADDR` / `_PASSWORD` / `_TLS`  | no             | Required when `OAUTH_STORAGE_BACKEND=valkey`. `OAUTH_VALKEY_PASSWORD` accepts the `*_FILE` variant. |
 | `MCP_TRANSPORT`                             | no             | `streamable-http` (default), `sse`, or `stdio`. Stdio has no HTTP surface and bypasses OAuth — developer-loop only. |
@@ -293,126 +281,18 @@ is not server-admin it fails to start.
 every Grafana org. Phase 2 narrows this by switching to per-org SA tokens
 provisioned by the observability-operator (tracked in the plan).
 
-### Grafana JWT mode (forward caller identity)
-
-`GRAFANA_AUTH_MODE=jwt` (Helm: `grafana.authMode: jwt`) drops the shared
-server-admin credential. The MCP forwards each caller's own Dex `id_token`
-to Grafana in `GRAFANA_JWT_HEADER`. Grafana validates it against Dex,
-resolves the user and applies the user's own org roles. Audit logs show
-the real user.
-
-In this mode:
-
-- No Grafana secret is needed. Setting `GRAFANA_SA_TOKEN` or
-  `GRAFANA_BASIC_AUTH` is a startup error.
-- The startup server-admin self-check (`GET /api/orgs`) is skipped.
-- The authorizer reads the caller's orgs via `GET /api/user/orgs` with the
-  caller's token.
-- `MCP_TRANSPORT=stdio` is rejected. Stdio has no caller token.
-- Token responses never carry the Dex `id_token`. The MCP keeps it
-  server-side. `OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE=false` is rejected.
-- Set `GRAFANA_PUBLIC_URL` to the public URL of the main Grafana. Without
-  it, links use the `appUrl` of `grafana-mcp`. The
-  `/api/frontend/settings` probe runs without credentials.
-
-Callers:
-
-| Caller | Works | Token sent to Grafana |
-| --- | --- | --- |
-| MCP OAuth client (Claude Code, mcp-inspector, …) | yes | The stored Dex `id_token` for the caller's MCP access token. mcp-oauth refreshes it. |
-| SSO-forwarded Dex ID token (e.g. muster `forwardToken: true`) | yes | The forwarded token as is. Its `aud` is the audiences muster requested; Grafana's `expect_claims.aud` must list one of them. |
-| Trusted-issuer caller (`OAUTH_TRUSTED_ISSUERS`, e.g. muster-issued or Kubernetes SA JWTs) | no | None. The call fails with a clear error. |
-
-The MCP sends the caller token to a dedicated Grafana instance
-(`grafana-mcp`) that shares the database of the main Grafana. The main
-Grafana keeps its own `[auth.jwt]` section, for example for Teleport app
-access. Set `GRAFANA_URL` to the `grafana-mcp` service.
-
-Each person gets an MCP Grafana user, separate from their browser user.
-Its login is the Dex connector id and the email, with `@` replaced by
-`_at_`: `<connector_id>:<email with @ replaced by _at_>`, for example
-`giantswarm-github:theo_at_giantswarm.io`. Its display name comes from the
-`name` claim. `grafana-mcp` maps no email claim, so Grafana never links a
-caller token to an existing user by email. Users sign up on first call.
-
-`grafana-mcp` config:
-
-```ini
-[auth]
-disable_login_form = true
-
-[auth.basic]
-enabled = false
-
-[auth.jwt]
-enabled = true
-header_name = X-JWT-Assertion
-jwk_set_url = https://dex.<domain>/keys
-cache_ttl = 5m
-expect_claims = {"iss": "https://dex.<domain>", "aud": "mcp-observability-platform"}
-; login: <connector_id>:<email with @ replaced by _at_>
-username_attribute_path = join(':', [federated_claims.connector_id, replace(email, '@', '_at_')])
-auto_sign_up = true
-org_attribute_path = groups
-role_attribute_path = to_string('None')
-role_attribute_strict = true
-
-[unified_alerting]
-execute_alerts = false
-```
-
-- The caller token must carry `federated_claims.connector_id` (Dex scope
-  `federated:id`, which the MCP requests by default) and `email`. A token
-  without either fails authentication.
-- `GF_AUTH_JWT_ORG_MAPPING` sets the org mapping. observability-operator
-  renders it from the `GrafanaOrganization` CRs into Secret
-  `grafana-mcp-org-mapping`, key `orgMapping`. Org roles come only from
-  this mapping, read from the `groups` claim.
-- A caller with no mapped group gets role None in the default org.
-- `[auth.basic] enabled = false` rejects the admin password of the shared
-  database on `grafana-mcp`.
-- `[unified_alerting] execute_alerts = false` leaves alert evaluation to
-  the main Grafana. The alerting API stays available to the alert tools.
-- `cache_ttl = 5m` bounds failures after a Dex signing-key rotation.
-  Grafana does not refetch keys on an unknown key id.
-
-Limitations:
-
-- `org_mapping` is static ini. Grafana reads it and resolves org names
-  once at start-up, so a mapping change needs a `grafana-mcp` restart.
-- `expect_claims.aud` accepts an array and passes when any entry matches.
-  List the MCP Dex client id plus every `OAUTH_TRUSTED_AUDIENCES` client
-  whose tokens reach the MCP. A token Grafana rejects fails with
-  `grafana rejected the caller token`.
-- With the in-memory store (`OAUTH_STORAGE_BACKEND=memory`, the default),
-  the MCP keeps tokens, client registrations and sign-ins in progress in
-  memory. An MCP restart signs every caller out, and MCP clients register
-  again.
-
-Incident response: the MCP holds every recent caller's Dex refresh token
-in memory. A compromised MCP pod can copy those tokens and the Dex client
-secret and act as those callers for up to 720 hours. Rotating the
-`mcp-observability-platform` Dex client secret stops it. An MCP restart
-alone does not.
-
 ## Install
 
-Create the required secrets first. The chart defaults to
-`grafana.authMode: jwt`, which needs only the Dex client secret:
-
-```sh
-kubectl -n observability create secret generic mcp-observability-platform-oauth \
-  --from-literal=clientSecret=<dex-client-secret>
-```
-
-With `grafana.authMode: serviceAccountToken`, also create the Grafana
-secret. The `serviceAccountToken` key holds the **Grafana** server-admin
-service-account token (not a Kubernetes one — the chart creates the K8s
-ServiceAccount itself via `templates/serviceaccount.yaml`).
+Create the required secrets first. The `serviceAccountToken` key holds the
+**Grafana** server-admin service-account token (not a Kubernetes one — the
+chart creates the K8s ServiceAccount itself via `templates/serviceaccount.yaml`).
 
 ```sh
 kubectl -n observability create secret generic mcp-observability-platform-grafana \
   --from-literal=serviceAccountToken=<grafana-sa-token>
+
+kubectl -n observability create secret generic mcp-observability-platform-oauth \
+  --from-literal=clientSecret=<dex-client-secret>
 ```
 
 Then install the chart:
@@ -459,3 +339,5 @@ layout table and what each package is responsible for.
 - `giantswarm/observability-operator` — owns the GrafanaOrganization CRD
 - `giantswarm/mcp-prometheus`, `giantswarm/mcp-kubernetes` — sibling MCPs
   that set the conventions followed here
+
+For caller-authenticated Grafana access, see [Grafana JWT authentication](docs/grafana-jwt.md).

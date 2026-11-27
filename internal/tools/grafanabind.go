@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,101 +11,59 @@ import (
 	"sync"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 )
 
-// orgArgDescription is the LLM-visible description of the synthetic
-// "org" argument we prepend to every wrapped upstream tool. Shared with
-// local tools (alerts, traces) via orgArg().
 const orgArgDescription = "Organization — either the GrafanaOrganization CR name or its display name. See list_orgs."
 
-// datasourceUIDArg is upstream's conventional argument name for the
-// datasource UID. Most upstream tools use this; alerting_rules_read
-// uses datasourceUIDArgSnake.
 const (
-	datasourceUIDArg      = "datasourceUid"
-	datasourceUIDArgSnake = "datasource_uid"
-	jsonTypeString        = "string"
-	jsonSchemaTypeKey     = "type"
+	datasourceUIDArg         = "datasourceUid"
+	datasourceUIDArgSnake    = "datasource_uid"
+	jsonTypeString           = "string"
+	jsonSchemaTypeKey        = "type"
+	jsonSchemaDescriptionKey = "description"
+	jsonTypeNumber           = "number"
+	jsonTypeObject           = "object"
+	pageArgument             = "page"
 )
 
-// datasourceUIDHint describes the optional datasource-UID argument: the
-// binder puts it in place of upstream's description on every argument it
-// demotes, and the local Alertmanager tools use it as theirs. The hint
-// teaches the LLM the operator naming convention so it can resolve
-// "the giantswarm tenant" → gs-{kind}-giantswarm via list_datasources
-// without us baking name-parsing into server code.
 const datasourceUIDHint = "Optional datasource UID; default the org's first of this type, usually gs-{kind} (all tenants). " +
 	"One tenant: gs-{kind}-{tenant}. See list_datasources."
 
-// gfBinder wraps grafana/mcp-grafana tool handlers with our org→OrgID
-// authz, per-request Grafana context injection, and (for
-// datasource-scoped tools) datasource UID resolution.
-//
-// One shared upstream GrafanaClient is reused across requests; the
-// per-call OrgID and ExtraHeaders ride on ctx via WithGrafanaConfig
-// and reach the wire through mcp-grafana's Auth/OrgID/ExtraHeaders
-// RoundTrippers (HTTP-style and openapi-runtime paths both propagate
-// ctx since mcp-grafana v0.13.1). Built lazily on first authz-passed
-// call because NewGrafanaClient hits /api/frontend/settings during
-// construction.
+// gfBinder resolves organization access and datasource identity before invoking
+// a native upstream handler. Per-request Grafana settings are carried by context.
 type gfBinder struct {
-	authorizer authz.Authorizer
-	grafana    grafana.Client
-	url        string
-	// publicURL, when set, overrides the appUrl that mcp-grafana reads
-	// from /api/frontend/settings as the base of user-facing links.
-	publicURL string
-	auth      GrafanaAuth
-	disabled  map[string]bool // --disabled-tools lookup; nil = no filter
-
+	authorizer   authz.Authorizer
+	grafana      grafana.Client
+	url          string
+	publicURL    string
+	auth         GrafanaAuth
+	disabled     map[string]bool
 	upstreamOnce sync.Once
 	upstream     *mcpgrafana.GrafanaClient
-
-	// bound holds every upstream tool bound, by name, as upstream defines it.
-	bound map[string]mcp.Tool
+	bound        map[string]*mcp.Tool
 }
 
-// newGFBinder constructs a gfBinder after validating its dependencies.
-// GrafanaAuth mutual-exclusivity is enforced upstream at config load
-// (cmd/config.go) and at grafana.New — not re-checked here. disabled may
-// be nil; bind* methods route s.AddTool through maybeAddTool, which is
-// nil-safe.
-func newGFBinder(authorizer authz.Authorizer, gc grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) (*gfBinder, error) {
+func newGFBinder(authorizer authz.Authorizer, client grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) (*gfBinder, error) {
 	if authorizer == nil {
 		return nil, errors.New("authorizer is required")
 	}
-	if gc == nil {
+	if client == nil {
 		return nil, errors.New("grafana client is required")
 	}
 	if grafanaURL == "" {
 		return nil, errors.New("grafana URL is required")
 	}
-	return &gfBinder{
-		authorizer: authorizer,
-		grafana:    gc,
-		url:        grafanaURL,
-		auth:       auth,
-		disabled:   disabled,
-		bound:      map[string]mcp.Tool{},
-	}, nil
+	return &gfBinder{authorizer: authorizer, grafana: client, url: grafanaURL, auth: auth, disabled: disabled, bound: map[string]*mcp.Tool{}}, nil
 }
 
-// client returns the shared upstream GrafanaClient, building it on
-// first call. The /api/frontend/settings probe inside NewGrafanaClient
-// runs once for the lifetime of the process. In JWT auth mode the client
-// is built with no credential (APIKey and BasicAuth are empty): the
-// probe fails with a warning and the per-call ExtraHeaders carry the
-// caller's token.
 func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 	b.upstreamOnce.Do(func() {
-		cfg := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.auth.APIKey, BasicAuth: b.auth.BasicAuth}
-		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), cfg), b.url, b.auth.APIKey, b.auth.BasicAuth)
+		configuration := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.auth.APIKey, BasicAuth: b.auth.BasicAuth}
+		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), configuration), b.url, b.auth.APIKey, b.auth.BasicAuth)
 		if b.publicURL != "" {
 			b.upstream.PublicURL = b.publicURL
 		}
@@ -112,65 +71,45 @@ func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 	return b.upstream
 }
 
-// bindOrgTool registers an upstream tool that needs only org→OrgID
-// resolution. The synthetic "org" argument is prepended to the
-// LLM-visible schema; every other arg passes through unchanged.
-func (b *gfBinder) bindOrgTool(s *server.MCPServer, role authz.Role, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, b.describe(t, ""), b.wrap(role, "", "", "", t))
+func (b *gfBinder) bindOrgTool(target Registrar, role authz.Role, tool mcpgrafana.Tool) {
+	maybeAddTool(target, b.disabled, b.describe(tool, ""), b.wrap(role, "", "", "", tool))
 }
 
-// bindDatasourceTool registers an upstream tool that needs a datasource
-// UID. The schema retains argName as an optional override; absent the
-// override, the binder picks the first live datasource matching dsType
-// and injects its UID server-side.
-//
-// tenantType gates the call to orgs that carry that tenant type
-// (TenantTypeData for metrics/logs/traces/rules; TenantTypeAlerting is
-// reserved for Alertmanager-shaped tools, which today are local).
-//
-// Pass datasourceUIDArg ("datasourceUid") for the typical case; pass
-// "datasource_uid" (snake_case) for alerting_rules_read.
-func (b *gfBinder) bindDatasourceTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, b.describe(t, argName), b.wrap(role, tenantType, dsType, argName, t))
+func (b *gfBinder) bindDatasourceTool(target Registrar, role authz.Role, tenantType authz.TenantType, datasourceType grafana.DatasourceType, argument string, tool mcpgrafana.Tool) {
+	maybeAddTool(target, b.disabled, b.describe(tool, argument), b.wrap(role, tenantType, datasourceType, argument, tool))
 }
 
-// bindDatasourceFanoutTool registers a read-only upstream tool that
-// runs once per ruler-capable datasource the org has, merging the
-// per-DS results. Caller-supplied argName (e.g. "datasource_uid")
-// short-circuits to a single upstream call.
-func (b *gfBinder) bindDatasourceFanoutTool(s *server.MCPServer, role authz.Role, tenantType authz.TenantType, argName string, t mcpgrafana.Tool) {
-	maybeAddTool(s, b.disabled, b.describe(t, ""), b.wrapFanout(role, tenantType, argName, t))
+func (b *gfBinder) bindDatasourceFanoutTool(target Registrar, role authz.Role, tenantType authz.TenantType, argument string, tool mcpgrafana.Tool) {
+	maybeAddTool(target, b.disabled, b.describe(tool, ""), b.wrapFanout(role, tenantType, argument, tool))
 }
 
-// describe is the LLM-visible definition of upstream tool t: its summary
-// line, if any, and the org argument. It records t in b.bound.
-func (b *gfBinder) describe(t mcpgrafana.Tool, demoteArg string) mcp.Tool {
-	up := toolFromSDK(t.Tool)
-	b.bound[up.Name] = up
-	return withOrg(withSummary(up), demoteArg)
+func (b *gfBinder) describe(tool mcpgrafana.Tool, demoteArgument string) *mcp.Tool {
+	b.bound[tool.Tool.Name] = tool.Tool
+	return withOrg(withSummary(tool.Tool), demoteArgument)
 }
 
-func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		org, errRes := b.requireOrg(ctx, req, role, tenantType, true)
-		if errRes != nil {
-			return errRes, nil
+func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argument string, upstream mcpgrafana.Tool) mcp.ToolHandler {
+	return func(ctx context.Context, incoming *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		request := *incoming
+		organization, refusal := b.requireOrg(ctx, &request, role, tenantType, true)
+		if refusal != nil {
+			return refusal, nil
 		}
-		if err := stripOrgArg(&req); err != nil {
-			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		if err := stripOrgArg(&request); err != nil {
+			return failure("malformed arguments", err), nil
 		}
-		ctx = b.attachGrafana(ctx, org.OrgID)
-
-		if uid := req.GetString(argName, ""); uid != "" {
-			return callUpstream(ctx, upstream, req)
-		}
-
-		opts := grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}
-		dss, err := b.grafana.ListDatasources(ctx, opts)
+		ctx = b.attachGrafana(ctx, organization.OrgID)
+		uid, err := stringArgument(&request, argument)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("list datasources", err), nil
+			return failure("malformed arguments", err), nil
 		}
-
+		if uid != "" {
+			return invokeUpstream(ctx, upstream, &request)
+		}
+		datasources, err := b.grafana.ListDatasources(ctx, grafana.RequestOpts{OrgID: organization.OrgID, Caller: authz.GrafanaUser(ctx)})
+		if err != nil {
+			return failure("list datasources", err), nil
+		}
 		type entry struct {
 			Name  string          `json:"name"`
 			UID   string          `json:"uid"`
@@ -178,332 +117,225 @@ func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argN
 			Rules json.RawMessage `json:"rules,omitempty"`
 			Error string          `json:"error,omitempty"`
 		}
-		entries := make([]entry, 0, len(dss))
-		for _, ds := range dss {
-			if !ds.ManageAlerts || !isRulerType(ds.Type) {
+		entries := make([]entry, 0, len(datasources))
+		for _, datasource := range datasources {
+			if !datasource.ManageAlerts || !isRulerType(datasource.Type) {
 				continue
 			}
-			sub := req
-			if err := injectArg(&sub, argName, ds.UID); err != nil {
-				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: err.Error()})
+			subrequest := request
+			if err := injectArg(&subrequest, argument, datasource.UID); err != nil {
+				entries = append(entries, entry{Name: datasource.Name, UID: datasource.UID, Type: datasource.Type, Error: err.Error()})
 				continue
 			}
-			res, err := callUpstream(ctx, upstream, sub)
+			result, err := invokeUpstream(ctx, upstream, &subrequest)
 			switch {
 			case err != nil:
-				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: err.Error()})
-			case res != nil && res.IsError:
-				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Error: textOf(res)})
+				entries = append(entries, entry{Name: datasource.Name, UID: datasource.UID, Type: datasource.Type, Error: err.Error()})
+			case result.IsError:
+				entries = append(entries, entry{Name: datasource.Name, UID: datasource.UID, Type: datasource.Type, Error: textOf(result)})
 			default:
-				entries = append(entries, entry{Name: ds.Name, UID: ds.UID, Type: ds.Type, Rules: rulesPayload(res)})
+				entries = append(entries, entry{Name: datasource.Name, UID: datasource.UID, Type: datasource.Type, Rules: rulesPayload(result)})
 			}
 		}
-		return mcp.NewToolResultJSON(map[string]any{"datasources": entries})
+		return jsonResult(map[string]any{"datasources": entries})
 	}
 }
 
-// isRulerType mirrors mcp-grafana's isRulerDatasource: only datasources
-// whose plugin type contains DSTypePrometheus or DSTypeLoki expose a
-// Cortex-style ruler API. Mimir registers as plugin type "prometheus".
-func isRulerType(t string) bool {
-	t = strings.ToLower(t)
-	return strings.Contains(t, string(grafana.DSTypePrometheus)) || strings.Contains(t, string(grafana.DSTypeLoki))
+func isRulerType(pluginType string) bool {
+	pluginType = strings.ToLower(pluginType)
+	return strings.Contains(pluginType, string(grafana.DSTypePrometheus)) || strings.Contains(pluginType, string(grafana.DSTypeLoki))
 }
 
-func textOf(r *mcp.CallToolResult) string {
-	for _, c := range r.Content {
-		if tc, ok := c.(mcp.TextContent); ok {
-			return tc.Text
+func textOf(result *mcp.CallToolResult) string {
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			return text.Text
 		}
 	}
 	return ""
 }
 
-// rulesPayload extracts upstream's text content. Embedded as raw JSON
-// when valid; falls back to a JSON-encoded string so the merged result
-// is always well-formed.
-func rulesPayload(r *mcp.CallToolResult) json.RawMessage {
-	s := textOf(r)
-	if s == "" {
+func rulesPayload(result *mcp.CallToolResult) json.RawMessage {
+	text := textOf(result)
+	if text == "" {
 		return nil
 	}
-	if json.Valid([]byte(s)) {
-		return json.RawMessage(s)
+	if json.Valid([]byte(text)) {
+		return json.RawMessage(text)
 	}
-	enc, _ := json.Marshal(s)
-	return enc
+	encoded, _ := json.Marshal(text)
+	return encoded
 }
 
-// withOrg returns a copy of an upstream tool definition with an "org"
-// argument prepended (string, required). When demoteArg is non-empty,
-// that argument is kept in the schema but moved out of Required and
-// its description is replaced by datasourceUIDHint — the LLM sees it as
-// an optional override and the binder fills it server-side when
-// omitted.
-//
-// Properties map and Required slice are deep-copied; the input is never
-// mutated. Panic at registration, not per-request — every wrapped tool
-// is enumerated by RegisterAll, so a collision shows up at process start.
-//
-// Upstream mcp-grafana tools arrive through toolFromSDK, which stores the
-// schema as RawInputSchema (json.RawMessage). mcp.Tool.MarshalJSON emits
-// RawInputSchema verbatim and ignores the structured InputSchema, so we
-// normalize raw→structured up front. The function body then operates on
-// a single representation and the tool ships with our org arg visible.
-func withOrg(t mcp.Tool, demoteArg string) mcp.Tool {
-	if len(t.RawInputSchema) > 0 {
-		var raw struct {
-			Properties map[string]any `json:"properties"`
-			Required   []string       `json:"required"`
-		}
-		if err := json.Unmarshal(t.RawInputSchema, &raw); err != nil {
-			panic(fmt.Sprintf("tools: tool %q has invalid RawInputSchema: %v", t.Name, err))
-		}
-		t.InputSchema.Type = "object"
-		t.InputSchema.Properties = raw.Properties
-		t.InputSchema.Required = raw.Required
-		t.RawInputSchema = nil
+// withOrg copies the complete schema, including definitions and extension
+// keywords. Only the organization and datasource-override properties change.
+func withOrg(tool *mcp.Tool, demoteArgument string) *mcp.Tool {
+	encoded, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		panic(fmt.Sprintf("tools: tool %q has unmarshalable input schema: %v", tool.Name, err))
 	}
-
-	out := t
-	props := make(map[string]any, len(t.InputSchema.Properties)+1)
-	maps.Copy(props, t.InputSchema.Properties)
-	if demoteArg != "" {
-		if cur, ok := props[demoteArg].(map[string]any); ok {
-			merged := make(map[string]any, len(cur))
-			maps.Copy(merged, cur)
-			merged["description"] = datasourceUIDHint
-			props[demoteArg] = merged
+	var schema map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&schema); err != nil {
+		panic(fmt.Sprintf("tools: tool %q has invalid input schema: %v", tool.Name, err))
+	}
+	if schema == nil {
+		schema = make(map[string]any)
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	if properties == nil {
+		properties = make(map[string]any)
+	}
+	if _, collides := properties["org"]; collides {
+		panic(fmt.Sprintf("tools: tool %q already declares an 'org' argument; binder cannot add its own", tool.Name))
+	}
+	if demoteArgument != "" {
+		if current, ok := properties[demoteArgument].(map[string]any); ok {
+			current = maps.Clone(current)
+			current[jsonSchemaDescriptionKey] = datasourceUIDHint
+			properties[demoteArgument] = current
 		}
 	}
-	if _, collides := props["org"]; collides {
-		panic(fmt.Sprintf("tools: tool %q already declares an 'org' argument; binder cannot add its own", t.Name))
-	}
-	props["org"] = map[string]any{
-		jsonSchemaTypeKey: jsonTypeString,
-		"description":     orgArgDescription,
-	}
-	out.InputSchema.Properties = props
-
-	req := make([]string, 0, len(t.InputSchema.Required)+1)
-	req = append(req, "org")
-	for _, r := range t.InputSchema.Required {
-		if r == demoteArg {
-			continue
+	properties["org"] = map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: orgArgDescription}
+	schema["type"], schema["properties"] = jsonTypeObject, properties
+	required := []string{"org"}
+	if upstreamRequired, ok := schema["required"].([]any); ok {
+		for _, value := range upstreamRequired {
+			name, ok := value.(string)
+			if !ok {
+				panic(fmt.Sprintf("tools: tool %q has invalid required properties", tool.Name))
+			}
+			if name != demoteArgument {
+				required = append(required, name)
+			}
 		}
-		req = append(req, r)
 	}
-	out.InputSchema.Required = req
-	return out
+	schema["required"] = required
+	out := *tool
+	out.InputSchema = schema
+	return &out
 }
 
-// wrap builds the tool-handler that performs authz + context setup, then
-// delegates to upstream's tool handler. dsType == "" skips the
-// datasource resolution and tenant-type checks (org-only path); a
-// non-empty dsType triggers datasource resolution: caller-supplied
-// argName overrides; otherwise the first live datasource of dsType is
-// picked and its UID injected.
-func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, dsType grafana.DatasourceType, argName string, upstream mcpgrafana.Tool) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		needsTenant := dsType != ""
-		org, errRes := b.requireOrg(ctx, req, role, tenantType, needsTenant)
-		if errRes != nil {
-			return errRes, nil
+func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, datasourceType grafana.DatasourceType, argument string, upstream mcpgrafana.Tool) mcp.ToolHandler {
+	return func(ctx context.Context, incoming *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		request := *incoming
+		organization, refusal := b.requireOrg(ctx, &request, role, tenantType, datasourceType != "")
+		if refusal != nil {
+			return refusal, nil
 		}
-		if err := stripOrgArg(&req); err != nil {
-			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		if err := stripOrgArg(&request); err != nil {
+			return failure("malformed arguments", err), nil
 		}
-		ctx = b.attachGrafana(ctx, org.OrgID)
-		if dsType == "" {
-			return callUpstream(ctx, upstream, req)
+		ctx = b.attachGrafana(ctx, organization.OrgID)
+		if datasourceType == "" {
+			return invokeUpstream(ctx, upstream, &request)
 		}
-
-		opts := grafana.RequestOpts{OrgID: org.OrgID, Caller: authz.CallerSubject(ctx)}
-
-		if uid := req.GetString(argName, ""); uid != "" {
-			ds, err := b.grafana.LookupDatasourceByUID(ctx, opts, uid)
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr(argName, err), nil
-			}
-			if !grafana.MatchesType(ds, dsType) {
-				return mcp.NewToolResultError(fmt.Sprintf("datasource %q is type %q, not compatible with %s tools", uid, ds.Type, dsType)), nil
-			}
-			return callUpstream(ctx, upstream, req)
-		}
-
-		dss, err := b.grafana.ListDatasources(ctx, opts)
+		options := grafana.RequestOpts{OrgID: organization.OrgID, Caller: authz.GrafanaUser(ctx)}
+		uid, err := stringArgument(&request, argument)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("list datasources", err), nil
+			return failure("malformed arguments", err), nil
 		}
-		matches := grafana.FilterDatasourcesByType(dss, dsType)
+		if uid != "" {
+			datasource, err := b.grafana.LookupDatasourceByUID(ctx, options, uid)
+			if err != nil {
+				return failure(argument, err), nil
+			}
+			if !grafana.MatchesType(datasource, datasourceType) {
+				return errorResult(fmt.Sprintf("datasource %q is type %q, not compatible with %s tools", uid, datasource.Type, datasourceType)), nil
+			}
+			return invokeUpstream(ctx, upstream, &request)
+		}
+		datasources, err := b.grafana.ListDatasources(ctx, options)
+		if err != nil {
+			return failure("list datasources", err), nil
+		}
+		matches := grafana.FilterDatasourcesByType(datasources, datasourceType)
 		if len(matches) == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("org %q has no %s datasource", org.Name, dsType)), nil
+			return errorResult(fmt.Sprintf("org %q has no %s datasource", organization.Name, datasourceType)), nil
 		}
-		if err := injectArg(&req, argName, matches[0].UID); err != nil {
-			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
+		if err := injectArg(&request, argument, matches[0].UID); err != nil {
+			return failure("malformed arguments", err), nil
 		}
-		return callUpstream(ctx, upstream, req)
+		return invokeUpstream(ctx, upstream, &request)
 	}
 }
 
-// requireOrg resolves the "org" arg, runs authz, and (when checkTenant
-// is true) gates on tenantType. Returns a populated *CallToolResult on
-// failure that the caller should propagate; otherwise (Organization,
-// nil).
-func (b *gfBinder) requireOrg(ctx context.Context, req mcp.CallToolRequest, role authz.Role, tenantType authz.TenantType, checkTenant bool) (authz.Organization, *mcp.CallToolResult) {
-	orgRef, err := req.RequireString("org")
+func (b *gfBinder) requireOrg(ctx context.Context, request *mcp.CallToolRequest, role authz.Role, tenantType authz.TenantType, checkTenant bool) (authz.Organization, *mcp.CallToolResult) {
+	reference, err := stringArgument(request, "org")
 	if err != nil {
-		return authz.Organization{}, mcp.NewToolResultErrorFromErr("missing arg", err)
+		return authz.Organization{}, failure("missing arg", err)
 	}
-	org, err := b.authorizer.RequireOrg(ctx, orgRef, role)
+	if reference == "" {
+		return authz.Organization{}, errorResult("missing arg: org is required")
+	}
+	organization, err := b.authorizer.RequireOrg(ctx, reference, role)
 	if err != nil {
-		return authz.Organization{}, mcp.NewToolResultErrorFromErr("authz", err)
+		return authz.Organization{}, failure("authz", err)
 	}
-	if checkTenant && tenantType != "" && !org.HasTenantType(tenantType) {
-		return authz.Organization{}, mcp.NewToolResultError(fmt.Sprintf("org %q has no tenant of type %q — tool unavailable", orgRef, tenantType))
+	if checkTenant && tenantType != "" && !organization.HasTenantType(tenantType) {
+		return authz.Organization{}, errorResult(fmt.Sprintf("org %q has no tenant of type %q — tool unavailable", reference, tenantType))
 	}
-	return org, nil
+	return organization, nil
 }
 
-// attachGrafana stashes the per-request GrafanaConfig (carrying the
-// resolved OrgID and the OIDC-subject ExtraHeader) and the shared
-// upstream GrafanaClient on ctx. mcp-grafana's RoundTrippers read both
-// per request, so a single client serves every org. In JWT auth mode the
-// caller's own token rides in ExtraHeaders[JWTHeader] instead of a
-// shared credential.
-func (b *gfBinder) attachGrafana(ctx context.Context, orgID int64) context.Context {
-	cfg := mcpgrafana.GrafanaConfig{
+func (b *gfBinder) attachGrafana(ctx context.Context, organizationID int64) context.Context {
+	configuration := mcpgrafana.GrafanaConfig{
 		URL:       b.url,
 		APIKey:    b.auth.APIKey,
 		BasicAuth: b.auth.BasicAuth,
-		OrgID:     orgID,
+		OrgID:     organizationID,
 	}
 	headers := map[string]string{}
-	if subj := authz.CallerSubject(ctx); subj != "" {
-		// Grafana audit-log attribution to the OIDC subject rather
-		// than the server-admin SA we authenticate with.
-		headers["X-Grafana-User"] = subj
+	if identity := authz.GrafanaUser(ctx); identity != "" {
+		headers["X-Grafana-User"] = identity
 	}
 	if b.auth.JWTHeader != "" {
 		headers[b.auth.JWTHeader] = grafana.UserTokenFromContext(ctx)
 	}
 	if len(headers) > 0 {
-		cfg.ExtraHeaders = headers
+		configuration.ExtraHeaders = headers
 	}
-	ctx = mcpgrafana.WithGrafanaConfig(ctx, cfg)
+	ctx = mcpgrafana.WithGrafanaConfig(ctx, configuration)
 	ctx = mcpgrafana.WithGrafanaClient(ctx, b.client())
 	return ctx
 }
 
-// injectArg sets a key on req.Params.Arguments, copy-on-write. Returns
-// an error rather than silently dropping the caller's args when the
-// shape is malformed (json.RawMessage that doesn't decode as an object,
-// or any other unexpected type).
-func injectArg(req *mcp.CallToolRequest, key string, value any) error {
-	return editArgs(req, func(args map[string]any) { args[key] = value })
-}
-
-// stripOrgArg removes the synthetic "org" argument before a call goes to
-// the upstream handler: upstream rejects argument keys it does not
-// declare, and "org" is ours (see withOrg).
-func stripOrgArg(req *mcp.CallToolRequest) error {
-	return editArgs(req, func(args map[string]any) { delete(args, "org") })
-}
-
-// editArgs applies edit to a copy of req.Params.Arguments and stores the
-// copy, so the caller's request is never mutated in place.
-func editArgs(req *mcp.CallToolRequest, edit func(map[string]any)) error {
-	next := map[string]any{}
-	switch a := req.Params.Arguments.(type) {
-	case nil:
-	case map[string]any:
-		maps.Copy(next, a)
-	case json.RawMessage:
-		if err := json.Unmarshal(a, &next); err != nil {
-			return fmt.Errorf("decode arguments: %w", err)
-		}
-	default:
-		return fmt.Errorf("unexpected arguments type %T", a)
+func injectArg(request *mcp.CallToolRequest, key string, value any) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode argument: %w", err)
 	}
-	edit(next)
-	req.Params.Arguments = next
+	return editArgs(request, func(arguments map[string]json.RawMessage) { arguments[key] = encoded })
+}
+
+func stripOrgArg(request *mcp.CallToolRequest) error {
+	return editArgs(request, func(arguments map[string]json.RawMessage) { delete(arguments, "org") })
+}
+
+func editArgs(request *mcp.CallToolRequest, edit func(map[string]json.RawMessage)) error {
+	arguments := make(map[string]json.RawMessage)
+	if err := decodeArguments(request, &arguments); err != nil {
+		return fmt.Errorf("decode arguments: %w", err)
+	}
+	if arguments == nil {
+		return errors.New("arguments must be an object")
+	}
+	edit(arguments)
+	encoded, err := json.Marshal(arguments)
+	if err != nil {
+		return fmt.Errorf("encode arguments: %w", err)
+	}
+	parameters := *request.Params
+	parameters.Arguments = encoded
+	request.Params = &parameters
 	return nil
 }
 
-// mcp-grafana v2 exposes its tools with official MCP Go SDK types; our
-// server runs on mark3labs/mcp-go. toolFromSDK, callUpstream and
-// resultFromSDK bridge the two at the gfBinder boundary.
-
-// toolFromSDK converts an upstream tool definition to a mark3labs tool.
-// The schema is carried as RawInputSchema; withOrg normalizes it.
-func toolFromSDK(t *sdkmcp.Tool) mcp.Tool {
-	out := mcp.Tool{Name: t.Name, Description: t.Description}
-	switch schema := t.InputSchema.(type) {
-	case nil:
-	case json.RawMessage:
-		out.RawInputSchema = schema
-	default:
-		raw, err := json.Marshal(schema)
-		if err != nil {
-			panic(fmt.Sprintf("tools: tool %q has unmarshalable input schema: %v", t.Name, err))
-		}
-		out.RawInputSchema = raw
-	}
-	if a := t.Annotations; a != nil {
-		out.Annotations = mcp.ToolAnnotation{
-			Title:           a.Title,
-			ReadOnlyHint:    mcp.ToBoolPtr(a.ReadOnlyHint),
-			DestructiveHint: a.DestructiveHint,
-			IdempotentHint:  mcp.ToBoolPtr(a.IdempotentHint),
-			OpenWorldHint:   a.OpenWorldHint,
-		}
-	}
-	return out
-}
-
-// callUpstream converts req to an SDK request, runs the upstream
-// handler and converts its result back. A handler error (upstream
-// HardError) is returned unchanged.
-func callUpstream(ctx context.Context, upstream mcpgrafana.Tool, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	params := &sdkmcp.CallToolParamsRaw{Name: req.Params.Name}
-	if req.Params.Arguments != nil {
-		args, err := json.Marshal(req.Params.Arguments)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("malformed arguments", err), nil
-		}
-		params.Arguments = args
-	}
-	if req.Params.Meta != nil {
-		raw, err := json.Marshal(req.Params.Meta)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("malformed _meta", err), nil
-		}
-		if err := json.Unmarshal(raw, &params.Meta); err != nil {
-			return mcp.NewToolResultErrorFromErr("malformed _meta", err), nil
-		}
-	}
-	res, err := upstream.Handler(ctx, &sdkmcp.CallToolRequest{Params: params})
-	if err != nil {
-		return nil, err
-	}
-	return resultFromSDK(res)
-}
-
-// resultFromSDK converts an upstream result through its wire form, so
-// every content type (text, image, embedded resource) and _meta carry
-// over.
-func resultFromSDK(r *sdkmcp.CallToolResult) (*mcp.CallToolResult, error) {
-	if r == nil {
+func invokeUpstream(ctx context.Context, upstream mcpgrafana.Tool, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	result, err := upstream.Handler(ctx, request)
+	if err == nil && result == nil {
 		return nil, errors.New("upstream returned no result")
 	}
-	raw, err := json.Marshal(r)
-	if err != nil {
-		return nil, fmt.Errorf("encode upstream result: %w", err)
-	}
-	msg := json.RawMessage(raw)
-	res, err := mcp.ParseCallToolResult(&msg)
-	if err != nil {
-		return nil, fmt.Errorf("decode upstream result: %w", err)
-	}
-	return res, nil
+	return result, err
 }

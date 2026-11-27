@@ -76,8 +76,8 @@ podDisruptionBudget:
 # NetworkPolicySpec — paste any shape the K8s API accepts. The chart owns
 # only the podSelector (it has to match the deployment labels).
 #
-# Default ingress allows the mcp + metrics ports from any pod; tighten
-# with from: selectors per the upstream NetworkPolicySpec. Egress is
+# Default ingress permits the configured platform gateways on HTTP and Alloy
+# metrics collectors on metrics. Override ingress for another data plane. Egress is
 # unrestricted unless you add Egress to policyTypes and supply egress
 # rules — remember to allow kube-dns + your Grafana / Dex / OTLP peers.
 networkPolicy:
@@ -85,9 +85,39 @@ networkPolicy:
   policyTypes:
     - Ingress
   ingress:  # @schema itemProperties: {}; itemRef: $k8s/_definitions.json#/definitions/io.k8s.api.networking.v1.NetworkPolicyIngressRule
-    - ports:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: muster
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentgateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: envoy
+              gateway.envoyproxy.io/owning-gateway-name: giantswarm-default
+              gateway.envoyproxy.io/owning-gateway-namespace: envoy-gateway-system
+      ports:
         - port: http
           protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+              app.kubernetes.io/instance: alloy-metrics
+      ports:
         - port: metrics
           protocol: TCP
   egress: []
@@ -161,6 +191,12 @@ mcp:
 oauth:
   # Public-facing issuer URL for this MCP (what MCP clients' OAuth requests target)
   issuer: "https://mcp-observability-platform.example.com"
+  # Disable the local authorization server when trusted external issuers handle login.
+  enableAuthorizationServer: true
+  # Canonical protected-resource URL. Empty retains the issuer-based identifier.
+  resource: ""
+  # Issuer identifiers advertised to clients; each must be local or explicitly trusted.
+  authorizationServers: []
   allowInsecureHTTP: false
   # Enable Dynamic Client Registration (RFC 7591) without a registration token.
   # ON by default: MCP clients (e.g. Claude Code, mcp-inspector) register
@@ -180,8 +216,7 @@ oauth:
       tls: false
       # existingSecret must contain: password (only when backend=valkey and password is set)
       existingSecret: ""
-  # AES-256 key used by mcp-oauth to encrypt tokens at rest (optional but
-  # recommended). existingSecret must contain: encryptionKey (32 bytes, hex or raw)
+  # Required for Valkey. existingSecret must contain: encryptionKey (base64 of 32 bytes).
   encryption:
     existingSecret: ""
   # Additional OAuth client IDs whose tokens are accepted — for SSO token
@@ -192,20 +227,18 @@ oauth:
   # External issuers whose Bearer JWTs are accepted at /mcp alongside Dex,
   # for on-behalf-of traffic carrying muster-issued tokens. Unlike
   # trustedAudiences these are full issuers (own signing keys), validated via
-  # JWKS. Each entry needs at least issuer and jwksURL. subjectClaim remaps
-  # the caller subject to another claim (e.g. "email", the handle Grafana
-  # provisions OAuth users by); tokens without that claim are rejected. With
-  # muster forwarding its issued token
-  # unchanged, allowedAudiences is muster's own resource identifier, not a
-  # per-backend value. acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068);
+  # JWKS. Each entry requires issuer, an HTTPS jwksURI and explicit audiences.
+  # subjectClaim=email selects a verified email as username; issuer and sub
+  # remain the stable account identity. Audiences must match the accepted tokens;
+  # see docs/sdk-upgrade.md for the broker-audience compatibility setting.
+  # acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068);
   # set [""] to accept tokens with no typ header (e.g. Kubernetes
   # ServiceAccount tokens). Example:
   #   trustedIssuers:
   #     - issuer: "https://muster.example.com"
-  #       jwksURL: "http://muster.muster.svc.cluster.local:8080/.well-known/jwks.json"
+  #       jwksURI: "https://broker.example.com/.well-known/jwks.json"
   #       subjectClaim: "email"
-  #       allowedAudiences: ["https://muster.example.com/mcp"]
-  #       allowPrivateIPJWKSHosts: ["muster.muster.svc.cluster.local"]
+  #       audiences: ["https://muster.example.com/mcp"]
   trustedIssuers: []
   # Custom URI schemes accepted during public client registration (beyond
   # the always-allowed loopback HTTPS). Example: ["cursor", "vscode",

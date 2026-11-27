@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"io"
@@ -24,9 +25,11 @@ const responseTypeCode = "code"
 // consent page, and returns the scopes of the Dex redirect.
 func dexAuthorizationScopes(t *testing.T, clientScope string) []string {
 	t.Helper()
-	oauthHandler, _, storeClose, err := buildOAuthHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), true)
+	settings, err := loadOAuthSettings(slog.New(slog.NewTextHandler(io.Discard, nil)), transportStreamableHTTP)
 	require.NoError(t, err)
-	t.Cleanup(storeClose)
+	oauthHandler, storeClose, err := buildOAuthHandler(settings)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, storeClose(context.WithoutCancel(t.Context()))) })
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/authorize", oauthHandler.ServeAuthorization)
 	mux.HandleFunc("/oauth/register", oauthHandler.ServeClientRegistration)
