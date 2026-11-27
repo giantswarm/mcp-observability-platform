@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -49,23 +50,40 @@ type authorizer struct {
 	orgs    OrgLister
 	grafana grafana.Client
 
+	callerToken bool
+
 	cacheMu          sync.RWMutex
 	cache            map[roleCacheKey]cacheEntry
 	cacheTTL         time.Duration
 	negativeCacheTTL time.Duration
 }
 
+// Option configures an Authorizer.
+type Option func(*authorizer)
+
+// WithCallerToken selects the JWT auth mode role lookup: gc forwards the
+// caller's own token, so the authorizer asks Grafana for the current
+// user's orgs (grafana.Client.CurrentUserOrgs) instead of LookupUser +
+// UserOrgs, which need a server-admin credential.
+func WithCallerToken() Option {
+	return func(a *authorizer) { a.callerToken = true }
+}
+
 // NewAuthorizer constructs an Authorizer. cacheTTL/negativeCacheTTL <= 0
 // disables caching for that polarity (every call re-fetches from Grafana —
 // useful for tests that count upstream calls).
-func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL time.Duration) Authorizer {
-	return &authorizer{
+func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL time.Duration, options ...Option) Authorizer {
+	authorizer := &authorizer{
 		orgs:             orgs,
 		grafana:          gc,
 		cache:            make(map[roleCacheKey]cacheEntry),
 		cacheTTL:         cacheTTL,
 		negativeCacheTTL: negativeCacheTTL,
 	}
+	for _, option := range options {
+		option(authorizer)
+	}
+	return authorizer
 }
 
 // ListOrgs returns the caller's authorised orgs + role by asking Grafana
@@ -168,6 +186,9 @@ func (a *authorizer) resolveRoles(ctx context.Context, user *providers.UserInfo)
 	if grafanaIdentity(user) == "" {
 		return nil, ErrNoCallerIdentity
 	}
+	if a.callerToken && grafana.UserTokenFromContext(ctx) == "" {
+		return nil, ErrCallerTokenNotForwardable
+	}
 	if hit, ok := a.cacheLookup(roleKey(user)); ok {
 		if hit.status == statusUnknownToGrafana {
 			return nil, ErrCallerUnknownToGrafana
@@ -216,6 +237,9 @@ func accessibleOrgs(roles map[int64]Role, orgs []Organization) map[string]Organi
 // load asks Grafana for the user and their org roles, then caches OrgID →
 // Role with the appropriate positive-or-negative TTL.
 func (a *authorizer) load(ctx context.Context, caller *providers.UserInfo) (cacheEntry, error) {
+	if a.callerToken {
+		return a.loadCurrentUser(ctx, caller)
+	}
 	user, err := a.grafana.LookupUser(ctx, grafanaIdentity(caller))
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana lookup: %w", err)
@@ -239,6 +263,38 @@ func (a *authorizer) load(ctx context.Context, caller *providers.UserInfo) (cach
 		roles[e.OrgID] = role
 	}
 	return a.cacheStore(roleKey(caller), statusKnown, roles), nil
+}
+
+// loadCurrentUser is load for WithCallerToken: Grafana resolves the
+// caller from their own forwarded token. A 401 means Grafana rejected
+// the token ([auth.jwt] auto-signs users up, so there is no "unknown
+// user" state); it keeps Grafana's reason and is not cached, like a
+// missing token.
+func (a *authorizer) loadCurrentUser(ctx context.Context, caller *providers.UserInfo) (cacheEntry, error) {
+	entries, err := a.grafana.CurrentUserOrgs(ctx)
+	switch {
+	case errors.Is(err, grafana.ErrNoUserToken):
+		return cacheEntry{}, ErrCallerTokenNotForwardable
+	case errors.Is(err, grafana.ErrUnauthorized):
+		return cacheEntry{}, fmt.Errorf("%w: %w", ErrGrafanaRejectedToken, err)
+	case err != nil:
+		return cacheEntry{}, fmt.Errorf("grafana current user orgs: %w", err)
+	}
+	return a.storeRoles(caller, entries), nil
+}
+
+// storeRoles maps Grafana's org memberships to Roles, drops RoleNone, and
+// caches the result.
+func (a *authorizer) storeRoles(caller *providers.UserInfo, entries []grafana.UserOrgMembership) cacheEntry {
+	roles := make(map[int64]Role, len(entries))
+	for _, e := range entries {
+		role := roleFromGrafana(e.Role)
+		if role == RoleNone {
+			continue
+		}
+		roles[e.OrgID] = role
+	}
+	return a.cacheStore(roleKey(caller), statusKnown, roles)
 }
 
 // findOrganization locates an Organization by Name or DisplayName,

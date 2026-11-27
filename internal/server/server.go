@@ -27,6 +27,8 @@ type Config struct {
 	Authorizer       authz.Authorizer
 	Grafana          grafana.Client
 	GrafanaURL       string
+	GrafanaPublicURL string
+	GrafanaJWTHeader string
 	GrafanaAPIKey    string
 	GrafanaBasicAuth *url.Userinfo
 	Version          string
@@ -69,7 +71,7 @@ func New(configuration Config) (*mcp.Server, error) {
 	registrar := policyRegistrar{server: server, wrap: func(next mcp.ToolHandler) mcp.ToolHandler {
 		return middleware.Instrument()(wrapPolicy(middleware.RequireCaller()(next)))
 	}}
-	if err := tools.RegisterAll(registrar, configuration.Authorizer, configuration.Grafana, configuration.GrafanaURL, configuration.GrafanaAPIKey, configuration.GrafanaBasicAuth, configuration.DisabledTools); err != nil {
+	if err := tools.RegisterAll(registrar, configuration.Authorizer, configuration.Grafana, configuration.GrafanaURL, configuration.GrafanaPublicURL, tools.GrafanaAuth{APIKey: configuration.GrafanaAPIKey, BasicAuth: configuration.GrafanaBasicAuth, JWTHeader: configuration.GrafanaJWTHeader}, configuration.DisabledTools); err != nil {
 		return nil, fmt.Errorf("server: register tools: %w", err)
 	}
 	return server, nil

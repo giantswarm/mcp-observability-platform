@@ -2,7 +2,6 @@ package grafana
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // newTestServer wraps handler with a default Content-Type: application/json
@@ -38,7 +39,7 @@ func TestClient_AuthHeader_Bearer(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 5}, 1, "api/v1/query", nil)
+	_, err := c.DatasourceProxy(t.Context(), RequestOpts{OrgID: 5}, 1, "api/v1/query", nil)
 	if err != nil {
 		t.Fatalf("DatasourceProxy: %v", err)
 	}
@@ -59,13 +60,105 @@ func TestClient_AuthHeader_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
+	_, err = c.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 	if err != nil {
 		t.Fatalf("DatasourceProxy: %v", err)
 	}
 	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:pw"))
 	if gotAuth != want {
 		t.Errorf("basic auth = %q, want %q", gotAuth, want)
+	}
+}
+
+const testJWTHeader = "X-JWT-Assertion"
+
+// newJWTTestServer is newTestServer in JWT auth mode.
+func newJWTTestServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, Client) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		handler(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	c, err := New(Config{URL: ts.URL, JWTHeader: testJWTHeader})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return ts, c
+}
+
+func TestClient_JWT_ForwardsCallerToken(t *testing.T) {
+	var gotJWT, gotAuth string
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotJWT = r.Header.Get(testJWTHeader)
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("{}"))
+	})
+
+	ctx := WithUserToken(t.Context(), "id-token-alice")
+	if _, err := c.DatasourceProxy(ctx, RequestOpts{OrgID: 1}, 1, "api/v1/query", nil); err != nil {
+		t.Fatalf("DatasourceProxy: %v", err)
+	}
+	if gotJWT != "id-token-alice" {
+		t.Errorf("%s = %q, want id-token-alice", testJWTHeader, gotJWT)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want none in JWT mode", gotAuth)
+	}
+}
+
+func TestClient_JWT_NoTokenSendsNothing(t *testing.T) {
+	var hits atomic.Int64
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("[]"))
+	})
+
+	_, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1})
+	if !errors.Is(err, ErrNoUserToken) {
+		t.Fatalf("err = %v, want ErrNoUserToken", err)
+	}
+	if _, err := c.CurrentUserOrgs(t.Context()); !errors.Is(err, ErrNoUserToken) {
+		t.Fatalf("CurrentUserOrgs err = %v, want ErrNoUserToken", err)
+	}
+	if got := hits.Load(); got != 0 {
+		t.Errorf("upstream hit %d times, want 0 without a caller token", got)
+	}
+}
+
+func TestClient_CurrentUserOrgs(t *testing.T) {
+	var gotPath, gotOrg string
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotOrg = r.Header.Get("X-Grafana-Org-Id")
+		_, _ = w.Write([]byte(`[{"orgId":1,"name":"Main","role":"Viewer"},{"orgId":7,"name":"acme","role":"Admin"}]`))
+	})
+
+	got, err := c.CurrentUserOrgs(WithUserToken(t.Context(), "tok"))
+	if err != nil {
+		t.Fatalf("CurrentUserOrgs: %v", err)
+	}
+	if gotPath != "/api/user/orgs" {
+		t.Errorf("path = %q, want /api/user/orgs", gotPath)
+	}
+	if gotOrg != "" {
+		t.Errorf("X-Grafana-Org-Id = %q, want none", gotOrg)
+	}
+	want := []UserOrgMembership{{OrgID: 1, Role: "Viewer"}, {OrgID: 7, Role: "Admin"}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("orgs = %+v, want %+v", got, want)
+	}
+}
+
+func TestClient_CurrentUserOrgs_Unauthorized(t *testing.T) {
+	_, c := newJWTTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"invalid JWT"}`))
+	})
+
+	_, err := c.CurrentUserOrgs(WithUserToken(t.Context(), "tok"))
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
 	}
 }
 
@@ -79,7 +172,7 @@ func TestClient_OrgIDAndCallerHeaders(t *testing.T) {
 	defer ts.Close()
 
 	opts := RequestOpts{OrgID: 42, Caller: "alice@example.com"}
-	_, err := c.DatasourceProxy(context.Background(), opts, 1, "api/v1/query", nil)
+	_, err := c.DatasourceProxy(t.Context(), opts, 1, "api/v1/query", nil)
 	if err != nil {
 		t.Fatalf("DatasourceProxy: %v", err)
 	}
@@ -103,7 +196,7 @@ func TestClient_OmitsOrgIdWhenZero(t *testing.T) {
 	})
 	defer ts.Close()
 
-	if err := c.VerifyServerAdmin(context.Background()); err != nil {
+	if err := c.VerifyServerAdmin(t.Context()); err != nil {
 		t.Fatalf("VerifyServerAdmin: %v", err)
 	}
 	if sawHeader {
@@ -116,7 +209,7 @@ func TestClient_VerifyServerAdmin_Unauthorised(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 	})
 	defer ts.Close()
-	if err := c.VerifyServerAdmin(context.Background()); err == nil {
+	if err := c.VerifyServerAdmin(t.Context()); err == nil {
 		t.Errorf("expected error on 403")
 	}
 }
@@ -130,7 +223,7 @@ func TestClient_DetectsPrometheusErrorIn200(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 5, "api/v1/query", url.Values{"query": []string{"bad"}})
+	_, err := c.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 5, "api/v1/query", url.Values{"query": []string{"bad"}})
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -149,7 +242,7 @@ func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 	defer ts.Close()
 
 	q := url.Values{"query": []string{"up"}, "start": []string{"1"}, "end": []string{"2"}}
-	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 7, "api/v1/query_range", q)
+	_, err := c.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 7, "api/v1/query_range", q)
 	if err != nil {
 		t.Fatalf("DatasourceProxy: %v", err)
 	}
@@ -165,13 +258,16 @@ func TestClient_DatasourceProxy_PathAndQuery(t *testing.T) {
 }
 
 func TestNew_Validation(t *testing.T) {
+	const onlyOne = "only one of"
 	cases := []struct {
 		cfg  Config
 		want string
 	}{
 		{Config{}, "URL is required"},
-		{Config{URL: "x"}, "Token or BasicAuth"},
-		{Config{URL: "x", Token: "t", BasicAuth: "a:b"}, "only one of"},
+		{Config{URL: "x"}, "Token, BasicAuth or JWTHeader"},
+		{Config{URL: "x", Token: "t", BasicAuth: "a:b"}, onlyOne},
+		{Config{URL: "x", Token: "t", JWTHeader: testJWTHeader}, onlyOne},
+		{Config{URL: "x", BasicAuth: "a:b", JWTHeader: testJWTHeader}, onlyOne},
 	}
 	for _, c := range cases {
 		_, err := New(c.cfg)
@@ -226,7 +322,7 @@ func TestDatasourceProxy_RejectsInvalidPath(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 5, "api/../secret", nil)
+	_, err := c.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 5, "api/../secret", nil)
 	if err == nil {
 		t.Fatalf("expected error on traversal path")
 	}
@@ -246,7 +342,7 @@ func TestDoGET_CapsResponseBody(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := c.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
+	_, err := c.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 	if err == nil {
 		t.Fatalf("expected size-cap error, got nil")
 	}
@@ -280,7 +376,7 @@ func TestClient_ErrorStatusCodes_SurfaceUpstreamBody(t *testing.T) {
 			})
 			defer ts.Close()
 
-			_, err := client.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
+			_, err := client.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 			if err == nil {
 				t.Fatalf("expected error for status %d", c.status)
 			}
@@ -318,7 +414,7 @@ func TestClient_LookupUser_ErrorPaths(t *testing.T) {
 			})
 			defer ts.Close()
 
-			u, err := client.LookupUser(context.Background(), "alice@example.com")
+			u, err := client.LookupUser(t.Context(), "alice@example.com")
 			if c.wantError && err == nil {
 				t.Fatalf("expected error for status %d", c.status)
 			}
@@ -343,7 +439,7 @@ func TestClient_ErrorBodyCapped(t *testing.T) {
 	})
 	defer ts.Close()
 
-	_, err := client.DatasourceProxy(context.Background(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
+	_, err := client.DatasourceProxy(t.Context(), RequestOpts{OrgID: 1}, 1, "api/v1/query", nil)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -370,7 +466,7 @@ func TestClient_ListDatasources_ParsesManageAlertsAndForwardsOrg(t *testing.T) {
 	})
 	defer ts.Close()
 
-	got, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 7})
+	got, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 7})
 	if err != nil {
 		t.Fatalf("ListDatasources: %v", err)
 	}
@@ -402,7 +498,7 @@ func TestClient_ListDatasources_ErrorOnNon2xx(t *testing.T) {
 		_, _ = w.Write([]byte(`{"message":"nope"}`))
 	})
 	defer ts.Close()
-	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err == nil {
+	if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1}); err == nil {
 		t.Fatal("expected error on 403, got nil")
 	}
 }
@@ -452,7 +548,7 @@ func TestClient_LookupDatasourceByUID(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			})
 			defer ts.Close()
-			got, err := c.LookupDatasourceByUID(context.Background(), RequestOpts{OrgID: 1}, tc.uid)
+			got, err := c.LookupDatasourceByUID(t.Context(), RequestOpts{OrgID: 1}, tc.uid)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
@@ -505,7 +601,7 @@ func TestClient_ListDatasources_CachesPerOrg(t *testing.T) {
 	defer ts.Close()
 
 	for i := 0; i < 3; i++ {
-		if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+		if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1}); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
@@ -518,11 +614,11 @@ func TestClient_ListDatasources_CacheTTLExpiry(t *testing.T) {
 	ts, c, hits, nowNs := newCacheTestServer(t, onePromDatasourceBody)
 	defer ts.Close()
 
-	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+	if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1}); err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	nowNs.Add(int64(c.dsCacheTTL) + int64(time.Second))
-	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+	if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1}); err != nil {
 		t.Fatalf("post-TTL: %v", err)
 	}
 	if got := atomic.LoadInt64(hits); got != 2 {
@@ -530,14 +626,53 @@ func TestClient_ListDatasources_CacheTTLExpiry(t *testing.T) {
 	}
 }
 
+const (
+	testCallerA = "alice"
+	testCallerB = "bob"
+)
+
+// A per-user result (JWT auth mode) must never serve another caller in
+// the same org.
+func TestClient_ListDatasources_CachePerCallerIsolation(t *testing.T) {
+	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+	c.jwtHeader = "X-JWT-Assertion"
+
+	for _, caller := range []string{testCallerA, testCallerB, testCallerA} {
+		ctx := WithUserToken(t.Context(), caller+"-token")
+		if _, err := c.ListDatasources(ctx, RequestOpts{OrgID: 1, Caller: caller}); err != nil {
+			t.Fatalf("caller %s: %v", caller, err)
+		}
+	}
+	if got := atomic.LoadInt64(hits); got != 2 {
+		t.Errorf("upstream hit %d times, want 2 (per-caller isolation broken)", got)
+	}
+}
+
+// With the shared SA credential every caller sees the same list, so
+// callers in one org share one cache entry.
+func TestClient_ListDatasources_CacheSharedAcrossCallersWithSA(t *testing.T) {
+	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
+	defer ts.Close()
+
+	for _, caller := range []string{testCallerA, testCallerB} {
+		if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1, Caller: caller}); err != nil {
+			t.Fatalf("caller %s: %v", caller, err)
+		}
+	}
+	if got := atomic.LoadInt64(hits); got != 1 {
+		t.Errorf("upstream hit %d times, want 1 (SA mode shares the org entry)", got)
+	}
+}
+
 func TestClient_ListDatasources_CachePerOrgIsolation(t *testing.T) {
 	ts, c, hits, _ := newCacheTestServer(t, onePromDatasourceBody)
 	defer ts.Close()
 
-	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err != nil {
+	if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1}); err != nil {
 		t.Fatalf("org 1: %v", err)
 	}
-	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 2}); err != nil {
+	if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 2}); err != nil {
 		t.Fatalf("org 2: %v", err)
 	}
 	if got := atomic.LoadInt64(hits); got != 2 {
@@ -565,11 +700,11 @@ func TestClient_ListDatasources_ErrorNotCached(t *testing.T) {
 	defer ts.Close()
 	c, _ := New(Config{URL: ts.URL, Token: "t"})
 
-	if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1}); err == nil {
+	if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1}); err == nil {
 		t.Fatal("expected error from 502")
 	}
 	fail.Store(false)
-	got, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: 1})
+	got, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: 1})
 	if err != nil {
 		t.Fatalf("retry after recovery: %v", err)
 	}
@@ -592,10 +727,10 @@ func TestClient_LookupDatasourceByUID_SharesCache(t *testing.T) {
 	ts, c, hits, _ := newCacheTestServer(t, body)
 	defer ts.Close()
 
-	if _, err := c.LookupDatasourceByUID(context.Background(), RequestOpts{OrgID: 1}, "u1"); err != nil {
+	if _, err := c.LookupDatasourceByUID(t.Context(), RequestOpts{OrgID: 1}, "u1"); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if _, err := c.LookupDatasourceByUID(context.Background(), RequestOpts{OrgID: 1}, "u2"); err != nil {
+	if _, err := c.LookupDatasourceByUID(t.Context(), RequestOpts{OrgID: 1}, "u2"); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	if got := atomic.LoadInt64(hits); got != 1 {
@@ -616,7 +751,7 @@ func TestClient_ListDatasources_ConcurrentSafe(t *testing.T) {
 		wg.Add(1)
 		go func(orgID int64) {
 			defer wg.Done()
-			if _, err := c.ListDatasources(context.Background(), RequestOpts{OrgID: orgID}); err != nil {
+			if _, err := c.ListDatasources(t.Context(), RequestOpts{OrgID: orgID}); err != nil {
 				errs <- err
 			}
 		}(int64(i % 4))
@@ -646,4 +781,22 @@ func TestRedactedHeader_DoesNotLeakInPrints(t *testing.T) {
 			t.Errorf("authHeader %s did not contain REDACTED: %q", verb, s)
 		}
 	}
+}
+
+func TestClient_JWTDatasourceCacheRequiresCurrentCredential(t *testing.T) {
+	var calls atomic.Int64
+	_, client := newJWTTestServer(t, func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(onePromDatasourceBody))
+	})
+	options := RequestOpts{OrgID: 1, Caller: testCallerA}
+	_, err := client.ListDatasources(WithUserToken(t.Context(), "first-user-token"), options)
+	require.NoError(t, err)
+	_, err = client.ListDatasources(t.Context(), options)
+	require.ErrorIs(t, err, ErrNoUserToken)
+	require.EqualValues(t, 1, calls.Load())
+	_, err = client.ListDatasources(WithUserToken(t.Context(), "second-user-token"), options)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, calls.Load())
 }

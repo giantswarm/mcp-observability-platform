@@ -103,6 +103,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err := guardStdioInCluster(flagTransport); err != nil {
 		return err
 	}
+	jwtMode := cfg.GrafanaAuthMode == grafanaAuthModeJWT
+	if jwtMode && flagTransport == transportStdio {
+		return fmt.Errorf("GRAFANA_AUTH_MODE=jwt requires an HTTP transport: stdio has no caller token")
+	}
 	// --debug on the CLI forces debug on; otherwise DEBUG env (via cfg) wins.
 	logLevel := slog.LevelInfo
 	if cfg.Debug || flagDebug {
@@ -132,23 +136,29 @@ func runServe(_ *cobra.Command, _ []string) error {
 		URL:       cfg.GrafanaURL,
 		Token:     cfg.GrafanaSAToken,
 		BasicAuth: cfg.GrafanaBasicAuth,
+		JWTHeader: cfg.GrafanaJWTHeader,
 	})
 	if err != nil {
 		return fmt.Errorf("grafana client: %w", err)
 	}
-	if err := grafanaClient.VerifyServerAdmin(shutdownCtx); err != nil {
+	var authzOptions []authz.Option
+	if jwtMode {
+		authzOptions = append(authzOptions, authz.WithCallerToken())
+	} else if err := grafanaClient.VerifyServerAdmin(shutdownCtx); err != nil {
 		return fmt.Errorf(
 			"grafana credential is not server-admin (cannot list all orgs); "+
 				"use a server-admin SA token, or set GRAFANA_BASIC_AUTH=admin:password: %w", err)
 	}
-	logger.Info("Grafana server-admin credential verified")
+	if !jwtMode {
+		logger.Info("Grafana server-admin credential verified")
+	}
 
 	// authz uses Grafana as the source of truth for per-org roles. Positive
 	// entries cache 30s; negative ones (user-not-found, no roles) use a 5s
 	// TTL so a mid-SSO-outage failure doesn't lock anyone out for half a
 	// minute.
 	authorizer := authz.NewAuthorizer(orgLister, grafanaClient,
-		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL)
+		authz.DefaultCacheTTL, authz.DefaultNegativeCacheTTL, authzOptions...)
 
 	oauthHandler, cleanupOAuth, err := buildOAuthHandler(oauthSettings)
 	if err != nil {
@@ -196,6 +206,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 		Authorizer:       authorizer,
 		Grafana:          grafanaClient,
 		GrafanaURL:       cfg.GrafanaURL,
+		GrafanaPublicURL: cfg.GrafanaPublicURL,
+		GrafanaJWTHeader: cfg.GrafanaJWTHeader,
 		GrafanaAPIKey:    apiKey,
 		GrafanaBasicAuth: basicAuth,
 		Version:          version,
@@ -216,7 +228,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return mcp.Run(shutdownCtx, &mcpsrv.StdioTransport{})
 	}
 
-	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler)
+	mcpHandler := buildMCPMux(flagTransport, mcp, oauthHandler, jwtMode)
 	obsMux := buildObsMux(orgLister, cacheAlive)
 
 	// IdleTimeout closes keep-alives idle past 60s on both servers.

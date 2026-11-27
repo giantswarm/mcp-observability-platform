@@ -339,3 +339,5 @@ layout table and what each package is responsible for.
 - `giantswarm/observability-operator` — owns the GrafanaOrganization CRD
 - `giantswarm/mcp-prometheus`, `giantswarm/mcp-kubernetes` — sibling MCPs
   that set the conventions followed here
+
+For caller-authenticated Grafana access, see [Grafana JWT authentication](docs/grafana-jwt.md).

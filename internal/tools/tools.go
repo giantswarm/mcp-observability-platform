@@ -41,15 +41,22 @@ func maybeAddTool(s Registrar, disabled map[string]bool, t *mcp.Tool, h mcp.Tool
 	s.AddTool(t, h)
 }
 
+type GrafanaAuth struct {
+	APIKey    string
+	BasicAuth *url.Userinfo
+	JWTHeader string
+}
+
 // RegisterAll wires every category of tool into the MCP server. See
 // doc.go for the per-category breakdown. disabled (typically
 // sourced from --disabled-tools) is consulted at every s.AddTool site
 // via maybeAddTool; nil = no filter.
-func RegisterAll(s Registrar, az authz.Authorizer, gc grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) error {
-	b, err := newGFBinder(az, gc, grafanaURL, apiKey, basicAuth, disabled)
+func RegisterAll(s Registrar, az authz.Authorizer, gc grafana.Client, grafanaURL, grafanaPublicURL string, auth GrafanaAuth, disabled map[string]bool) error {
+	b, err := newGFBinder(az, gc, grafanaURL, auth, disabled)
 	if err != nil {
 		return err
 	}
+	b.publicURL = grafanaPublicURL
 	registerAll(s, az, gc, b, disabled)
 	return nil
 }

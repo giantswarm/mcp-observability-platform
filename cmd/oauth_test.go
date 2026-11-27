@@ -149,7 +149,7 @@ func TestOAuthResourceServerModeOnWire(t *testing.T) {
 				require.NoError(t, cleanup(ctx))
 			})
 			native := mcp.NewServer(&mcp.Implementation{Name: "resource-only", Version: "dev"}, nil)
-			host := httptest.NewServer(buildMCPMux(transport, native, oauthHandler))
+			host := httptest.NewServer(buildMCPMux(transport, native, oauthHandler, false))
 			t.Cleanup(host.Close)
 			path := mcpPath
 			if transport == transportSSE {

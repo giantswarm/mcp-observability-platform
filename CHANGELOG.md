@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Support caller-authenticated Grafana JWT requests and browser-facing Grafana URLs with native SDK transports.
+- Keep provider ID tokens out of MCP token responses and restrict dynamic registration to loopback redirects by default. Request configured Dex scopes for every authorization flow.
+- Default chart Grafana authentication to JWT and public client registration to enabled.
+
 - Use mcp-oauth v1.24.0 shared configuration and cleanup, toolkit v0.12.0 policies and the validated upstream user context. Audit identity fields are nested under `user`.
 - Accept delegated actors without an issuer. Preserve stable issuer and subject keys independently of verified email lookup.
 - Configure resource-only OAuth mode and advertised authorization servers through chart values. Retain legacy issuer JSON keys for an overlap release.

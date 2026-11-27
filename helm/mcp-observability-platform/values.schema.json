@@ -2045,6 +2045,12 @@
                 "existingSecret": {
                     "type": "string"
                 },
+                "jwtHeader": {
+                    "type": "string"
+                },
+                "publicUrl": {
+                    "type": "string"
+                },
                 "url": {
                     "type": "string"
                 }

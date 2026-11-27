@@ -33,8 +33,8 @@ func TestMCPMuxAuthenticationAndResourceMetadata(t *testing.T) {
 			}
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, oauth.Shutdown(context.WithoutCancel(t.Context()))) })
-			native := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
-			host := httptest.NewServer(buildMCPMux(transport, native, handler.New(oauth, logger)))
+			native := mcp.NewServer(&mcp.Implementation{Name: clientControlsName, Version: clientControlsName}, nil)
+			host := httptest.NewServer(buildMCPMux(transport, native, handler.New(oauth, logger), false))
 			defer host.Close()
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, host.URL+resourcePath, strings.NewReader(`{}`))
 			require.NoError(t, err)

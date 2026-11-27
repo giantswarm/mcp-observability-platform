@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/giantswarm/mcp-oauth/handler"
@@ -16,7 +17,13 @@ import (
 	oauthserver "github.com/giantswarm/mcp-oauth/server"
 )
 
-const envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
+const (
+	envOAuthTrustedIssuers               = "OAUTH_TRUSTED_ISSUERS"
+	envOAuthDexScopes                    = "OAUTH_DEX_SCOPES"
+	envOAuthStorageBackend               = "OAUTH_STORAGE_BACKEND"
+	envOAuthOmitIDToken                  = "OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE" //nolint:gosec // Environment variable name.
+	envOAuthRestrictRegistrationLoopback = "OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS"
+)
 
 // loadOAuthSettings resolves application defaults before background workers start.
 func loadOAuthSettings(logger *slog.Logger, transport string) (oauthconfig.Settings, error) {
@@ -24,9 +31,15 @@ func loadOAuthSettings(logger *slog.Logger, transport string) (oauthconfig.Setti
 	if err != nil {
 		return oauthconfig.Settings{}, err
 	}
-	defaults := map[string]string{"OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS": "true"}
+	enabled := strconv.FormatBool(true)
+	defaults := map[string]string{
+		"OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS": enabled,
+		envOAuthOmitIDToken:                         enabled,
+		envOAuthRestrictRegistrationLoopback:        enabled,
+	}
 	if authorizationServer {
 		defaults["OAUTH_PROVIDER"] = "dex"
+		defaults[envOAuthDexScopes] = "openid,profile,email,groups,offline_access,federated:id"
 	}
 	for name, value := range defaults {
 		if os.Getenv(name) == "" {
@@ -49,7 +62,11 @@ func loadOAuthSettings(logger *slog.Logger, transport string) (oauthconfig.Setti
 	if err != nil {
 		return oauthconfig.Settings{}, err
 	}
+	if strings.EqualFold(os.Getenv("GRAFANA_AUTH_MODE"), grafanaAuthModeJWT) && !settings.Server.OmitIDTokenInTokenResponse {
+		return oauthconfig.Settings{}, fmt.Errorf("%s=false is not allowed with GRAFANA_AUTH_MODE=jwt", envOAuthOmitIDToken)
+	}
 	if settings.Dex != nil {
+		settings.Server.RequiredUpstreamScopes = slices.Clone(settings.Dex.Scopes)
 		if err := dex.ValidateAudience(settings.Dex.ClientID); err != nil {
 			return oauthconfig.Settings{}, fmt.Errorf("OAUTH_DEX_CLIENT_ID: %w", err)
 		}

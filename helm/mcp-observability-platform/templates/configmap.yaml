@@ -19,6 +19,8 @@ data:
 
   # --- OAuth trust config (SSO token forwarding + CLI client schemes) ---
   OAUTH_ENABLE_AUTHORIZATION_SERVER: {{ $oa.enableAuthorizationServer | toString | quote }}
+  OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE: "true"
+  OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS: "true"
   OAUTH_RESOURCE: {{ $oa.resource | default "" | quote }}
   OAUTH_AUTHORIZATION_SERVERS: {{ $oa.authorizationServers | default (list) | join "," | quote }}
   # CSV of OAuth client IDs whose tokens are accepted as if minted for this

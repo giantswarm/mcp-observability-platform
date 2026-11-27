@@ -2,6 +2,14 @@ suite: configmap
 templates:
   - templates/configmap.yaml
 tests:
+  - it: protects provider credentials and loopback registration
+    asserts:
+      - equal:
+          path: data.OAUTH_OMIT_ID_TOKEN_IN_TOKEN_RESPONSE
+          value: "true"
+      - equal:
+          path: data.OAUTH_RESTRICT_REGISTRATION_TO_LOOPBACK_REDIRECT_URIS
+          value: "true"
   - it: always renders with runtime defaults
     asserts:
       - isKind:

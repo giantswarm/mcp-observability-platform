@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
+	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
 	"github.com/giantswarm/mcp-observability-platform/internal/observability"
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
@@ -23,18 +24,28 @@ const ssePath = "/sse"
 
 // buildMCPMux wraps the OAuth + MCP routes in otelhttp so inbound W3C
 // traceparents become server spans.
-func buildMCPMux(transport string, mcp *mcpsrv.Server, oauthHandler *handler.Handler) http.Handler {
+func buildMCPMux(transport string, mcp *mcpsrv.Server, oauthHandler *handler.Handler, jwtMode bool) http.Handler {
 	mux := http.NewServeMux()
 
 	oauthHandler.RegisterOAuthRoutes(mux, handler.OAuthRoutesOptions{IncludeMetadata: true})
 
+	protect := func(next http.Handler) http.Handler {
+		if jwtMode {
+			forward := next
+			next = oauthHandler.RequireProviderIDToken(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				providerToken, _ := handler.ProviderIDTokenFromContext(request.Context())
+				forward.ServeHTTP(writer, request.WithContext(grafana.WithUserToken(request.Context(), providerToken)))
+			}))
+		}
+		return oauthHandler.ValidateToken(next)
+	}
 	switch transport {
 	case transportStreamableHTTP:
-		mux.Handle(mcpPath, oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp)))
+		mux.Handle(mcpPath, protect(server.StreamableHTTPHandler(mcp)))
 	case transportSSE:
 		sseHandler := server.SSEHandler(mcp)
-		mux.Handle(ssePath, oauthHandler.ValidateToken(sseHandler))
-		mux.Handle("/message", oauthHandler.ValidateToken(sseHandler))
+		mux.Handle(ssePath, protect(sseHandler))
+		mux.Handle("/message", protect(sseHandler))
 	}
 
 	return otelhttp.NewHandler(mux, "mcp",

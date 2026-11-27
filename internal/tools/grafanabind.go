@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -40,15 +39,15 @@ type gfBinder struct {
 	authorizer   authz.Authorizer
 	grafana      grafana.Client
 	url          string
-	apiKey       string
-	basicAuth    *url.Userinfo
+	publicURL    string
+	auth         GrafanaAuth
 	disabled     map[string]bool
 	upstreamOnce sync.Once
 	upstream     *mcpgrafana.GrafanaClient
 	bound        map[string]*mcp.Tool
 }
 
-func newGFBinder(authorizer authz.Authorizer, client grafana.Client, grafanaURL, apiKey string, basicAuth *url.Userinfo, disabled map[string]bool) (*gfBinder, error) {
+func newGFBinder(authorizer authz.Authorizer, client grafana.Client, grafanaURL string, auth GrafanaAuth, disabled map[string]bool) (*gfBinder, error) {
 	if authorizer == nil {
 		return nil, errors.New("authorizer is required")
 	}
@@ -58,13 +57,16 @@ func newGFBinder(authorizer authz.Authorizer, client grafana.Client, grafanaURL,
 	if grafanaURL == "" {
 		return nil, errors.New("grafana URL is required")
 	}
-	return &gfBinder{authorizer: authorizer, grafana: client, url: grafanaURL, apiKey: apiKey, basicAuth: basicAuth, disabled: disabled, bound: map[string]*mcp.Tool{}}, nil
+	return &gfBinder{authorizer: authorizer, grafana: client, url: grafanaURL, auth: auth, disabled: disabled, bound: map[string]*mcp.Tool{}}, nil
 }
 
 func (b *gfBinder) client() *mcpgrafana.GrafanaClient {
 	b.upstreamOnce.Do(func() {
-		configuration := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth}
-		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), configuration), b.url, b.apiKey, b.basicAuth)
+		configuration := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.auth.APIKey, BasicAuth: b.auth.BasicAuth}
+		b.upstream = mcpgrafana.NewGrafanaClient(mcpgrafana.WithGrafanaConfig(context.Background(), configuration), b.url, b.auth.APIKey, b.auth.BasicAuth)
+		if b.publicURL != "" {
+			b.upstream.PublicURL = b.publicURL
+		}
 	})
 	return b.upstream
 }
@@ -278,12 +280,25 @@ func (b *gfBinder) requireOrg(ctx context.Context, request *mcp.CallToolRequest,
 }
 
 func (b *gfBinder) attachGrafana(ctx context.Context, organizationID int64) context.Context {
-	configuration := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth, OrgID: organizationID}
-	if subject := authz.GrafanaUser(ctx); subject != "" {
-		configuration.ExtraHeaders = map[string]string{"X-Grafana-User": subject}
+	configuration := mcpgrafana.GrafanaConfig{
+		URL:       b.url,
+		APIKey:    b.auth.APIKey,
+		BasicAuth: b.auth.BasicAuth,
+		OrgID:     organizationID,
+	}
+	headers := map[string]string{}
+	if identity := authz.GrafanaUser(ctx); identity != "" {
+		headers["X-Grafana-User"] = identity
+	}
+	if b.auth.JWTHeader != "" {
+		headers[b.auth.JWTHeader] = grafana.UserTokenFromContext(ctx)
+	}
+	if len(headers) > 0 {
+		configuration.ExtraHeaders = headers
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, configuration)
-	return mcpgrafana.WithGrafanaClient(ctx, b.client())
+	ctx = mcpgrafana.WithGrafanaClient(ctx, b.client())
+	return ctx
 }
 
 func injectArg(request *mcp.CallToolRequest, key string, value any) error {
