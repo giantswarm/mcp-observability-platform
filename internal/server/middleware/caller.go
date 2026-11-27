@@ -37,9 +37,7 @@ func ExtractCaller(r *http.Request) authz.Caller {
 }
 
 // InjectCallerFromRequest extracts the caller identity from r and attaches
-// it to ctx. Wired as mcpsrv.WithHTTPContextFunc / WithSSEContextFunc — it
-// bridges the HTTP-level OAuth context (where mcp-oauth stores UserInfo)
-// onto the MCP-level handler context tool handlers see.
+// it to ctx so native tool handlers can read the validated identity.
 func InjectCallerFromRequest(ctx context.Context, r *http.Request) context.Context {
 	return authz.WithCaller(ctx, ExtractCaller(r))
 }

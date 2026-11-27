@@ -207,8 +207,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if flagTransport == transportStdio {
 		logger.Info("MCP serving on stdio", "transport", transportStdio)
 		logger.Warn("stdio transport bypasses OAuth — tool calls will hit authz errors unless the session provides a caller identity")
-		// stdio drives lifecycle from stdin EOF; SIGINT/SIGTERM is intentionally
-		// not propagated and shutdownCtx is unused on this path.
+		// Stdio exits on stdin EOF or process cancellation.
 		return mcp.Run(shutdownCtx, &mcpsrv.StdioTransport{})
 	}
 

@@ -24,6 +24,7 @@ import (
 const transportIssuer = "https://issuer.example"
 const transportSSE = "sse"
 const transportAlice = "alice"
+const transportAliceEmail = "alice@example.test"
 
 type identityTransport struct {
 	base    http.RoundTripper
@@ -114,11 +115,22 @@ func TestSSESessionCannotChangeCaller(t *testing.T) {
 	native, err := New(goodCfg())
 	require.NoError(t, err)
 	scoped := &scopedSSE{server: native, scopes: make(map[[32]byte]*sseScope)}
-	host := httptest.NewServer(attachTestIdentity(scoped))
+	profiles := map[string]providers.UserInfo{
+		transportAlice: {Issuer: transportIssuer, ID: transportAlice, Email: transportAliceEmail, EmailVerified: true},
+		"subject":      {Issuer: transportIssuer, ID: "bob", Email: transportAliceEmail, EmailVerified: true},
+		"issuer":       {Issuer: "https://other.example", ID: transportAlice, Email: transportAliceEmail, EmailVerified: true},
+		"email":        {Issuer: transportIssuer, ID: transportAlice, Email: "changed@example.test", EmailVerified: true},
+		"unverified":   {Issuer: transportIssuer, ID: transportAlice, Email: transportAliceEmail},
+		"delegation":   {Issuer: transportIssuer, ID: transportAlice, Email: transportAliceEmail, EmailVerified: true, ActorIssuer: transportIssuer, ActorSubject: "agent"},
+	}
+	host := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		user := profiles[request.Header.Get("X-Test-Profile")]
+		scoped.ServeHTTP(writer, request.WithContext(handler.ContextWithUserInfo(request.Context(), &user)))
+	}))
 	defer host.Close()
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, host.URL+"/sse", nil)
 	require.NoError(t, err)
-	request.Header.Set("X-Test-Subject", transportAlice)
+	request.Header.Set("X-Test-Profile", transportAlice)
 	stream, err := host.Client().Do(request)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, stream.Body.Close()) }()
@@ -136,21 +148,23 @@ func TestSSESessionCannotChangeCaller(t *testing.T) {
 	if strings.HasPrefix(endpoint, "/") {
 		endpoint = host.URL + endpoint
 	}
-	for _, subject := range []string{"bob", transportAlice} {
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"older-client","version":"test"}}}`))
-		require.NoError(t, err)
-		request.Header.Set("X-Test-Subject", subject)
-		request.Header.Set("Content-Type", "application/json")
-		response, err := host.Client().Do(request)
-		require.NoError(t, err)
-		_, err = io.Copy(io.Discard, response.Body)
-		require.NoError(t, err)
-		require.NoError(t, response.Body.Close())
-		expected := http.StatusNotFound
-		if subject == transportAlice {
-			expected = http.StatusAccepted
-		}
-		require.Equal(t, expected, response.StatusCode)
+	for _, profile := range []string{"subject", "issuer", "email", "unverified", "delegation", transportAlice} {
+		t.Run(profile, func(t *testing.T) {
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"older-client","version":"test"}}}`))
+			require.NoError(t, err)
+			request.Header.Set("X-Test-Profile", profile)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := host.Client().Do(request)
+			require.NoError(t, err)
+			_, err = io.Copy(io.Discard, response.Body)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			expected := http.StatusNotFound
+			if profile == transportAlice {
+				expected = http.StatusAccepted
+			}
+			require.Equal(t, expected, response.StatusCode)
+		})
 	}
 	require.NoError(t, stream.Body.Close())
 	require.Eventually(t, func() bool { scoped.mu.Lock(); defer scoped.mu.Unlock(); return len(scoped.scopes) == 0 }, time.Second, time.Millisecond)

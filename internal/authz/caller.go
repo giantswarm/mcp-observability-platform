@@ -43,9 +43,7 @@ type OrgLister interface {
 // identity. Unexported so external packages cannot overwrite the value.
 type callerKey struct{}
 
-// WithCaller attaches a Caller to ctx. An empty Caller is a no-op so the
-// downstream gate (RequireCaller / Caller.Empty()) sees "no identity"
-// rather than a zero-valued attached caller.
+// WithCaller attaches an authenticated Caller to ctx.
 func WithCaller(ctx context.Context, c Caller) context.Context {
 	if !c.Authenticated() {
 		return ctx
