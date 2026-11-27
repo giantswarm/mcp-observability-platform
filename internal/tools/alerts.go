@@ -11,9 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/giantswarm/mcp-toolkit/tooldesc"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	tooldesc "github.com/giantswarm/mcp-toolkit/tooldesc/gosdk"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 	"github.com/giantswarm/mcp-observability-platform/internal/grafana"
@@ -25,41 +24,51 @@ const (
 	severityInfo     = "info"
 )
 
-func registerAlertTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+func registerAlertTools(s Registrar, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
 	registerAlertDetailTool(s, disabled, az, gc)
 
 	maybeAddTool(s, disabled,
-		mcp.NewTool("list_alerts",
-			readOnlyAnnotation(),
-			tooldesc.Describe("List the org's Alertmanager alerts, most severe first, paged; get_alert has one alert's full detail.", ""),
-			orgArg(),
-			mcp.WithString("state", mcp.Description("'active' (default) | 'silenced' | 'inhibited' | 'all'")),
-			mcp.WithString("filter", mcp.Description("Alertmanager label matcher, e.g. 'alertname=~\"Kube.*\"' or 'severity=\"critical\"'")),
-			mcp.WithNumber("page", mcp.Description("0-based page index (default 0)")),
-			mcp.WithNumber("pageSize", mcp.Description("Page size (default 50, max 500)")),
-			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			org, dsID, err := resolveDatasource(ctx, az, gc, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
+		&mcp.Tool{Name: "list_alerts", Annotations: readOnlyAnnotation(), Description: tooldesc.Describe("List the org's Alertmanager alerts, most severe first, paged; get_alert has one alert's full detail.", ""),
+			InputSchema: localInputSchema(map[string]any{
+				"state":          map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: "'active' (default) | 'silenced' | 'inhibited' | 'all'"},
+				"filter":         map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: "Alertmanager label matcher, e.g. 'alertname=~\"Kube.*\"' or 'severity=\"critical\"'"},
+				pageArgument:     map[string]any{jsonSchemaTypeKey: jsonTypeNumber, jsonSchemaDescriptionKey: "0-based page index (default 0)"},
+				"pageSize":       map[string]any{jsonSchemaTypeKey: jsonTypeNumber, jsonSchemaDescriptionKey: "Page size (default 50, max 500)"},
+				datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: datasourceUIDHint},
+			}),
+		},
+		func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var arguments struct {
+				Org           string  `json:"org"`
+				DatasourceUID string  `json:"datasourceUid"`
+				State         string  `json:"state"`
+				Filter        string  `json:"filter"`
+				Page          float64 `json:"page"`
+				PageSize      float64 `json:"pageSize"`
+			}
+			if err := decodeArguments(request, &arguments); err != nil {
+				return failure("malformed arguments", err), nil
+			}
+			org, dsID, err := resolveDatasource(ctx, az, gc, arguments.Org, arguments.DatasourceUID, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("authz", err), nil
+				return failure("authz", err), nil
 			}
 
-			pageSize := req.GetInt("pageSize", 0)
+			pageSize := int(arguments.PageSize)
 			if pageSize <= 0 {
 				pageSize = 50
 			}
 			pageSize = clampInt(pageSize, 1, 500)
 
-			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, req.GetString("state", ""), req.GetString("filter", ""))
+			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, arguments.State, arguments.Filter)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("alertmanager proxy failed", err), nil
+				return failure("alertmanager proxy failed", err), nil
 			}
-			result, err := paginateAlerts(body, req.GetInt("page", 0), pageSize)
+			result, err := paginateAlerts(body, int(arguments.Page), pageSize)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
+				return failure("parse alerts", err), nil
 			}
-			return mcp.NewToolResultJSON(result)
+			return jsonResult(result)
 		},
 	)
 }
@@ -67,39 +76,46 @@ func registerAlertTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.
 // registerAlertDetailTool exposes a per-fingerprint read after list_alerts.
 // Tool (not a resource) because LLM clients handle tool calls more reliably
 // than resource URI templates.
-func registerAlertDetailTool(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
+func registerAlertDetailTool(s Registrar, disabled map[string]bool, az authz.Authorizer, gc grafana.Client) {
 	maybeAddTool(s, disabled,
-		mcp.NewTool("get_alert",
-			readOnlyAnnotation(),
-			tooldesc.Describe("Get one Alertmanager alert by its fingerprint from list_alerts: labels, annotations, times, silencedBy, inhibitedBy.", ""),
-			orgArg(),
-			mcp.WithString("fingerprint", mcp.Required(), mcp.Description("Alertmanager fingerprint (from list_alerts.items[].fingerprint).")),
-			mcp.WithString(datasourceUIDArg, mcp.Description(datasourceUIDHint)),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			fp, err := req.RequireString("fingerprint")
-			if err != nil {
-				return mcp.NewToolResultErrorFromErr("missing arg", err), nil
+		&mcp.Tool{Name: "get_alert", Annotations: readOnlyAnnotation(), Description: tooldesc.Describe("Get one Alertmanager alert by its fingerprint from list_alerts: labels, annotations, times, silencedBy, inhibitedBy.", ""),
+			InputSchema: localInputSchema(map[string]any{
+				"fingerprint":    map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: "Alertmanager fingerprint (from list_alerts.items[].fingerprint)."},
+				datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString, jsonSchemaDescriptionKey: datasourceUIDHint},
+			}, "fingerprint"),
+		},
+		func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var arguments struct {
+				Org           string `json:"org"`
+				DatasourceUID string `json:"datasourceUid"`
+				Fingerprint   string `json:"fingerprint"`
 			}
-			org, dsID, err := resolveDatasource(ctx, az, gc, req, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
+			if err := decodeArguments(request, &arguments); err != nil {
+				return failure("malformed arguments", err), nil
+			}
+			if arguments.Fingerprint == "" {
+				return errorResult("missing arg: fingerprint is required"), nil
+			}
+			fp := arguments.Fingerprint
+			org, dsID, err := resolveDatasource(ctx, az, gc, arguments.Org, arguments.DatasourceUID, authz.RoleViewer, authz.TenantTypeAlerting, grafana.DSTypeAlertmanager)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("authz", err), nil
+				return failure("authz", err), nil
 			}
 			// AM v2 has no fingerprint matcher; the only round-trip is a full
 			// scan with state=all. Acceptable here — the caller already paged
 			// list_alerts for this fingerprint, so a re-fetch is bounded.
 			body, err := fetchAlerts(ctx, gc, org.OrgID, dsID, filterAll, "")
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("alertmanager", err), nil
+				return failure("alertmanager", err), nil
 			}
 			alert, err := findAlertByFingerprint(body, fp)
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("parse alerts", err), nil
+				return failure("parse alerts", err), nil
 			}
 			if alert == nil {
-				return mcp.NewToolResultError(fmt.Sprintf("alert with fingerprint %q not found", fp)), nil
+				return errorResult(fmt.Sprintf("alert with fingerprint %q not found", fp)), nil
 			}
-			return mcp.NewToolResultJSON(alert)
+			return jsonResult(alert)
 		},
 	)
 }
@@ -223,7 +239,7 @@ func findAlertByFingerprint(raw json.RawMessage, fingerprint string) (*amAlert, 
 
 func severityRank(s string) int {
 	switch strings.ToLower(s) {
-	case severityCritical, "page":
+	case severityCritical, pageArgument:
 		return 4
 	case "error", "high":
 		return 3

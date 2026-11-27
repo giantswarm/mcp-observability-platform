@@ -1,5 +1,3 @@
-// Package middleware holds the tool-handler cross-cuts (instrumentation,
-// auth gate, response cap, per-call deadline) wired through mcp-go's
-// server.ToolHandlerMiddleware so they run on every call without
-// per-handler boilerplate.
+// Package middleware attaches validated caller identity, enforces authentication,
+// and records the application's Prometheus tool metrics using native handlers.
 package middleware

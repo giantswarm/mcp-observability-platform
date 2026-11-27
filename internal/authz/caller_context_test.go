@@ -29,8 +29,8 @@ func TestCallerSubject_Fallback(t *testing.T) {
 		want string
 	}{
 		{"no identity", Caller{}, ""},
-		{"email preferred over subject", Caller{Subject: testSubject, Email: testEmail}, testEmail},
-		{"subject fallback when no email", Caller{Subject: testSubject}, testSubject},
+		{"email preferred over subject", Caller{Issuer: testIssuer, Subject: testSubject, Email: testEmail}, testEmail},
+		{"subject fallback when no email", Caller{Issuer: testIssuer, Subject: testSubject}, testSubject},
 		{"email-only is unauthenticated, not attached", Caller{Email: testEmail}, ""}, // Authenticated() rejects subject-less, so attach is a no-op
 	}
 	for _, c := range cases {
@@ -50,9 +50,9 @@ func TestCallerTokenSource(t *testing.T) {
 		want string
 	}{
 		{"no identity", Caller{}, ""},
-		{"oauth flow", Caller{Subject: testSubject, TokenSource: testTokenOAuth}, testTokenOAuth},
-		{"sso forwarded", Caller{Subject: testSubject, TokenSource: "sso"}, "sso"},
-		{"unset TokenSource is empty", Caller{Subject: testSubject}, ""},
+		{"oauth flow", Caller{Issuer: testIssuer, Subject: testSubject, TokenSource: testTokenOAuth}, testTokenOAuth},
+		{"sso forwarded", Caller{Issuer: testIssuer, Subject: testSubject, TokenSource: "sso"}, "sso"},
+		{"unset TokenSource is empty", Caller{Issuer: testIssuer, Subject: testSubject}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -66,6 +66,8 @@ func TestCallerTokenSource(t *testing.T) {
 
 func TestCallerFromContext_RoundTrip(t *testing.T) {
 	want := Caller{
+		Issuer:       testIssuer,
+		ActorIssuer:  testIssuer,
 		Subject:      testSubject,
 		Email:        "alice@example.com",
 		TokenSource:  testTokenOAuth,

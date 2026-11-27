@@ -76,7 +76,7 @@ func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
 
 // buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
 // storeClose drains the storage backend on shutdown.
-func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
+func buildOAuthHandler(logger *slog.Logger, transport string) (*handler.Handler, func(), error) {
 	provider, err := oauthconfig.DexFromEnv()
 	if err != nil {
 		return nil, nil, fmt.Errorf("dex provider: %w", err)
@@ -92,6 +92,11 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("oauth config: %w", err)
 	}
+	resourcePath := "/mcp"
+	if transport == transportSSE {
+		resourcePath = "/sse"
+	}
+	cfg.ResourceMetadataByPath = map[string]oauthserver.ProtectedResourceConfig{resourcePath: {}}
 
 	encryptor, err := oauthconfig.NewEncryptorFromEnv()
 	if err != nil {
@@ -99,12 +104,8 @@ func buildOAuthHandler(logger *slog.Logger) (*handler.Handler, func(), error) {
 	}
 
 	backend := os.Getenv(envOAuthStorageBackend)
-	// Valkey persists OAuth state across pod restarts and may live on a
-	// shared instance; refuse to start without encryption-at-rest.
-	// OAUTH_ALLOW_INSECURE_HTTP=true overrides for local dev (same
-	// escape hatch the upstream issuer-scheme check uses).
-	if backend == storage.BackendValkey && encryptor == nil && !cfg.AllowInsecureHTTP {
-		return nil, nil, fmt.Errorf("OAUTH_STORAGE_BACKEND=valkey requires OAUTH_ENCRYPTION_KEY (set OAUTH_ALLOW_INSECURE_HTTP=true to override for dev)")
+	if backend == storage.BackendValkey && encryptor == nil {
+		return nil, nil, fmt.Errorf("OAUTH_STORAGE_BACKEND=valkey requires OAUTH_ENCRYPTION_KEY")
 	}
 
 	store, storeCloseErr, err := oauthconfig.StorageFromEnv(encryptor, nil, logger)

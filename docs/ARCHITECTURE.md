@@ -30,18 +30,15 @@ security boundaries are, and where to add a new tool.
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
-              │ authz.PromoteOAuthCaller                                       │
+              │ middleware.InjectCallerFromRequest                             │
               │   lifts UserInfo → MCP handler context as authz.Caller         │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
-              │ MCP server (internal/server) — middleware stack:               │
-              │   1. WithRecovery       (mcp-go panic guard)                   │
-              │   2. Instrument         span + counter/histogram + tool_call   │
-              │                         audit slog line                        │
-              │   3. RequireCaller      fail-closed if no caller in ctx        │
-              │   4. ResponseCap        replace oversized text with structured │
-              │   5. ToolTimeout        per-handler context deadline           │
+              │ Native official SDK server (internal/server):                  │
+              │   1. Instrument         Prometheus counters and histogram      │
+              │   2. Shared policy      audit, duration, deadline, result cap  │
+              │   3. RequireCaller      fail closed on incomplete identity     │
               └──────────────────────────┬─────────────────────────────────────┘
                                          ▼
               ┌────────────────────────────────────────────────────────────────┐
@@ -58,7 +55,7 @@ security boundaries are, and where to add a new tool.
               │        type, UID injected server-side                          │
               │     4. attach mcpgrafana.GrafanaConfig (OrgID, X-Grafana-User) │
               │     5. delegate to upstream grafana/mcp-grafana handler        │
-              │        (MCP Go SDK types, bridged to mark3labs/mcp-go)         │
+              │        (native SDK request and result types)                  │
               │                                                                │
               │ Local tools (Alertmanager v2) call az.RequireOrg then          │
               │ grafana.Client.DatasourceProxy directly. list_orgs uses        │
@@ -78,11 +75,11 @@ security boundaries are, and where to add a new tool.
 | Package | Responsibility |
 |---|---|
 | `cmd/` | Cobra CLI + composition root. `runServe` wires the dex provider, OAuth server, K8s informer cache, MCP server, and the two HTTP listeners (MCP on `MCP_ADDR`, observability on `METRICS_ADDR`) in deterministic phase order. OAuth/Dex/storage/encryption env loading is delegated to `mcp-oauth/oauthconfig.*FromEnv`; this package owns Grafana credentials, the K8s informer adapter, the readiness probes, and the orchestration. |
-| `internal/server/` | MCP server construction; middleware composition (Instrument / RequireCaller / ResponseCap / ToolTimeout); transport wrappers for streamable-HTTP and SSE. |
-| `internal/server/middleware/` | One file per middleware. `Instrument` emits the span + metrics + structured `tool_call` slog line in lockstep so the three signals never drift. |
+| `internal/server/` | Native SDK server construction, shared toolkit policy, and streamable HTTP / SSE transport composition. Streamable HTTP is stateless. SSE uses a native session registry per validated caller profile. |
+| `internal/server/middleware/` | Validated caller extraction, authentication gate and the existing Prometheus tool counters and histogram. |
 | `internal/authz/` | Caller identity (`caller.go`), role enum (`role.go`), org-access types, `Authorizer` interface (`authorizer.go`) + per-caller TTL cache. `OrgLister` is a domain port — the K8s informer adapter sits in `cmd/orglister.go`. |
 | `internal/grafana/` | HTTP client (`VerifyServerAdmin`, `LookupUser`, `UserOrgs`, `ListDatasources`, `LookupDatasourceByUID`, `DatasourceProxy`) plus `Datasource` and `DatasourceType` (`MatchesType` / `FilterDatasourcesByType`). Delegated tools talk to upstream's `mcpgrafana.GrafanaClient` instead of this client. `RequestOpts{OrgID, Caller}` is set per call; `validateDatasourceProxyPath` guards against traversal. `ListDatasources` is cached per-OrgID (30s TTL); `LookupDatasourceByUID` inherits transparently. |
-| `internal/tools/` | One file per tool category. Delegated to upstream `grafana/mcp-grafana`: `dashboards.go`, `metrics.go`, `logs.go`, `alerting.go`, `examples.go`, `tempo.go` (plus the delegated datasource tools in `orgs.go`). Local: `orgs.go` (`list_orgs`), `alerts.go`, `silences.go`. Shared: `datasource.go`, `pagination.go`, `tools.go`, `grafanabind.go`. The unexported `gfBinder` wires upstream handlers onto our MCP server, converting upstream's MCP Go SDK types to `mark3labs/mcp-go` (`toolFromSDK`, `callUpstream`) — `bindOrgTool` for org-only tools, `bindDatasourceTool` for datasource-scoped tools (resolves the org's datasource UID and injects it server-side so the LLM keeps the simple `{org, …}` shape). Every `s.AddTool` call site goes through `maybeAddTool`, which honours the `--disabled-tools` filter wired in from `cmd/serve.go` so operators can drop individual tools at deployment time. |
+| `internal/tools/` | Native local handlers and delegation to `grafana/mcp-grafana`. `gfBinder` checks organization access, selects the datasource and passes the native request directly to the upstream handler. It copies arguments without changing JSON number precision, continuation state, transport context or native results. `maybeAddTool` applies `--disabled-tools`. |
 | `internal/observability/` | Prometheus metrics + OTLP tracing init. Per-tool counter + duration histogram and a separate error counter; OTLP no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset. |
 | `helm/` | Chart with NetworkPolicy / HPA / VPA / PDB opt-ins, four overlays (memory / valkey / rbac-minimal / autoscaling). |
 
@@ -107,18 +104,19 @@ slashes, oversized paths, and URL-encoded traversal (`%2e%2e`). Defence
 in depth — Grafana validates again. The grafana client caps response
 bodies at 16 MiB so a misbehaving datasource can't OOM the pod.
 
-**Tool-call attribution.** `Instrument` middleware emits an OTEL span,
-a Prometheus counter+histogram per tool (plus a separate error counter),
-and a structured `tool_call` slog line per invocation. The slog line
-carries the caller's OIDC subject, tool name, args, error flag, duration,
-and `caller_token_source` (`oauth` vs `sso`) — useful when no OTLP
-endpoint is wired up. An MCP gateway can correlate logs and traces via
-`trace_id` / `span_id`.
+**Tool-call attribution.** Shared toolkit policy records
+`mcp.server.operation.duration` and a `tool_call` audit entry containing
+validated issuer, subject, actor identity, tool and outcome. Profile fields,
+argument values, raw errors and credentials are excluded. HTTP tracing and
+SDK trace propagation retain request correlation. Existing Prometheus tool
+counters and duration histograms remain available.
 
 **Authz freshness.** Org membership and role changes propagate within
 ~30s (the cache TTL). A revoked role can still issue tool calls until
 its cache entry expires — accepted trade-off vs paying the Grafana
-lookup latency on every call.
+lookup latency on every call. The bounded cache separates issuer, subject
+and the verified lookup identity; changing a verified email forces a fresh
+Grafana lookup. Unverified email never supplies the Grafana identity.
 
 **Stdio transport** bypasses OAuth — there's no HTTP listener. Tool calls
 hit `RequireCaller` and fail unless the stdio session installs a

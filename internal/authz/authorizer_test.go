@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	testIssuer     = "https://issuer.example"
 	testEmail      = "u@e.com"
 	testNewEmail   = "new@e.com"
 	testSubject    = "sub-1"
@@ -20,13 +21,10 @@ const (
 	testRoleViewer = "Viewer"
 )
 
-// ctxWithCaller builds a context carrying the given caller via the
-// production WithCaller path, so tests exercise the same context
-// propagation as runtime callers. Caller.Authenticated() requires a
-// non-empty Subject; most fixtures only care about the email-based
-// Grafana lookup, so default Subject from Email when the test didn't
-// set one.
 func ctxWithCaller(c Caller) context.Context {
+	if c.Issuer == "" {
+		c.Issuer = testIssuer
+	}
 	if c.Subject == "" && c.Email != "" {
 		c.Subject = "sub-" + c.Email
 	}
@@ -306,10 +304,7 @@ func (b *raceGrafana) UserOrgs(_ context.Context, userID int64) ([]grafana.UserO
 	return b.orgs[userID], nil
 }
 
-// TestAuthorizer_CacheKeyIsSubjectNotEmail proves the same Subject under two
-// different Email values shares a cache entry. Fixes the spoofability
-// concern: email can change or be unverified, subject cannot.
-func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
+func TestAuthorizer_EmailChangeRefetchesRoles(t *testing.T) {
 	alpha := newOrg("alpha", "Alpha", 1)
 	g := &fakeGrafana{
 		users: map[string]int64{"u@old.com": 1, "u@new.com": 1},
@@ -317,11 +312,10 @@ func TestAuthorizer_CacheKeyIsSubjectNotEmail(t *testing.T) {
 	}
 	r := mustNewAuthorizer(t, registry(alpha), g)
 
-	// Same subject, different emails — second call should hit cache.
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@old.com", Subject: testSubject}))
 	_, _ = r.ListOrgs(ctxWithCaller(Caller{Email: "u@new.com", Subject: testSubject}))
-	if g.calls.lookup != 1 {
-		t.Errorf("LookupUser calls = %d, want 1 (cache keyed on Subject, email change ignored)", g.calls.lookup)
+	if g.calls.lookup != 2 {
+		t.Errorf("LookupUser calls = %d, want 2", g.calls.lookup)
 	}
 }
 
@@ -402,8 +396,8 @@ func TestCaller_IdentityAndAuthenticated(t *testing.T) {
 	if (Caller{}).Authenticated() {
 		t.Error("zero Caller should not be Authenticated")
 	}
-	if !(Caller{Subject: "x"}).Authenticated() {
-		t.Error("with Subject should be Authenticated")
+	if !(Caller{Issuer: testIssuer, Subject: "x"}).Authenticated() {
+		t.Error("complete identity should be authenticated")
 	}
 	if got := (Caller{Email: "e", Subject: "s"}).Identity(); got != "e" {
 		t.Errorf("Identity email-preferred = %q, want e", got)
@@ -637,10 +631,6 @@ func TestRequireOrg_RejectsRoleNone(t *testing.T) {
 	}
 }
 
-// TestCallerAuthenticated_RequiresSubject proves a Caller with only an
-// email and no subject is treated as unauthenticated — email is unsafe as
-// a cache key (mutable in some IdPs, mappable to a different user) so the
-// cache trusts only Subject.
 func TestCallerAuthenticated_RequiresSubject(t *testing.T) {
 	if (Caller{Email: testEmail}).Authenticated() {
 		t.Error("Caller with email and no Subject must NOT be Authenticated (subject required)")
@@ -648,10 +638,10 @@ func TestCallerAuthenticated_RequiresSubject(t *testing.T) {
 	if (Caller{}).Authenticated() {
 		t.Error("zero Caller must NOT be Authenticated")
 	}
-	if !(Caller{Subject: testSubject}).Authenticated() {
-		t.Error("Caller with Subject must be Authenticated")
+	if (Caller{Subject: testSubject}).Authenticated() {
+		t.Error("caller without issuer must be unauthenticated")
 	}
-	if !(Caller{Email: testEmail, Subject: testSubject}).Authenticated() {
+	if !(Caller{Issuer: testIssuer, Email: testEmail, Subject: testSubject}).Authenticated() {
 		t.Error("Caller with both Subject and Email must be Authenticated")
 	}
 }

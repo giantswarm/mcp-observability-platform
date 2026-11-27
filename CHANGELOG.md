@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update github.com/giantswarm/mcp-oauth to v1.21.0 (giantswarm/mcp-observability-platform#303)
+- **Breaking**: Restrict default chart ingress to platform gateways and Alloy metrics collectors; require a ServiceMonitor tenant. See [upgrade instructions](docs/sdk-upgrade.md).
+- Use native official Go SDK tools, stateless streamable HTTP and caller-isolated SSE sessions. Preserve upstream schemas and native continuation data.
+- **Breaking**: Bound complete JSON tool results and record validated issuer, subject, actor, tool and outcome without argument or profile values. Existing timeout and size-disable settings remain supported. See [upgrade instructions](docs/sdk-upgrade.md).
+- **Breaking**: Require verified email for Grafana email lookup and isolate bounded role caches by issuer, subject and lookup identity. See [upgrade instructions](docs/sdk-upgrade.md).
+- **Breaking**: Require encryption for persistent Valkey OAuth storage, including local HTTP development. Register optional OAuth routes according to the shared configuration. See [upgrade instructions](docs/sdk-upgrade.md).
+
+### Removed
+
+- The mcp-go dependency and cross-SDK JSON bridge.
 
 ## [0.6.0] - 2026-11-20
 

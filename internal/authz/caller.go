@@ -2,23 +2,16 @@ package authz
 
 import "context"
 
-// Caller carries the identity bits the authorizer needs to ask Grafana about
-// someone, plus the audit attributes downstream middleware logs. Subject is
-// the OIDC sub claim — the stable, non-spoofable identifier; the cache keys
-// on it. Email is the human-facing handle Grafana provisions OAuth users
-// by. TokenSource records the OAuth flavour ("oauth" / "sso") so audit
-// logs can distinguish direct sessions from SSO-forwarded ones.
-//
-// A valid Caller MUST have a non-empty Subject — see Authenticated().
-//
-// ActorSubject and ActorChain carry the RFC 8693 act claim of a delegated
-// (on-behalf-of) token: the agent acting for the human, outermost actor
-// first. Audit-only — authorization runs on the human subject's identity.
+// Caller contains validated issuer and subject claims. Email is populated only
+// when verified by the identity provider. Authorization uses the human identity;
+// actor claims describe validated delegation.
 type Caller struct {
+	Issuer       string
 	Subject      string
 	Email        string
 	TokenSource  string
 	ActorSubject string
+	ActorIssuer  string
 	ActorChain   []string
 }
 
@@ -32,12 +25,10 @@ func (c Caller) Identity() string {
 	return c.Subject
 }
 
-// Authenticated reports whether the caller carries a usable identity. A
-// caller with no Subject is unauthenticated even if Email is set: email is
-// mutable in some IdPs and isn't safe to use as the cache key. Two callers
-// with the same email and no subject would otherwise collide on one cache
-// slot.
-func (c Caller) Authenticated() bool { return c.Subject != "" }
+// Authenticated requires complete principal and actor identities.
+func (c Caller) Authenticated() bool {
+	return c.Issuer != "" && c.Subject != "" && (c.ActorIssuer == "") == (c.ActorSubject == "")
+}
 
 // OrgLister is the authorizer's port onto "the set of known Grafana
 // organisations". Implementations today wrap controller-runtime's informer
@@ -52,9 +43,7 @@ type OrgLister interface {
 // identity. Unexported so external packages cannot overwrite the value.
 type callerKey struct{}
 
-// WithCaller attaches a Caller to ctx. An empty Caller is a no-op so the
-// downstream gate (RequireCaller / Caller.Empty()) sees "no identity"
-// rather than a zero-valued attached caller.
+// WithCaller attaches an authenticated Caller to ctx.
 func WithCaller(ctx context.Context, c Caller) context.Context {
 	if !c.Authenticated() {
 		return ctx

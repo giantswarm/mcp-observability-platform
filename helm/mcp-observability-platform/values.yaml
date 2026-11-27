@@ -76,8 +76,8 @@ podDisruptionBudget:
 # NetworkPolicySpec — paste any shape the K8s API accepts. The chart owns
 # only the podSelector (it has to match the deployment labels).
 #
-# Default ingress allows the mcp + metrics ports from any pod; tighten
-# with from: selectors per the upstream NetworkPolicySpec. Egress is
+# Default ingress permits the configured platform gateways on HTTP and Alloy
+# metrics collectors on metrics. Override ingress for another data plane. Egress is
 # unrestricted unless you add Egress to policyTypes and supply egress
 # rules — remember to allow kube-dns + your Grafana / Dex / OTLP peers.
 networkPolicy:
@@ -85,9 +85,39 @@ networkPolicy:
   policyTypes:
     - Ingress
   ingress:  # @schema itemProperties: {}; itemRef: $k8s/_definitions.json#/definitions/io.k8s.api.networking.v1.NetworkPolicyIngressRule
-    - ports:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: muster
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentgateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: envoy
+              gateway.envoyproxy.io/owning-gateway-name: giantswarm-default
+              gateway.envoyproxy.io/owning-gateway-namespace: envoy-gateway-system
+      ports:
         - port: http
           protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+              app.kubernetes.io/instance: alloy-metrics
+      ports:
         - port: metrics
           protocol: TCP
   egress: []

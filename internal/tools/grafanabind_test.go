@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
-	"github.com/mark3labs/mcp-go/mcp"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
@@ -93,7 +92,7 @@ func (f *fakeGrafana) LookupDatasourceByUID(_ context.Context, _ grafana.Request
 
 // oauthCtx attaches a caller identity to ctx; CallerSubject(ctx) returns sub.
 func oauthCtx(sub, email string) context.Context {
-	return authz.WithCaller(context.Background(), authz.Caller{Subject: sub, Email: email})
+	return authz.WithCaller(context.Background(), authz.Caller{Issuer: "https://issuer.example", Subject: sub, Email: email})
 }
 
 // stubTool builds a minimal mcpgrafana.Tool whose handler records what the
@@ -165,30 +164,27 @@ func orgFixture() authz.Organization {
 // ---------- withOrg ----------
 
 func TestWithOrg_AddsRequiredOrgArg(t *testing.T) {
-	in := mcp.NewTool("foo", mcp.WithDescription("d"))
-	in.InputSchema.Properties = map[string]any{"x": map[string]any{jsonSchemaTypeKey: "number"}}
-	in.InputSchema.Required = []string{"x"}
+	in := stubSDKTool("foo", map[string]any{"x": map[string]any{jsonSchemaTypeKey: "number"}}, []string{"x"})
 
 	out := withOrg(in, "")
 
-	if _, ok := out.InputSchema.Properties[testOrgArg].(map[string]any); !ok {
+	if _, ok := testSchema(t, out).Properties[testOrgArg].(map[string]any); !ok {
 		t.Fatal("output missing 'org' in Properties")
 	}
-	if got := out.InputSchema.Required; len(got) != 2 || got[0] != testOrgArg || got[1] != "x" {
+	if got := testSchema(t, out).Required; len(got) != 2 || got[0] != testOrgArg || got[1] != "x" {
 		t.Errorf("Required = %v, want [org x]", got)
 	}
 	// Input must not have been mutated.
-	if _, ok := in.InputSchema.Properties[testOrgArg]; ok {
+	if _, ok := testSchema(t, in).Properties[testOrgArg]; ok {
 		t.Error("withOrg mutated input.Properties")
 	}
-	if slices.Contains(in.InputSchema.Required, testOrgArg) {
+	if slices.Contains(testSchema(t, in).Required, testOrgArg) {
 		t.Error("withOrg mutated input.Required")
 	}
 }
 
 func TestWithOrg_PanicsOnOrgCollision(t *testing.T) {
-	in := mcp.NewTool("foo", mcp.WithDescription("d"))
-	in.InputSchema.Properties = map[string]any{testOrgArg: map[string]any{jsonSchemaTypeKey: jsonTypeString}}
+	in := stubSDKTool("foo", map[string]any{testOrgArg: map[string]any{jsonSchemaTypeKey: jsonTypeString}}, nil)
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -199,16 +195,14 @@ func TestWithOrg_PanicsOnOrgCollision(t *testing.T) {
 }
 
 func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
-	in := mcp.NewTool("foo", mcp.WithDescription("d"))
-	in.InputSchema.Properties = map[string]any{
+	in := stubSDKTool("foo", map[string]any{
 		datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString, "description": "Upstream desc."},
 		"y":              map[string]any{jsonSchemaTypeKey: "number"},
-	}
-	in.InputSchema.Required = []string{datasourceUIDArg, "y"}
+	}, []string{datasourceUIDArg, "y"})
 
 	out := withOrg(in, datasourceUIDArg)
 
-	prop, ok := out.InputSchema.Properties[datasourceUIDArg].(map[string]any)
+	prop, ok := testSchema(t, out).Properties[datasourceUIDArg].(map[string]any)
 	if !ok {
 		t.Fatal("output dropped datasourceUid; demote should keep it visible")
 	}
@@ -216,38 +210,30 @@ func TestWithOrg_DemoteArg_KeepsArgWithHint(t *testing.T) {
 	if desc != datasourceUIDHint {
 		t.Errorf("description = %q, want datasourceUIDHint in place of upstream's", desc)
 	}
-	if slices.Contains(out.InputSchema.Required, datasourceUIDArg) {
+	if slices.Contains(testSchema(t, out).Required, datasourceUIDArg) {
 		t.Error("output still requires datasourceUid; demote moves it out of Required")
 	}
-	if got := out.InputSchema.Required; len(got) != 2 || got[0] != testOrgArg || got[1] != "y" {
+	if got := testSchema(t, out).Required; len(got) != 2 || got[0] != testOrgArg || got[1] != "y" {
 		t.Errorf("Required = %v, want [org y]", got)
 	}
 	// Input must not have been mutated.
-	if _, has := in.InputSchema.Properties[testOrgArg]; has {
+	if _, has := testSchema(t, in).Properties[testOrgArg]; has {
 		t.Error("withOrg mutated input.Properties")
 	}
-	if origDesc, _ := in.InputSchema.Properties[datasourceUIDArg].(map[string]any)["description"].(string); origDesc != "Upstream desc." {
+	if origDesc, _ := testSchema(t, in).Properties[datasourceUIDArg].(map[string]any)["description"].(string); origDesc != "Upstream desc." {
 		t.Errorf("withOrg mutated input description: %q", origDesc)
 	}
-	if !slices.Contains(in.InputSchema.Required, datasourceUIDArg) {
+	if !slices.Contains(testSchema(t, in).Required, datasourceUIDArg) {
 		t.Error("withOrg mutated input.Required")
 	}
 }
 
-// Regression: upstream mcp-grafana tools are built with MustTool, which
-// stores the schema as RawInputSchema. mcp.Tool.MarshalJSON ignores the
-// structured InputSchema in that case, so the synthetic "org" arg never
-// reached the wire and clients couldn't pass it. withOrg must normalize
-// the raw schema and emit a structured one whose marshaled JSON includes
-// "org" under properties and required.
 func TestWithOrg_HandlesRawInputSchema(t *testing.T) {
-	in := mcp.NewTool("foo", mcp.WithDescription("d"))
-	in.InputSchema = mcp.ToolInputSchema{}
-	in.RawInputSchema = json.RawMessage(`{
+	in := &sdkmcp.Tool{Name: "foo", Description: "d", InputSchema: json.RawMessage(`{
 		"type":"object",
 		"properties":{"datasourceUid":{"type":"string","description":"Upstream desc."},"y":{"type":"number"}},
 		"required":["datasourceUid","y"]
-	}`)
+	}`)}
 
 	out := withOrg(in, datasourceUIDArg)
 
@@ -324,7 +310,7 @@ func TestBinder_Wrap_MissingOrg(t *testing.T) {
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
-	res, err := h(context.Background(), mcp.CallToolRequest{})
+	res, err := h(t.Context(), testRequest("", nil))
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
 	}
@@ -343,7 +329,7 @@ func TestBinder_Wrap_AuthzDenied(t *testing.T) {
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest("", map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -364,7 +350,7 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	ctx := oauthCtx("sub-123", "alice@example.com")
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest("t", map[string]any{testOrgArg: testOrgName})
 	res, err := h(ctx, req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -391,7 +377,7 @@ func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
 	// No caller in ctx — CallerSubject returns "".
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest("", map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -430,7 +416,7 @@ func TestBinder_Single_DefaultPicksFirstMatch(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool(testToolQueryProm, []string{datasourceUIDArg}, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, "expr": "up"}}}
+	req := testRequest(testToolQueryProm, map[string]any{testOrgArg: testOrgName, "expr": "up"})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -461,7 +447,7 @@ func TestBinder_Single_ExplicitUIDOverrides(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, "expr": "up", datasourceUIDArg: testDSUIDMimirGS}}}
+	req := testRequest(testToolQueryProm, map[string]any{testOrgArg: testOrgName, "expr": "up", datasourceUIDArg: testDSUIDMimirGS})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -491,7 +477,7 @@ func TestBinder_Single_RejectsUIDFromOtherType(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, datasourceUIDArg: "u-loki"}}}
+	req := testRequest(testToolQueryProm, map[string]any{testOrgArg: testOrgName, datasourceUIDArg: "u-loki"})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -518,7 +504,7 @@ func TestBinder_Single_RejectsUIDNotInOrg(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolQueryProm, Arguments: map[string]any{testOrgArg: testOrgName, datasourceUIDArg: "forged-uid"}}}
+	req := testRequest(testToolQueryProm, map[string]any{testOrgArg: testOrgName, datasourceUIDArg: "forged-uid"})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -544,7 +530,7 @@ func TestBinder_Single_NoMatchingDatasource(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest("", map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -568,7 +554,7 @@ func TestBinder_Single_ListDatasourcesError(t *testing.T) {
 	h := b.wrap(authz.RoleViewer, authz.TenantTypeData, grafana.DSTypePrometheus, datasourceUIDArg,
 		stubTool(testToolQueryProm, nil, captured))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest("", map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -631,7 +617,7 @@ func TestBinder_Fanout_FiltersAndIteratesRulerDatasources(t *testing.T) {
 	}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest(testToolAlertRules, map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -686,7 +672,7 @@ func TestBinder_Fanout_EscapeHatch_BypassesListing(t *testing.T) {
 	cap := &fanoutStub{}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName, datasourceUIDArgSnake: "pinned"}}}
+	req := testRequest(testToolAlertRules, map[string]any{testOrgArg: testOrgName, datasourceUIDArgSnake: "pinned"})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -725,7 +711,7 @@ func TestBinder_Fanout_PerDatasourceErrorIsTagged(t *testing.T) {
 	}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest(testToolAlertRules, map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -762,7 +748,7 @@ func TestBinder_Fanout_ListDatasourcesError(t *testing.T) {
 	cap := &fanoutStub{}
 	h := b.wrapFanout(authz.RoleViewer, authz.TenantTypeData, datasourceUIDArgSnake, stubFanoutTool(testToolAlertRules, cap))
 
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: testToolAlertRules, Arguments: map[string]any{testOrgArg: testOrgName}}}
+	req := testRequest(testToolAlertRules, map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
@@ -778,51 +764,47 @@ func TestBinder_Fanout_ListDatasourcesError(t *testing.T) {
 // ---------- injectArg ----------
 
 func TestInjectArg_NilArguments(t *testing.T) {
-	req := &mcp.CallToolRequest{}
+	req := testRequest("", nil)
 	if err := injectArg(req, "k", "v"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got, ok := req.Params.Arguments.(map[string]any)
-	if !ok || got["k"] != "v" {
+	got := sdkArgs(req)
+	if got["k"] != "v" {
 		t.Fatalf("Arguments = %#v, want map[k:v]", req.Params.Arguments)
 	}
 }
 
 func TestInjectArg_PreservesOriginalMap(t *testing.T) {
-	original := map[string]any{"a": 1}
-	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: original}}
+	req := testRequest("", map[string]any{"a": 1})
+	original := slices.Clone(req.Params.Arguments)
 	if err := injectArg(req, "k", "v"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Caller's map MUST NOT be mutated — the request shape is shared with
-	// the caller through Params.Arguments-by-reference.
-	if _, has := original["k"]; has {
-		t.Error("injectArg mutated the caller's map; should copy-on-write")
+	if string(original) != `{"a":1}` {
+		t.Error("injectArg mutated the caller's arguments")
 	}
-	got := req.Params.Arguments.(map[string]any)
-	if got["a"] != 1 || got["k"] != "v" {
+	got := sdkArgs(req)
+	if got["a"] != float64(1) || got["k"] != "v" {
 		t.Errorf("Arguments = %#v, want a=1 + k=v", got)
 	}
 }
 
 func TestInjectArg_RejectsMalformedRawMessage(t *testing.T) {
-	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: json.RawMessage("not-json")}}
+	req := &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage("not-json")}}
 	if err := injectArg(req, "k", "v"); err == nil {
 		t.Fatal("expected error decoding malformed json.RawMessage, got nil")
 	}
 }
 
 func TestInjectArg_RejectsUnknownShape(t *testing.T) {
-	req := &mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: 42}}
+	req := &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage("42")}}
 	if err := injectArg(req, "k", "v"); err == nil {
 		t.Fatal("expected error on unknown Arguments type, got nil")
 	}
 }
 
-// ---------- SDK bridge ----------
-
-func TestToolFromSDK_MapsAnnotationsAndSchema(t *testing.T) {
+func TestWithOrg_PreservesNativeAnnotationsAndSchema(t *testing.T) {
 	in := stubSDKTool("t", map[string]any{
 		datasourceUIDArg: map[string]any{jsonSchemaTypeKey: jsonTypeString},
 		testArgOther:     map[string]any{jsonSchemaTypeKey: jsonTypeString},
@@ -831,29 +813,29 @@ func TestToolFromSDK_MapsAnnotationsAndSchema(t *testing.T) {
 		Title:           "T",
 		ReadOnlyHint:    true,
 		IdempotentHint:  true,
-		DestructiveHint: mcp.ToBoolPtr(false),
+		DestructiveHint: new(false),
 	}
 
-	out := withOrg(toolFromSDK(in), datasourceUIDArg)
+	out := withOrg(in, datasourceUIDArg)
 
 	if out.Name != "t" || out.Description != "stub" {
 		t.Errorf("name/description = %q/%q", out.Name, out.Description)
 	}
 	a := out.Annotations
-	if a.Title != "T" || !*a.ReadOnlyHint || !*a.IdempotentHint || *a.DestructiveHint || a.OpenWorldHint != nil {
+	if a.Title != "T" || !a.ReadOnlyHint || !a.IdempotentHint || *a.DestructiveHint || a.OpenWorldHint != nil {
 		t.Errorf("annotations = %+v", a)
 	}
-	if !slices.Equal(out.InputSchema.Required, []string{testOrgArg, testArgOther}) {
-		t.Errorf("required = %v, want [org other]", out.InputSchema.Required)
+	if !slices.Equal(testSchema(t, out).Required, []string{testOrgArg, testArgOther}) {
+		t.Errorf("required = %v, want [org other]", testSchema(t, out).Required)
 	}
 	for _, p := range []string{testOrgArg, datasourceUIDArg, testArgOther} {
-		if _, ok := out.InputSchema.Properties[p]; !ok {
+		if _, ok := testSchema(t, out).Properties[p]; !ok {
 			t.Errorf("property %q missing", p)
 		}
 	}
 }
 
-func TestCallUpstream_ConvertsRequestAndResult(t *testing.T) {
+func TestInvokeUpstream_PreservesNativeRequestAndResult(t *testing.T) {
 	var gotName string
 	var gotArgs map[string]any
 	upstream := mcpgrafana.Tool{
@@ -870,9 +852,9 @@ func TestCallUpstream_ConvertsRequestAndResult(t *testing.T) {
 			}, nil
 		},
 	}
-	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "t", Arguments: map[string]any{"k": "v"}}}
+	req := testRequest("t", map[string]any{"k": "v"})
 
-	res, err := callUpstream(context.Background(), upstream, req)
+	res, err := invokeUpstream(t.Context(), upstream, req)
 	if err != nil {
 		t.Fatalf("Go error: %v", err)
 	}
@@ -888,12 +870,11 @@ func TestCallUpstream_ConvertsRequestAndResult(t *testing.T) {
 	if textOf(res) != "hello" {
 		t.Errorf("text = %q, want hello", textOf(res))
 	}
-	img, ok := res.Content[1].(mcp.ImageContent)
+	img, ok := res.Content[1].(*sdkmcp.ImageContent)
 	if !ok {
 		t.Fatalf("content[1] is %T, want mcp.ImageContent", res.Content[1])
 	}
-	// The SDK base64-encodes []byte on the wire; mark3labs keeps it encoded.
-	if img.Data != "cG5n" || img.MIMEType != "image/png" {
+	if string(img.Data) != "png" || img.MIMEType != "image/png" {
 		t.Errorf("image = %+v", img)
 	}
 }
@@ -906,8 +887,48 @@ func TestCallUpstream_PropagatesHandlerError(t *testing.T) {
 			return nil, want
 		},
 	}
-	_, err := callUpstream(context.Background(), upstream, mcp.CallToolRequest{})
+	_, err := invokeUpstream(t.Context(), upstream, testRequest("", nil))
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want %v", err, want)
+	}
+}
+
+func TestBinderPreservesNativeContinuationAndPrecision(t *testing.T) {
+	ts := fakeGrafanaServer(t)
+	binder, err := newGFBinder(&authztest.Fake{Org: orgFixture()}, &fakeGrafana{}, ts.URL, testAPIKey, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := testRequest("native", nil)
+	original.Params.Arguments = json.RawMessage(`{"org":"acme","large":9007199254740993}`)
+	original.Params.RequestState = "opaque-continuation"
+	original.Params.InputResponses = sdkmcp.InputResponseMap{"approval": &sdkmcp.ElicitResult{Action: "accept"}}
+	original.Params.Meta = sdkmcp.Meta{"progressToken": "progress"}
+	original.Extra = &sdkmcp.RequestExtra{Header: http.Header{"Traceparent": []string{"trace"}}}
+	expected := &sdkmcp.CallToolResult{StructuredContent: map[string]any{"native": true}, Meta: sdkmcp.Meta{"custom": "value"}}
+	upstream := mcpgrafana.Tool{Tool: stubSDKTool("native", nil, nil), Handler: func(_ context.Context, incoming *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		if incoming == original || incoming.Params == original.Params {
+			t.Fatal("mutable request reused")
+		}
+		if incoming.Extra != original.Extra || incoming.Session != original.Session {
+			t.Fatal("native transport context lost")
+		}
+		if incoming.Params.RequestState != original.Params.RequestState || incoming.Params.InputResponses["approval"] != original.Params.InputResponses["approval"] || incoming.Params.Meta["progressToken"] != "progress" {
+			t.Fatal("native continuation lost")
+		}
+		if string(incoming.Params.Arguments) != `{"large":9007199254740993}` {
+			t.Fatalf("precision or org filtering changed: %s", incoming.Params.Arguments)
+		}
+		return expected, nil
+	}}
+	result, err := binder.wrap(authz.RoleViewer, "", "", "", upstream)(t.Context(), original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != expected {
+		t.Fatal("native result converted")
+	}
+	if string(original.Params.Arguments) != `{"org":"acme","large":9007199254740993}` {
+		t.Fatal("caller arguments mutated")
 	}
 }

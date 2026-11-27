@@ -10,23 +10,22 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/giantswarm/mcp-toolkit/tooldesc"
+	tooldesc "github.com/giantswarm/mcp-toolkit/tooldesc/gosdk"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
-	"github.com/mark3labs/mcp-go/mcp"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-func registerOrgTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Authorizer, b *gfBinder) {
+func registerOrgTools(s Registrar, disabled map[string]bool, az authz.Authorizer, b *gfBinder) {
 	maybeAddTool(s, disabled,
-		mcp.NewTool("list_orgs",
-			readOnlyAnnotation(),
-			tooldesc.Describe("List the Grafana orgs you can access; call it first for the org value every other tool takes.",
+		&mcp.Tool{Name: "list_orgs", Annotations: readOnlyAnnotation(),
+			Description: tooldesc.Describe("List the Grafana orgs you can access; call it first for the org value every other tool takes.",
 				"tenantTypes says which tools serve an org: data for metrics, logs, traces and alert rules; alerting for alerts and silences."),
-		),
-		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			InputSchema: map[string]any{jsonSchemaTypeKey: jsonTypeObject},
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			type item struct {
 				Name        string   `json:"name"`
 				DisplayName string   `json:"displayName"`
@@ -44,13 +43,13 @@ func registerOrgTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Au
 				// First-login UX: tell the caller to register with Grafana
 				// instead of returning an opaque "not authorised" or empty
 				// list — both are misleading.
-				return mcp.NewToolResultJSON(response{
+				return jsonResult(response{
 					Orgs:    []item{},
 					Message: err.Error(),
 				})
 			}
 			if err != nil {
-				return mcp.NewToolResultErrorFromErr("resolver failed", err), nil
+				return failure("resolver failed", err), nil
 			}
 
 			out := make([]item, 0, len(access))
@@ -77,7 +76,7 @@ func registerOrgTools(s *mcpsrv.MCPServer, disabled map[string]bool, az authz.Au
 			sort.Slice(out, func(i, j int) bool {
 				return strings.ToLower(out[i].DisplayName) < strings.ToLower(out[j].DisplayName)
 			})
-			return mcp.NewToolResultJSON(response{Orgs: out})
+			return jsonResult(response{Orgs: out})
 		},
 	)
 

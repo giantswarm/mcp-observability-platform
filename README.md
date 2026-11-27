@@ -151,20 +151,12 @@ rather than the server-admin SA.
 
 ### Response-size discipline
 
-Tool responses that would exceed `TOOL_MAX_RESPONSE_BYTES` (default 128 KiB)
-return a structured error payload:
+See the [native SDK upgrade and recovery checklist](docs/sdk-upgrade.md) before deployment.
 
-```json
-{
-  "error": "response_too_large",
-  "bytes": 245760,
-  "limit": 131072,
-  "message": "response is 245760 bytes, exceeds 131072 byte limit",
-  "hint": "narrow the query: add label matchers, aggregate with sum/rate/topk, or shorten the time range"
-}
-```
-
-LLM clients can react programmatically instead of silently truncating.
+The complete JSON tool result, including structured content, images and metadata,
+is bounded by `TOOL_MAX_RESPONSE_BYTES` (default 128 KiB). Oversized results return
+an MCP `isError` result identifying the limit. Narrow the query, add label matchers,
+aggregate or shorten the time range before retrying. Zero disables the limit.
 
 For endpoints where pagination is natural (logs, label-values, rule lists,
 tag values, dashboards-by-folder, alerts) tools expose `page`/`pageSize` or

@@ -4,9 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/giantswarm/mcp-toolkit/middleware/responsecap"
-	"github.com/giantswarm/mcp-toolkit/middleware/timeout"
 )
 
 const testMalformedIsHardError = "malformed is a hard error"
@@ -65,11 +62,11 @@ func TestLoadConfig_DefaultsToolTimeoutAndMaxResponseBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if cfg.ToolTimeout != timeout.DefaultTimeout {
-		t.Errorf("ToolTimeout = %s, want %s", cfg.ToolTimeout, timeout.DefaultTimeout)
+	if cfg.ToolTimeout != 30*time.Second {
+		t.Errorf("ToolTimeout = %s, want 30s", cfg.ToolTimeout)
 	}
-	if cfg.MaxResponseBytes != responsecap.DefaultLimit {
-		t.Errorf("MaxResponseBytes = %d, want %d", cfg.MaxResponseBytes, responsecap.DefaultLimit)
+	if cfg.MaxResponseBytes != 128*1024 {
+		t.Errorf("MaxResponseBytes = %d, want 131072", cfg.MaxResponseBytes)
 	}
 }
 

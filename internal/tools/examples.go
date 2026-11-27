@@ -8,11 +8,10 @@ package tools
 
 import (
 	mcpgrafanatools "github.com/grafana/mcp-grafana/v2/tools"
-	mcpsrv "github.com/mark3labs/mcp-go/server"
 
 	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
-func registerExampleTools(s *mcpsrv.MCPServer, b *gfBinder) {
+func registerExampleTools(s Registrar, b *gfBinder) {
 	b.bindOrgTool(s, authz.RoleViewer, mcpgrafanatools.GetQueryExamples)
 }

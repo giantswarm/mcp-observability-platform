@@ -2,6 +2,23 @@ suite: servicemonitor
 templates:
   - templates/servicemonitor.yaml
 tests:
+  - it: requires an explicit tenant
+    set:
+      serviceMonitor.labels:
+        observability.giantswarm.io/tenant: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: serviceMonitor.labels[observability.giantswarm.io/tenant] must be set
+
+  - it: routes metrics to the configured tenant
+    set:
+      serviceMonitor.labels:
+        observability.giantswarm.io/tenant: custom-tenant
+    asserts:
+      - equal:
+          path: metadata.labels["observability.giantswarm.io/tenant"]
+          value: custom-tenant
+
   - it: rendered by default with 30s interval, scrapes the metrics port
     asserts:
       - isKind:
