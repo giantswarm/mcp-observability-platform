@@ -3,9 +3,8 @@ package middleware
 import (
 	"context"
 
+	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/giantswarm/mcp-observability-platform/internal/authz"
 )
 
 // RequireCaller is the fail-closed gate that catches any future tool
@@ -17,7 +16,8 @@ import (
 func RequireCaller() func(mcp.ToolHandler) mcp.ToolHandler {
 	return func(next mcp.ToolHandler) mcp.ToolHandler {
 		return func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			if !authz.CallerFromContext(ctx).Authenticated() {
+			user, _ := handler.UserInfoFromContext(ctx)
+			if user == nil || user.Issuer == "" || user.ID == "" {
 				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "authentication required"}}}, nil
 			}
 			return next(ctx, request)

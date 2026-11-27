@@ -191,6 +191,12 @@ mcp:
 oauth:
   # Public-facing issuer URL for this MCP (what MCP clients' OAuth requests target)
   issuer: "https://mcp-observability-platform.example.com"
+  # Disable the local authorization server when trusted external issuers handle login.
+  enableAuthorizationServer: true
+  # Canonical protected-resource URL. Empty retains the issuer-based identifier.
+  resource: ""
+  # Issuer identifiers advertised to clients; each must be local or explicitly trusted.
+  authorizationServers: []
   allowInsecureHTTP: false
   # Enable Dynamic Client Registration (RFC 7591) without a registration token.
   # OFF by default: letting arbitrary callers self-register against a
@@ -211,8 +217,7 @@ oauth:
       tls: false
       # existingSecret must contain: password (only when backend=valkey and password is set)
       existingSecret: ""
-  # AES-256 key used by mcp-oauth to encrypt tokens at rest (optional but
-  # recommended). existingSecret must contain: encryptionKey (32 bytes, hex or raw)
+  # Required for Valkey. existingSecret must contain: encryptionKey (base64 of 32 bytes).
   encryption:
     existingSecret: ""
   # Additional OAuth client IDs whose tokens are accepted — for SSO token
@@ -223,20 +228,18 @@ oauth:
   # External issuers whose Bearer JWTs are accepted at /mcp alongside Dex,
   # for on-behalf-of traffic carrying muster-issued tokens. Unlike
   # trustedAudiences these are full issuers (own signing keys), validated via
-  # JWKS. Each entry needs at least issuer and jwksURL. subjectClaim remaps
-  # the caller subject to another claim (e.g. "email", the handle Grafana
-  # provisions OAuth users by); tokens without that claim are rejected. With
-  # muster forwarding its issued token
-  # unchanged, allowedAudiences is muster's own resource identifier, not a
-  # per-backend value. acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068);
+  # JWKS. Each entry requires issuer, an HTTPS jwksURI and explicit audiences.
+  # subjectClaim=email selects a verified email as username; issuer and sub
+  # remain the stable account identity. Audiences must match the accepted tokens;
+  # see docs/sdk-upgrade.md for the broker-audience compatibility setting.
+  # acceptedTypHeaders defaults to ["at+jwt"] (RFC 9068);
   # set [""] to accept tokens with no typ header (e.g. Kubernetes
   # ServiceAccount tokens). Example:
   #   trustedIssuers:
   #     - issuer: "https://muster.example.com"
-  #       jwksURL: "http://muster.muster.svc.cluster.local:8080/.well-known/jwks.json"
+  #       jwksURI: "https://broker.example.com/.well-known/jwks.json"
   #       subjectClaim: "email"
-  #       allowedAudiences: ["https://muster.example.com/mcp"]
-  #       allowPrivateIPJWKSHosts: ["muster.muster.svc.cluster.local"]
+  #       audiences: ["https://muster.example.com/mcp"]
   trustedIssuers: []
   # Custom URI schemes accepted during public client registration (beyond
   # the always-allowed loopback HTTPS). Example: ["cursor", "vscode",

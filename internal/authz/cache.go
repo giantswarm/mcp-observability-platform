@@ -2,6 +2,8 @@ package authz
 
 import (
 	"time"
+
+	"github.com/giantswarm/mcp-oauth/providers"
 )
 
 // Cache defaults. Positive entries are cached `DefaultCacheTTL`; negative
@@ -40,8 +42,8 @@ type cacheEntry struct {
 
 type roleCacheKey struct{ issuer, subject, identity string }
 
-func (c Caller) cacheKey() roleCacheKey {
-	return roleCacheKey{issuer: c.Issuer, subject: c.Subject, identity: c.Identity()}
+func roleKey(user *providers.UserInfo) roleCacheKey {
+	return roleCacheKey{issuer: user.Issuer, subject: user.ID, identity: grafanaIdentity(user)}
 }
 
 const maxRoleCacheEntries = 4096

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/giantswarm/mcp-oauth/handler"
+	"github.com/giantswarm/mcp-oauth/providers"
 	mcpgrafana "github.com/grafana/mcp-grafana/v2"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -90,9 +92,9 @@ func (f *fakeGrafana) LookupDatasourceByUID(_ context.Context, _ grafana.Request
 	return grafana.Datasource{}, fmt.Errorf("datasource %q not found in org", uid)
 }
 
-// oauthCtx attaches a caller identity to ctx; CallerSubject(ctx) returns sub.
-func oauthCtx(sub, email string) context.Context {
-	return authz.WithCaller(context.Background(), authz.Caller{Issuer: "https://issuer.example", Subject: sub, Email: email})
+// oauthCtx attaches the validated user to the test context.
+func oauthCtx(t *testing.T, sub, email string) context.Context {
+	return handler.ContextWithUserInfo(t.Context(), &providers.UserInfo{Issuer: "https://issuer.example", ID: sub, Email: email, EmailVerified: true})
 }
 
 // stubTool builds a minimal mcpgrafana.Tool whose handler records what the
@@ -349,7 +351,7 @@ func TestBinder_Wrap_HappyPath_HeaderPropagation(t *testing.T) {
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
-	ctx := oauthCtx("sub-123", "alice@example.com")
+	ctx := oauthCtx(t, "sub-123", "alice@example.com")
 	req := testRequest("t", map[string]any{testOrgArg: testOrgName})
 	res, err := h(ctx, req)
 	if err != nil {
@@ -376,7 +378,7 @@ func TestBinder_Wrap_SkipsHeaderOnEmptySubject(t *testing.T) {
 	captured := &capturedCall{}
 	h := b.wrap(authz.RoleViewer, "", "", "", stubTool("t", nil, captured))
 
-	// No caller in ctx — CallerSubject returns "".
+	// Without a validated user, the Grafana audit handle is empty.
 	req := testRequest("", map[string]any{testOrgArg: testOrgName})
 	res, err := h(context.Background(), req)
 	if err != nil {

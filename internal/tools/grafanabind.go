@@ -104,7 +104,7 @@ func (b *gfBinder) wrapFanout(role authz.Role, tenantType authz.TenantType, argu
 		if uid != "" {
 			return invokeUpstream(ctx, upstream, &request)
 		}
-		datasources, err := b.grafana.ListDatasources(ctx, grafana.RequestOpts{OrgID: organization.OrgID, Caller: authz.CallerSubject(ctx)})
+		datasources, err := b.grafana.ListDatasources(ctx, grafana.RequestOpts{OrgID: organization.OrgID, Caller: authz.GrafanaUser(ctx)})
 		if err != nil {
 			return failure("list datasources", err), nil
 		}
@@ -229,7 +229,7 @@ func (b *gfBinder) wrap(role authz.Role, tenantType authz.TenantType, datasource
 		if datasourceType == "" {
 			return invokeUpstream(ctx, upstream, &request)
 		}
-		options := grafana.RequestOpts{OrgID: organization.OrgID, Caller: authz.CallerSubject(ctx)}
+		options := grafana.RequestOpts{OrgID: organization.OrgID, Caller: authz.GrafanaUser(ctx)}
 		uid, err := stringArgument(&request, argument)
 		if err != nil {
 			return failure("malformed arguments", err), nil
@@ -279,7 +279,7 @@ func (b *gfBinder) requireOrg(ctx context.Context, request *mcp.CallToolRequest,
 
 func (b *gfBinder) attachGrafana(ctx context.Context, organizationID int64) context.Context {
 	configuration := mcpgrafana.GrafanaConfig{URL: b.url, APIKey: b.apiKey, BasicAuth: b.basicAuth, OrgID: organizationID}
-	if subject := authz.CallerSubject(ctx); subject != "" {
+	if subject := authz.GrafanaUser(ctx); subject != "" {
 		configuration.ExtraHeaders = map[string]string{"X-Grafana-User": subject}
 	}
 	ctx = mcpgrafana.WithGrafanaConfig(ctx, configuration)

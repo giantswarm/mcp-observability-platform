@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/giantswarm/mcp-oauth/handler"
+	"github.com/giantswarm/mcp-oauth/providers"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -27,8 +29,8 @@ var tracer = otel.Tracer("github.com/giantswarm/mcp-observability-platform/inter
 // (tenants, datasources, role) in one shot. Returned Organizations are
 // deep-cloned; handler mutations cannot escape into any internal cache.
 //
-// Caller is derived from ctx via CallerFromContext; an unauthenticated
-// Caller (no Subject) returns ErrNoCallerIdentity.
+// The validated user is read from mcp-oauth's request context. A missing
+// issuer or subject returns ErrNoCallerIdentity.
 type Authorizer interface {
 	// RequireOrg returns the caller's Organization access to orgRef
 	// (matched case-insensitively against Organization.Name or
@@ -68,8 +70,7 @@ func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL
 
 // ListOrgs returns the caller's authorised orgs + role by asking Grafana
 // and enriching with the current registry metadata. The returned map is
-// deep-cloned so handler mutations cannot leak. Caller identity is read
-// from ctx via CallerFromContext.
+// deep-cloned so handler mutations cannot leak. The user comes from mcp-oauth.
 //
 // A caller who authenticated with our IdP but has not yet logged into
 // Grafana surfaces ErrCallerUnknownToGrafana — list_orgs translates that
@@ -79,7 +80,8 @@ func NewAuthorizer(orgs OrgLister, gc grafana.Client, cacheTTL, negativeCacheTTL
 // Grafana role assignments are cached. A GrafanaOrganization deletion takes
 // effect immediately for every caller, not after their TTL expires.
 func (a *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, error) {
-	roles, err := a.resolveRoles(ctx, CallerFromContext(ctx))
+	user, _ := handler.UserInfoFromContext(ctx)
+	roles, err := a.resolveRoles(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -99,8 +101,7 @@ func (a *authorizer) ListOrgs(ctx context.Context) (map[string]Organization, err
 // ErrInvalidMinRole rather than silently passing every authorised caller
 // through (Role.AtLeast(RoleNone) is always true).
 //
-// Caller identity is read from ctx via CallerFromContext. The returned
-// Organization is deep-cloned so handler mutations cannot escape.
+// The user comes from mcp-oauth. Returned Organizations are deep-cloned.
 func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role) (Organization, error) {
 	// Span lets trace waterfalls show authz cost vs handler cost without
 	// an extra slog hop; attrs are set on success too so a slow RequireOrg
@@ -116,7 +117,8 @@ func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 		span.SetStatus(codes.Error, ErrInvalidMinRole.Error())
 		return Organization{}, ErrInvalidMinRole
 	}
-	roles, err := a.resolveRoles(ctx, CallerFromContext(ctx))
+	user, _ := handler.UserInfoFromContext(ctx)
+	roles, err := a.resolveRoles(ctx, user)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return Organization{}, err
@@ -162,17 +164,17 @@ func (a *authorizer) RequireOrg(ctx context.Context, orgRef string, minRole Role
 // falling back to load(). Returns ErrNoCallerIdentity for an
 // unauthenticated caller and ErrCallerUnknownToGrafana when Grafana has no
 // user record yet.
-func (a *authorizer) resolveRoles(ctx context.Context, caller Caller) (map[int64]Role, error) {
-	if !caller.Authenticated() {
+func (a *authorizer) resolveRoles(ctx context.Context, user *providers.UserInfo) (map[int64]Role, error) {
+	if grafanaIdentity(user) == "" {
 		return nil, ErrNoCallerIdentity
 	}
-	if hit, ok := a.cacheLookup(caller.cacheKey()); ok {
+	if hit, ok := a.cacheLookup(roleKey(user)); ok {
 		if hit.status == statusUnknownToGrafana {
 			return nil, ErrCallerUnknownToGrafana
 		}
 		return hit.roles, nil
 	}
-	entry, err := a.load(ctx, caller)
+	entry, err := a.load(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +215,8 @@ func accessibleOrgs(roles map[int64]Role, orgs []Organization) map[string]Organi
 
 // load asks Grafana for the user and their org roles, then caches OrgID →
 // Role with the appropriate positive-or-negative TTL.
-func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error) {
-	user, err := a.grafana.LookupUser(ctx, caller.Identity())
+func (a *authorizer) load(ctx context.Context, caller *providers.UserInfo) (cacheEntry, error) {
+	user, err := a.grafana.LookupUser(ctx, grafanaIdentity(caller))
 	if err != nil {
 		return cacheEntry{}, fmt.Errorf("grafana lookup: %w", err)
 	}
@@ -222,7 +224,7 @@ func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error
 		// User exists in our IdP but has never logged into Grafana yet —
 		// negative-cache so they hit a brief "log into Grafana first"
 		// window, not the full positive window.
-		return a.cacheStore(caller.cacheKey(), statusUnknownToGrafana, nil), nil
+		return a.cacheStore(roleKey(caller), statusUnknownToGrafana, nil), nil
 	}
 	entries, err := a.grafana.UserOrgs(ctx, user.ID)
 	if err != nil {
@@ -236,7 +238,7 @@ func (a *authorizer) load(ctx context.Context, caller Caller) (cacheEntry, error
 		}
 		roles[e.OrgID] = role
 	}
-	return a.cacheStore(caller.cacheKey(), statusKnown, roles), nil
+	return a.cacheStore(roleKey(caller), statusKnown, roles), nil
 }
 
 // findOrganization locates an Organization by Name or DisplayName,

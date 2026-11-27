@@ -18,6 +18,9 @@ import (
 	"github.com/giantswarm/mcp-observability-platform/internal/server"
 )
 
+const mcpPath = "/mcp"
+const ssePath = "/sse"
+
 // buildMCPMux wraps the OAuth + MCP routes in otelhttp so inbound W3C
 // traceparents become server spans.
 func buildMCPMux(transport string, mcp *mcpsrv.Server, oauthHandler *handler.Handler) http.Handler {
@@ -27,10 +30,10 @@ func buildMCPMux(transport string, mcp *mcpsrv.Server, oauthHandler *handler.Han
 
 	switch transport {
 	case transportStreamableHTTP:
-		mux.Handle("/mcp", oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp)))
+		mux.Handle(mcpPath, oauthHandler.ValidateToken(server.StreamableHTTPHandler(mcp)))
 	case transportSSE:
 		sseHandler := server.SSEHandler(mcp)
-		mux.Handle("/sse", oauthHandler.ValidateToken(sseHandler))
+		mux.Handle(ssePath, oauthHandler.ValidateToken(sseHandler))
 		mux.Handle("/message", oauthHandler.ValidateToken(sseHandler))
 	}
 

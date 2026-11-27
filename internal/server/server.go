@@ -75,24 +75,17 @@ func New(configuration Config) (*mcp.Server, error) {
 	return server, nil
 }
 
-func validatedIdentity(ctx context.Context) (toolpolicy.Identity, bool) {
+func validatedIdentity(ctx context.Context) slog.LogValuer {
 	user, ok := handler.UserInfoFromContext(ctx)
 	if !ok || user == nil {
-		return toolpolicy.Identity{}, false
+		return nil
 	}
-	return toolpolicy.Identity{Issuer: user.Issuer, Subject: user.ID, ActorIssuer: user.ActorIssuer, ActorSubject: user.ActorSubject}, true
+	return user
 }
 
 // StreamableHTTPHandler uses native stateless transport and Origin validation.
 // Authentication is enforced by the caller's OAuth middleware.
 func StreamableHTTPHandler(server *mcp.Server) http.Handler {
 	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true})
-	return httpx.ProtectOrigin(injectCaller(transport))
-}
-
-func injectCaller(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		ctx := middleware.InjectCallerFromRequest(request.Context(), request)
-		next.ServeHTTP(writer, request.WithContext(ctx))
-	})
+	return httpx.ProtectOrigin(transport)
 }

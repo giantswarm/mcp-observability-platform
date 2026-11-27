@@ -15,7 +15,7 @@ import (
 // grafanaOpts builds a RequestOpts that attributes the call to the
 // OIDC subject via X-Grafana-User in Grafana's audit log.
 func grafanaOpts(ctx context.Context, orgID int64) grafana.RequestOpts {
-	return grafana.RequestOpts{OrgID: orgID, Caller: authz.CallerSubject(ctx)}
+	return grafana.RequestOpts{OrgID: orgID, Caller: authz.GrafanaUser(ctx)}
 }
 
 // resolveDatasource checks organization access and tenant type before looking

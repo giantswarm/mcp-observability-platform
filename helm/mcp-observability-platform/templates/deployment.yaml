@@ -77,11 +77,7 @@ spec:
             - name: OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION
               value: {{ .Values.oauth.allowPublicClientRegistration | quote }}
 
-            # Dex (IdP) — read by upstream oauthconfig.DexFromEnv. The
-            # OAUTH_ prefix is the upstream contract, not optional.
-            # OAUTH_DEX_REDIRECT_URL is derived from OAUTH_ISSUER as
-            # ${OAUTH_ISSUER}/oauth/callback when unset (oauthconfig
-            # default since v0.2.117), so we don't template it here.
+            {{- if .Values.oauth.enableAuthorizationServer }}
             - name: OAUTH_DEX_ISSUER_URL
               value: {{ .Values.oauth.dex.issuerUrl | quote }}
             - name: OAUTH_DEX_CLIENT_ID
@@ -91,6 +87,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.oauth.dex.existingSecret }}
                   key: clientSecret
+            {{- end }}
 
             # Storage backend for OAuth state. Names match what
             # oauthconfig.StorageFromEnvWithPrefix("OAUTH_") expects.
@@ -110,7 +107,7 @@ spec:
             {{- end }}
             {{- end }}
 
-            # Optional: AES-256 encryption-at-rest for mcp-oauth.
+            # Required for persistent OAuth storage.
             # Value must be 44-char standard base64 (`openssl rand -base64 32`).
             {{- if .Values.oauth.encryption.existingSecret }}
             - name: OAUTH_ENCRYPTION_KEY

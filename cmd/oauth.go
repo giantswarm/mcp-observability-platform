@@ -1,158 +1,146 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"slices"
 	"strings"
 
-	oauth "github.com/giantswarm/mcp-oauth"
 	"github.com/giantswarm/mcp-oauth/handler"
 	"github.com/giantswarm/mcp-oauth/oauthconfig"
 	"github.com/giantswarm/mcp-oauth/providers/dex"
 	oauthserver "github.com/giantswarm/mcp-oauth/server"
-	"github.com/giantswarm/mcp-oauth/storage"
 )
 
-// OAUTH_* env vars read directly by this package. Upstream owns the rest
-// (see oauthconfig.*FromEnvWithPrefix). Names match the helm chart and
-// README so an operator can grep the same string across all three.
-const (
-	envOAuthDexClientID    = "OAUTH_DEX_CLIENT_ID"
-	envOAuthDexIssuerURL   = "OAUTH_DEX_ISSUER_URL"
-	envOAuthStorageBackend = "OAUTH_STORAGE_BACKEND"
-	envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
-)
+const envOAuthTrustedIssuers = "OAUTH_TRUSTED_ISSUERS"
 
-// trustedIssuerConfig is the JSON shape of a single OAUTH_TRUSTED_ISSUERS
-// entry. It mirrors the subset of mcp-oauth's TrustedIssuer a resource server
-// needs. subjectClaim remaps the caller subject to another claim's value at
-// validation time (e.g. "email", so the Grafana user lookup gets the handle
-// Grafana provisions OAuth users by). acceptedTypHeaders defaults to
-// ["at+jwt"] (RFC 9068) upstream; set [""] to accept tokens with no typ
-// header (e.g. Kubernetes ServiceAccount tokens).
-type trustedIssuerConfig struct {
-	Issuer                  string            `json:"issuer"`
-	JwksURL                 string            `json:"jwksURL"`
-	SubjectClaim            string            `json:"subjectClaim,omitempty"`
-	AllowedAudiences        []string          `json:"allowedAudiences,omitempty"`
-	AllowedClaims           map[string]string `json:"allowedClaims,omitempty"`
-	AcceptedTypHeaders      []string          `json:"acceptedTypHeaders,omitempty"`
-	AllowPrivateIPJWKS      bool              `json:"allowPrivateIPJWKS,omitempty"`
-	AllowPrivateIPJWKSHosts []string          `json:"allowPrivateIPJWKSHosts,omitempty"`
-}
-
-// parseTrustedIssuers parses OAUTH_TRUSTED_ISSUERS, a JSON array of issuer
-// objects, into mcp-oauth TrustedIssuer values. Empty input yields nil. Each
-// entry requires a non-empty issuer and jwksURL.
-func parseTrustedIssuers(raw string) ([]oauthserver.TrustedIssuer, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
+// loadOAuthSettings resolves application defaults before background workers start.
+func loadOAuthSettings(logger *slog.Logger, transport string) (oauthconfig.Settings, error) {
+	authorizationServer, err := envBool("OAUTH_ENABLE_AUTHORIZATION_SERVER", true)
+	if err != nil {
+		return oauthconfig.Settings{}, err
 	}
-	var entries []trustedIssuerConfig
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
-		return nil, fmt.Errorf("%s: invalid JSON: %w", envOAuthTrustedIssuers, err)
+	defaults := map[string]string{"OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS": "true"}
+	if authorizationServer {
+		defaults["OAUTH_PROVIDER"] = "dex"
 	}
-	issuers := make([]oauthserver.TrustedIssuer, 0, len(entries))
-	for i, e := range entries {
-		if e.Issuer == "" || e.JwksURL == "" {
-			return nil, fmt.Errorf("%s[%d]: issuer and jwksURL are required", envOAuthTrustedIssuers, i)
+	for name, value := range defaults {
+		if os.Getenv(name) == "" {
+			if err := os.Setenv(name, value); err != nil {
+				return oauthconfig.Settings{}, err
+			}
 		}
-		issuers = append(issuers, oauthserver.TrustedIssuer{
-			Issuer:                  e.Issuer,
-			JwksURL:                 e.JwksURL,
-			SubjectClaim:            e.SubjectClaim,
-			AllowedAudiences:        e.AllowedAudiences,
-			AllowedClaims:           e.AllowedClaims,
-			AcceptedTypHeaders:      e.AcceptedTypHeaders,
-			AllowPrivateIPJWKS:      e.AllowPrivateIPJWKS, //nolint:staticcheck // SA1019: a trusted issuer is a second issuer, not the provider's own host
-			AllowPrivateIPJWKSHosts: e.AllowPrivateIPJWKSHosts,
-		})
 	}
-	return issuers, nil
-}
-
-// buildOAuthHandler assembles the mcp-oauth handler from OAUTH_* env vars.
-// storeClose drains the storage backend on shutdown.
-func buildOAuthHandler(logger *slog.Logger, transport string) (*handler.Handler, func(), error) {
-	provider, err := oauthconfig.DexFromEnv()
+	normalized, deprecated, err := normalizeTrustedIssuers(os.Getenv(envOAuthTrustedIssuers))
 	if err != nil {
-		return nil, nil, fmt.Errorf("dex provider: %w", err)
+		return oauthconfig.Settings{}, err
 	}
-	// Upstream DexFromEnv does not enforce the dex audience charset on
-	// the client ID; check it here so a typo fails startup rather than
-	// producing tokens Dex rejects mid-flow.
-	if err := dex.ValidateAudience(os.Getenv(envOAuthDexClientID)); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", envOAuthDexClientID, err)
+	if deprecated {
+		logger.Warn("OAUTH_TRUSTED_ISSUERS uses deprecated keys; use jwksURI, audiences and allowPrivateIPJWKSHosts before the next minor release")
+		if err := os.Setenv(envOAuthTrustedIssuers, normalized); err != nil {
+			return oauthconfig.Settings{}, err
+		}
 	}
-
-	cfg, err := oauthConfigFromEnv()
+	settings, err := oauthconfig.SettingsFromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("oauth config: %w", err)
+		return oauthconfig.Settings{}, err
 	}
-	resourcePath := "/mcp"
+	if settings.Dex != nil {
+		if err := dex.ValidateAudience(settings.Dex.ClientID); err != nil {
+			return oauthconfig.Settings{}, fmt.Errorf("OAUTH_DEX_CLIENT_ID: %w", err)
+		}
+		settings.Dex.Logger = logger
+	}
+	settings.Logger = logger
+	if settings.Valkey == nil && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		logger.Warn("in-memory OAuth state is not shared across replicas or retained on restart; configure Valkey for persistent state")
+	}
+	resourcePath := mcpPath
 	if transport == transportSSE {
-		resourcePath = "/sse"
+		resourcePath = ssePath
 	}
-	cfg.ResourceMetadataByPath = map[string]oauthserver.ProtectedResourceConfig{resourcePath: {}}
-
-	encryptor, err := oauthconfig.NewEncryptorFromEnv()
+	if settings.Server.ResourceMetadataByPath == nil {
+		settings.Server.ResourceMetadataByPath = make(map[string]oauthserver.ProtectedResourceConfig)
+	}
+	for path := range settings.Server.ResourceMetadataByPath {
+		if strings.TrimRight(path, "/") == resourcePath {
+			return settings, nil
+		}
+	}
+	mainResource, err := url.Parse(settings.Server.GetResourceIdentifier())
 	if err != nil {
-		return nil, nil, fmt.Errorf("oauth encryptor: %w", err)
+		return oauthconfig.Settings{}, fmt.Errorf("OAuth resource: %w", err)
 	}
-
-	backend := os.Getenv(envOAuthStorageBackend)
-	if backend == storage.BackendValkey && encryptor == nil {
-		return nil, nil, fmt.Errorf("OAUTH_STORAGE_BACKEND=valkey requires OAUTH_ENCRYPTION_KEY")
+	mainPath := mainResource.EscapedPath()
+	if mainPath == "" {
+		mainPath = "/"
 	}
-
-	store, storeCloseErr, err := oauthconfig.StorageFromEnv(encryptor, nil, logger)
-	if err != nil {
-		return nil, nil, fmt.Errorf("oauth store: %w", err)
-	}
-	storeClose := func() { _ = storeCloseErr() }
-
-	if (backend == "" || backend == storage.BackendMemory) && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
-		logger.Warn("OAUTH_STORAGE_BACKEND=memory in a Kubernetes deployment — OAuth state is lost on pod restart and NOT shared across replicas; use OAUTH_STORAGE_BACKEND=valkey for production")
-	}
-
-	if cfg.AllowInsecureHTTP {
-		logger.Warn("OAUTH_ALLOW_INSECURE_HTTP=true — OAuth flows accept plain-HTTP issuers; intended for local dev only")
-	}
-	if cfg.AllowPublicClientRegistration {
-		logger.Warn("OAUTH_ALLOW_PUBLIC_CLIENT_REGISTRATION=true — /oauth/register is open; restrict in production")
-	}
-
-	// Trusted external issuers (muster) whose Bearer JWTs are accepted at
-	// /mcp alongside Dex, for on-behalf-of traffic carrying muster-issued
-	// tokens.
-	issuers, err := parseTrustedIssuers(os.Getenv(envOAuthTrustedIssuers))
-	if err != nil {
-		storeClose()
-		return nil, nil, err
-	}
-	var opts []oauth.ServerOption
-	if len(issuers) > 0 {
-		opts = append(opts, oauthserver.WithTrustedIssuers(issuers))
-	}
-
-	srv, err := oauth.NewServerWithCombined(provider, store, cfg, logger, opts...)
-	if err != nil {
-		storeClose()
-		return nil, nil, fmt.Errorf("oauth server: %w", err)
-	}
-	return handler.New(srv, logger), storeClose, nil
+	mainMetadata := settings.Server.ResourceMetadataByPath[mainPath]
+	settings.Server.ResourceMetadataByPath[resourcePath] = oauthserver.ProtectedResourceConfig{AuthorizationServers: mainMetadata.AuthorizationServers}
+	return settings, nil
 }
 
-func oauthConfigFromEnv() (*oauth.ServerConfig, error) {
-	configuration, err := oauthconfig.FromEnv()
+func buildOAuthHandler(settings oauthconfig.Settings) (*handler.Handler, func(context.Context) error, error) {
+	runtime, cleanup, err := oauthconfig.Setup(settings)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("OAuth setup: %w", err)
 	}
-	if os.Getenv("OAUTH_ENABLE_CLIENT_ID_METADATA_DOCUMENTS") == "" {
-		configuration.EnableClientIDMetadataDocuments = true
+	return runtime.Handler, cleanup, nil
+}
+
+func normalizeTrustedIssuers(raw string) (string, bool, error) {
+	if strings.TrimSpace(raw) == "" {
+		return raw, false, nil
 	}
-	return configuration, nil
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return "", false, fmt.Errorf("%s: invalid issuer list", envOAuthTrustedIssuers)
+	}
+	deprecated := false
+	for index, entry := range entries {
+		for oldName, name := range map[string]string{"jwksURL": "jwksURI", "allowedAudiences": "audiences"} {
+			if value, present := entry[oldName]; present {
+				if _, conflict := entry[name]; conflict {
+					return "", false, fmt.Errorf("%s[%d]: use either %s or %s", envOAuthTrustedIssuers, index, oldName, name)
+				}
+				entry[name] = value
+				delete(entry, oldName)
+				deprecated = true
+			}
+		}
+		if value, present := entry["allowPrivateIPJWKS"]; present {
+			var enabled bool
+			if err := json.Unmarshal(value, &enabled); err != nil {
+				return "", false, fmt.Errorf("%s[%d]: allowPrivateIPJWKS must be a boolean", envOAuthTrustedIssuers, index)
+			}
+			if enabled {
+				var endpoint string
+				if err := json.Unmarshal(entry["jwksURI"], &endpoint); err != nil {
+					return "", false, fmt.Errorf("%s[%d]: jwksURI must be a URL", envOAuthTrustedIssuers, index)
+				}
+				parsed, err := url.Parse(endpoint)
+				if err != nil || parsed.Hostname() == "" {
+					return "", false, fmt.Errorf("%s[%d]: jwksURI must name a host", envOAuthTrustedIssuers, index)
+				}
+				var hosts []string
+				if existing, present := entry["allowPrivateIPJWKSHosts"]; present {
+					if err := json.Unmarshal(existing, &hosts); err != nil {
+						return "", false, fmt.Errorf("%s[%d]: allowPrivateIPJWKSHosts must be a string list", envOAuthTrustedIssuers, index)
+					}
+				}
+				if !slices.Contains(hosts, parsed.Hostname()) {
+					hosts = append(hosts, parsed.Hostname())
+				}
+				entry["allowPrivateIPJWKSHosts"], _ = json.Marshal(hosts)
+			}
+			delete(entry, "allowPrivateIPJWKS")
+			deprecated = true
+		}
+	}
+	encoded, err := json.Marshal(entries)
+	return string(encoded), deprecated, err
 }

@@ -383,7 +383,7 @@ func TestHandler_SearchTempoTraces_PropagatesOrgID(t *testing.T) {
 	defer ts.Close()
 
 	const caller = "alice@example.com"
-	res := callToolWithCtx(t, callerCtx(caller), wireHandlerTest(t, ts), "search_tempo_traces", map[string]any{
+	res := callToolWithCtx(t, callerCtx(t, caller), wireHandlerTest(t, ts), "search_tempo_traces", map[string]any{
 		testOrgArg: testOrgName, "query": "{}",
 	})
 	if res.IsError {
